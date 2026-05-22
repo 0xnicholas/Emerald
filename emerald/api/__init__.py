@@ -1,0 +1,2 @@
+"""Emerald API package."""
+
