@@ -1,0 +1,1073 @@
+openapi: "3.0.3"
+info:
+  title: Emerald
+  version: 0.1.0
+  description: |
+    Memory and context infrastructure for AI agents.
+
+    Emerald provides long-term and short-term memory through a knowledge
+    graph architecture. It supports automatic fact extraction, temporal
+    tracking, context updates, and intelligent forgetting — all through
+    a minimal, declarative API.
+
+    ## Core Concepts
+
+    | Concept | Description |
+    |---|---|
+    | **Entity** | A user, project, or organization that owns memories |
+    | **Memory** | An extracted, structured fact linked to an entity |
+    | **Profile** | Two-tier summary: static facts + dynamic context |
+    | **Hybrid Search** | Single query returns both memory and RAG results |
+
+    ## Authentication
+
+    All endpoints require an API key via `Authorization: Bearer em_<key>`.
+
+    ## Content Types
+
+    `text` | `conversation` | `url` | `pdf` | `image` | `audio` | `video` | `code` | `markdown`
+
+  contact:
+    name: Emerald
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000/v1
+    description: Local development
+  - url: https://api.emerald.ai/v1
+    description: Production
+
+tags:
+  - name: Memories
+    description: Ingest and retrieve memories
+  - name: Search
+    description: Hybrid search across memory and RAG
+  - name: Profiles
+    description: Entity profiles and context
+  - name: Upload
+    description: File upload and pipeline tracking
+  - name: Connectors
+    description: External data source integrations
+  - name: System
+    description: Health and metrics
+
+# ============================================================
+# Security
+# ============================================================
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      description: |
+        API key in format `em_` + 32 random characters.
+        Example: `em_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+
+  # ---- Schemas ----
+
+  schemas:
+    # Common
+    Meta:
+      type: object
+      properties:
+        request_id:
+          type: string
+          example: "req_abc123"
+          description: Unique request identifier for tracing
+        took_ms:
+          type: integer
+          example: 45
+          description: Request processing time in milliseconds
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: "INVALID_CONTENT_TYPE"
+          enum:
+            - INVALID_REQUEST
+            - INVALID_CONTENT_TYPE
+            - CONTENT_TOO_LARGE
+            - INVALID_ENTITY_ID
+            - EMPTY_CONTENT
+            - UNAUTHORIZED
+            - API_KEY_EXPIRED
+            - FORBIDDEN
+            - NOT_FOUND
+            - ALREADY_EXISTS
+            - PAYLOAD_TOO_LARGE
+            - RATE_LIMITED
+            - INTERNAL_ERROR
+            - PIPELINE_UNAVAILABLE
+        message:
+          type: string
+          example: "Unsupported content type: application/octet-stream"
+        details:
+          type: object
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    # Memories
+    AddMemoryRequest:
+      type: object
+      required: [content, entity_id]
+      properties:
+        content:
+          type: string
+          description: Text content or base64-encoded file
+          example: "用户偏好 TypeScript 和函数式编程风格"
+        entity_id:
+          type: string
+          description: Entity this content belongs to
+          example: "user_123"
+        content_type:
+          type: string
+          description: |
+            Content type hint. Auto-detected if omitted.
+            Supported: text, conversation, url, pdf, image, audio, video, code, markdown
+          example: "text"
+          default: "text"
+        title:
+          type: string
+          description: Optional content title
+          example: "编程偏好"
+        metadata:
+          type: object
+          description: Custom key-value metadata
+          additionalProperties: true
+          example:
+            source: "chat"
+            session_id: "sess_456"
+        async_mode:
+          type: boolean
+          description: "Force async processing (default: auto-detect based on content type)"
+          default: false
+
+    AddMemoryResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            memory_ids:
+              type: array
+              items:
+                type: string
+              description: Created memory IDs (sync mode)
+              example: ["mem_abc123", "mem_def456"]
+            pipeline_status:
+              type: string
+              enum: [done, queued]
+              example: "done"
+            extracted_count:
+              type: integer
+              example: 2
+            pipeline_id:
+              type: string
+              description: Pipeline ID for status tracking (async mode only)
+              example: "pipe_xyz789"
+            estimated_duration_seconds:
+              type: integer
+              description: Estimated processing time (async mode only)
+              example: 45
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    RelationshipItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [updates, extends, derives_from]
+          description: |
+            - `updates`: New fact replaces old fact
+            - `extends`: New fact enriches old fact
+            - `derives_from`: Inferred from multiple existing facts
+          example: "extends"
+        target_id:
+          type: string
+          description: ID of the related memory
+        target_summary:
+          type: string
+          description: Brief summary of the related memory
+
+    MemoryResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+              example: "mem_abc123"
+            content:
+              type: string
+              example: "用户偏好 TypeScript 和函数式编程风格"
+            summary:
+              type: string
+              example: "用户是 TypeScript 开发者，偏好函数式范式"
+            memory_type:
+              type: string
+              enum: [fact, preference, episodic]
+              example: "preference"
+            is_latest:
+              type: boolean
+              description: Whether this is the current version of the fact
+              example: true
+            confidence:
+              type: number
+              format: float
+              minimum: 0
+              maximum: 1
+              example: 0.85
+            valid_from:
+              type: string
+              format: date-time
+              example: "2026-05-22T10:30:00Z"
+            valid_until:
+              type: string
+              format: date-time
+              nullable: true
+              description: Expiry time for temporary facts
+              example: null
+            entity_id:
+              type: string
+              example: "user_123"
+            relationships:
+              type: array
+              items:
+                $ref: "#/components/schemas/RelationshipItem"
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    # Search
+    SearchRequest:
+      type: object
+      required: [q, entity_id]
+      properties:
+        q:
+          type: string
+          description: Search query
+          example: "用户偏好什么编程语言？"
+        entity_id:
+          type: string
+          description: Entity scope
+          example: "user_123"
+        search_mode:
+          type: string
+          enum: [hybrid, memory, rag]
+          default: hybrid
+          description: |
+            - `hybrid`: Both memory (graph) and RAG (vector) results
+            - `memory`: Only personal memories from the knowledge graph
+            - `rag`: Only document chunks from vector similarity
+          example: "hybrid"
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: Maximum results to return
+        rerank:
+          type: boolean
+          default: false
+          description: Enable cross-encoder re-ranking for higher precision
+        rewrite_query:
+          type: boolean
+          default: false
+          description: Enable LLM query expansion for higher recall
+        filters:
+          type: object
+          description: Metadata filters
+          properties:
+            memory_type:
+              type: string
+              example: "preference"
+            min_confidence:
+              type: number
+              example: 0.5
+
+    SearchResultItem:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        summary:
+          type: string
+        score:
+          type: number
+          format: float
+          description: Relevance score (0-1 for RAG, weighted for memory)
+        source:
+          type: string
+          enum: [memory, rag]
+          description: Whether result came from personal memory or document RAG
+        memory_type:
+          type: string
+          enum: [fact, preference, episodic]
+          description: Only set for memory sources
+        is_latest:
+          type: boolean
+          description: Only set for memory sources
+        document_id:
+          type: string
+          nullable: true
+          description: Only set for RAG sources
+        document_title:
+          type: string
+          nullable: true
+          description: Only set for RAG sources
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    SearchResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            results:
+              type: array
+              items:
+                $ref: "#/components/schemas/SearchResultItem"
+            search_mode:
+              type: string
+              example: "hybrid"
+            query_rewritten:
+              type: string
+              nullable: true
+              description: Expanded query if rewrite_query was enabled
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    # Profiles
+    ProfileFact:
+      type: object
+      properties:
+        content:
+          type: string
+          example: "资深前端工程师"
+        importance:
+          type: number
+          description: Static fact importance (0-1)
+          example: 0.95
+        relevance:
+          type: number
+          description: Dynamic fact relevance (0-1)
+          example: 0.90
+        source:
+          type: string
+          description: Source of the dynamic fact
+          example: "最近对话"
+        acquired_at:
+          type: string
+          format: date-time
+
+    ProfileResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            entity_id:
+              type: string
+              example: "user_123"
+            static:
+              type: array
+              description: Always-relevant stable facts (preferences, attributes)
+              items:
+                $ref: "#/components/schemas/ProfileFact"
+            dynamic:
+              type: array
+              description: Recent episodic context (current projects, recent topics)
+              items:
+                $ref: "#/components/schemas/ProfileFact"
+            memory_count:
+              type: integer
+              description: Total memories for this entity
+              example: 128
+            computed_at:
+              type: string
+              format: date-time
+            version:
+              type: integer
+              description: Monotonically increasing profile version
+              example: 12
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ProfileConfig:
+      type: object
+      properties:
+        static_max_items:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+          example: 10
+        dynamic_max_items:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+          example: 5
+        dynamic_lookback_days:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 7
+          example: 7
+        min_confidence_static:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
+          example: 0.5
+        min_confidence_dynamic:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.3
+          example: 0.3
+
+    # Upload
+    UploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            document_id:
+              type: string
+              example: "doc_xyz789"
+            pipeline_id:
+              type: string
+              example: "pipe_abc123"
+            pipeline_status:
+              type: string
+              enum: [queued]
+              example: "queued"
+            file_size_bytes:
+              type: integer
+              example: 204800
+            content_type:
+              type: string
+              example: "pdf"
+            title:
+              type: string
+              example: "架构设计文档.pdf"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    # Pipeline
+    PipelineStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            pipeline_id:
+              type: string
+              example: "pipe_abc123"
+            status:
+              type: string
+              enum: [queued, extracting, chunking, embedding, indexing, done, failed]
+              example: "embedding"
+            stage:
+              type: string
+              example: "embedding"
+            document_id:
+              type: string
+              nullable: true
+              example: "doc_xyz789"
+            content_type:
+              type: string
+              example: "pdf"
+            chunk_count:
+              type: integer
+              example: 34
+            error_message:
+              type: string
+              nullable: true
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    FileListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        content_type:
+          type: string
+        file_size_bytes:
+          type: integer
+        page_count:
+          type: integer
+          nullable: true
+        chunk_count:
+          type: integer
+        status:
+          type: string
+          enum: [queued, processing, done, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    FileListResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/FileListItem"
+            total:
+              type: integer
+            page:
+              type: integer
+            page_size:
+              type: integer
+
+    # Connectors
+    ConnectorConnectResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            provider:
+              type: string
+              enum: [google_drive, gmail, notion, github]
+            auth_url:
+              type: string
+              description: OAuth authorization URL for the user to visit
+            state_token:
+              type: string
+              description: CSRF state token
+            expires_in:
+              type: integer
+              description: Seconds until the auth URL expires
+              example: 600
+
+    ConnectorStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            provider:
+              type: string
+            sync_status:
+              type: string
+              enum: [active, paused, revoked, error]
+            last_synced_at:
+              type: string
+              format: date-time
+              nullable: true
+            error_message:
+              type: string
+              nullable: true
+            connected_at:
+              type: string
+              format: date-time
+              nullable: true
+
+    # Health
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "ok"
+        version:
+          type: string
+          example: "0.1.0"
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+              example: "ok"
+            neo4j:
+              type: string
+              example: "ok"
+            redis:
+              type: string
+              example: "ok"
+            minio:
+              type: string
+              example: "ok"
+            celery:
+              type: string
+              example: "ok"
+
+  # ---- Parameters ----
+
+  parameters:
+    EntityIdQuery:
+      name: entity_id
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Entity scope
+
+# ============================================================
+# Paths
+# ============================================================
+
+paths:
+  # ---- Memories ----
+
+  /memories:
+    post:
+      tags: [Memories]
+      summary: Add content to memory
+      description: |
+        Ingests text, conversation, URL, or file content into the memory graph.
+        Returns memory IDs immediately for lightweight content (text/conversation).
+        Returns a `pipeline_id` with HTTP 202 for file/batch content.
+      operationId: addMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMemoryRequest"
+      responses:
+        "200":
+          description: Content processed synchronously
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddMemoryResponse"
+        "202":
+          description: Content queued for async processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddMemoryResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid API key
+        "413":
+          description: Content too large
+        "429":
+          description: Rate limited
+
+  /memories/{memory_id}:
+    get:
+      tags: [Memories]
+      summary: Get a single memory
+      operationId: getMemory
+      parameters:
+        - name: memory_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Memory ID
+      responses:
+        "200":
+          description: Memory found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryResponse"
+        "404":
+          description: Memory not found
+
+    delete:
+      tags: [Memories]
+      summary: Delete a memory
+      operationId: deleteMemory
+      parameters:
+        - name: memory_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Memory deleted
+        "404":
+          description: Memory not found
+
+  # ---- Search ----
+
+  /search:
+    post:
+      tags: [Search]
+      summary: Hybrid search across memory and RAG
+      description: |
+        Single query returns both personal memory results (graph)
+        and document RAG results (vector). Results are merged,
+        deduplicated, and sorted by relevance score.
+
+        **Modes:**
+        - `hybrid` (default): Both memory + RAG
+        - `memory`: Only personal memories from the knowledge graph
+        - `rag`: Only document chunks from vector similarity
+
+        **Enhancements:**
+        - `rerank=true`: Cross-encoder re-ranking for complex queries
+        - `rewrite_query=true`: LLM query expansion for short queries
+      operationId: search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "429":
+          description: Rate limited
+
+    get:
+      tags: [Search]
+      summary: Quick search (GET)
+      description: Simplified GET variant for debugging
+      operationId: searchGet
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query
+        - name: entity_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: search_mode
+          in: query
+          schema:
+            type: string
+            enum: [hybrid, memory, rag]
+            default: hybrid
+        - name: top_k
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  # ---- Profiles ----
+
+  /profiles/{entity_id}:
+    get:
+      tags: [Profiles]
+      summary: Get entity profile
+      description: |
+        Returns a two-tier profile for the entity:
+        - **static**: Always-relevant stable facts (preferences, attributes)
+        - **dynamic**: Recent episodic context (current projects, topics)
+
+        Target latency: ~50ms from Redis cache.
+        Profiles are updated on ingestion, not on read.
+      operationId: getProfile
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Entity ID
+      responses:
+        "200":
+          description: Entity profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+        "404":
+          description: Entity not found
+
+  /profiles/{entity_id}/config:
+    put:
+      tags: [Profiles]
+      summary: Update profile configuration
+      description: Customize profile computation parameters per entity
+      operationId: updateProfileConfig
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileConfig"
+      responses:
+        "200":
+          description: Config updated
+
+  # ---- Upload ----
+
+  /upload:
+    post:
+      tags: [Upload]
+      summary: Upload a file for processing
+      description: |
+        Upload files up to 50MB. Returns HTTP 202 immediately
+        with a `pipeline_id` for async status tracking.
+
+        Content type is auto-detected. Manually specify via
+        `content_type` if needed.
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, entity_id]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload (max 50MB)
+                entity_id:
+                  type: string
+                  description: Entity this file belongs to
+                content_type:
+                  type: string
+                  description: Content type hint (auto-detected if omitted)
+                title:
+                  type: string
+                  description: Optional file title
+                metadata:
+                  type: string
+                  description: JSON-encoded custom metadata
+      responses:
+        "202":
+          description: File queued for processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResponse"
+        "413":
+          description: File too large (max 50MB)
+
+  /pipelines/{pipeline_id}:
+    get:
+      tags: [Upload]
+      summary: Check pipeline processing status
+      operationId: getPipelineStatus
+      parameters:
+        - name: pipeline_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pipeline status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineStatusResponse"
+        "404":
+          description: Pipeline not found
+
+  /files:
+    get:
+      tags: [Upload]
+      summary: List uploaded files
+      operationId: listFiles
+      parameters:
+        - name: entity_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [queued, processing, done, failed]
+            default: done
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: File list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListResponse"
+
+  # ---- Connectors ----
+
+  /connectors/{provider}/connect:
+    post:
+      tags: [Connectors]
+      summary: Initiate OAuth connection
+      description: |
+        Start OAuth flow for an external data source.
+
+        Supported providers: `google_drive`, `gmail`, `notion`, `github`
+      operationId: connectProvider
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [google_drive, gmail, notion, github]
+      responses:
+        "200":
+          description: OAuth URL generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorConnectResponse"
+        "400":
+          description: Unknown provider
+
+  /connectors/{provider}/webhook:
+    post:
+      tags: [Connectors]
+      summary: Receive webhook from provider
+      description: |
+        Webhook endpoint for external providers to push change notifications.
+        Validates signature, deduplicates events, triggers incremental sync.
+      operationId: handleWebhook
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [google_drive, gmail, notion, github]
+      responses:
+        "200":
+          description: Webhook accepted
+        "401":
+          description: Invalid signature
+
+  /connectors/{provider}:
+    get:
+      tags: [Connectors]
+      summary: Get connector status
+      operationId: getConnectorStatus
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Connector status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorStatusResponse"
+
+    delete:
+      tags: [Connectors]
+      summary: Revoke OAuth connection
+      description: Revoke OAuth grant and delete stored credentials
+      operationId: revokeConnector
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Connection revoked
+
+  # ---- System ----
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Returns status of all dependent services
+      operationId: healthCheck
+      security: []
+      responses:
+        "200":
+          description: All services healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /metrics:
+    get:
+      tags: [System]
+      summary: Prometheus metrics
+      description: |
+        Returns metrics in Prometheus format.
+
+        Key metrics:
+        - `http_requests_total` (by method, endpoint, status)
+        - `http_request_duration_seconds` (histogram)
+        - `pipeline_jobs_total` (by status)
+        - `profile_cache_hit_ratio`
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
