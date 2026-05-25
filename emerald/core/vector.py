@@ -18,9 +18,17 @@ class VectorStore:
 
     def __init__(self, use_db: bool = True) -> None:
         self._use_db = use_db
-        self._memory_store: dict[str, list[float]] = {}  # chunk_id → embedding
-        self._memory_texts: dict[str, str] = {}  # chunk_id → text
-        self._memory_entities: dict[str, str] = {}  # chunk_id → entity_id
+        self._session_factory = None
+        if use_db:
+            try:
+                from emerald.db.session import session_factory
+                self._session_factory = session_factory
+            except Exception:
+                self._use_db = False
+        # In-memory fallback
+        self._memory_store: dict[str, list[float]] = {}
+        self._memory_texts: dict[str, str] = {}
+        self._memory_entities: dict[str, str] = {}
 
     async def store(
         self,
@@ -37,10 +45,24 @@ class VectorStore:
         In DB mode, writes to the embeddings table with pgvector.
         In test mode, stores in memory.
         """
-        if self._use_db:
-            # TODO: SQLAlchemy async insert into embeddings table
-            # INSERT INTO embeddings (chunk_id, text, embedding, entity_id, ...)
-            pass
+        if self._use_db and self._session_factory:
+            from sqlalchemy import text
+            async with self._session_factory.session() as session:
+                await session.execute(
+                    text("""
+                        INSERT INTO embeddings (chunk_id, text, embedding, entity_id, document_id, model_name, dimensions)
+                        VALUES (:chunk_id, :text, :embedding, :entity_id, :document_id, :model_name, :dimensions)
+                    """),
+                    {
+                        "chunk_id": chunk_id,
+                        "text": text,
+                        "embedding": embedding,
+                        "entity_id": entity_id,
+                        "document_id": document_id,
+                        "model_name": model_name,
+                        "dimensions": len(embedding),
+                    },
+                )
         else:
             self._memory_store[chunk_id] = embedding
             self._memory_texts[chunk_id] = text
@@ -59,11 +81,25 @@ class VectorStore:
 
         Returns list of (chunk_id, text, score) sorted by descending similarity.
         """
-        if self._use_db:
-            # TODO: pgvector cosine similarity query
-            # SELECT chunk_id, embedding <=> $query_embedding AS score FROM embeddings
-            # WHERE entity_id = $entity_id ORDER BY score LIMIT $top_k
-            return []
+        if self._use_db and self._session_factory:
+            from sqlalchemy import text
+            async with self._session_factory.session() as session:
+                result = await session.execute(
+                    text("""
+                        SELECT chunk_id, text, 1 - (embedding <=> :query_embedding) AS score
+                        FROM embeddings
+                        WHERE entity_id = :entity_id
+                        ORDER BY embedding <=> :query_embedding
+                        LIMIT :top_k
+                    """),
+                    {
+                        "query_embedding": query_embedding,
+                        "entity_id": entity_id,
+                        "top_k": top_k,
+                    },
+                )
+                rows = result.fetchall()
+                return [(row.chunk_id, row.text, float(row.score)) for row in rows]
         else:
             return self._memory_search(query_embedding, entity_id, top_k)
 
