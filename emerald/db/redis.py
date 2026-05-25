@@ -22,7 +22,11 @@ async def close_redis() -> None:
     """Close the Redis async client."""
     global _client
     if _client:
-        await _client.close()
+        # redis-py 5.0+ prefers aclose(); fall back for older versions
+        if hasattr(_client, "aclose"):
+            await _client.aclose()
+        else:
+            await _client.close()
         _client = None
 
 
