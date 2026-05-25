@@ -6,6 +6,9 @@ pytest-asyncio>=0.23
 pytest-cov>=4.0
 ruff>=0.3
 mypy>=1.8
+fakeredis>=2.0
+testcontainers>=4.0
+tenacity>=8.0
 
 # Extraction dependencies (for local development)
 PyMuPDF>=1.23
