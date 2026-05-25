@@ -1,2 +1,8 @@
 .DS_Store
 .worktrees/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
