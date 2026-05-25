@@ -19,7 +19,24 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     from emerald.core.logging import configure_logging
     configure_logging(level=settings.emerald_log_level)
+
+    from emerald.db.neo4j import init_neo4j
+    from emerald.db.redis import init_redis
+    from emerald.db.session import session_factory
+    from sqlalchemy import text
+
+    await init_neo4j()
+    await init_redis()
+    async with session_factory.session() as s:
+        await s.execute(text("SELECT 1"))
+
     yield
+
+    from emerald.db.neo4j import close_neo4j
+    from emerald.db.redis import close_redis
+    await close_neo4j()
+    await close_redis()
+    await session_factory.close()
 
 
 def create_app(engine: MemoryEngine | None = None) -> FastAPI:

@@ -1,4 +1,4 @@
-"""Neo4j driver singleton."""
+"""Neo4j async driver lifecycle."""
 
 from __future__ import annotations
 
@@ -6,34 +6,33 @@ from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from emerald.config import get_settings
 
-
-class Neo4jDriver:
-    """Async Neo4j driver wrapper."""
-
-    def __init__(self, uri: str, user: str, password: str) -> None:
-        self._driver: AsyncDriver = AsyncGraphDatabase.driver(
-            uri, auth=(user, password)
-        )
-
-    @property
-    def driver(self) -> AsyncDriver:
-        return self._driver
-
-    async def verify(self) -> None:
-        await self._driver.verify_connectivity()
-
-    async def close(self) -> None:
-        await self._driver.close()
+_driver: AsyncDriver | None = None
 
 
-settings = get_settings()
-neo4j_driver = Neo4jDriver(
-    uri=settings.neo4j_uri,
-    user=settings.neo4j_user,
-    password=settings.neo4j_password,
-)
+async def init_neo4j() -> None:
+    """Initialize the Neo4j async driver. Called in FastAPI lifespan."""
+    global _driver
+    settings = get_settings()
+    _driver = AsyncGraphDatabase.driver(
+        settings.neo4j_uri,
+        auth=(settings.neo4j_user, settings.neo4j_password),
+    )
+    await _driver.verify_connectivity()
 
 
-def get_neo4j() -> Neo4jDriver:
-    """FastAPI dependency for Neo4j driver."""
-    return neo4j_driver
+async def close_neo4j() -> None:
+    """Close the Neo4j async driver."""
+    global _driver
+    if _driver:
+        await _driver.close()
+        _driver = None
+
+
+def get_neo4j_driver() -> AsyncDriver:
+    """Return the initialized Neo4j driver.
+
+    Raises RuntimeError if init_neo4j() has not been called.
+    """
+    if _driver is None:
+        raise RuntimeError("Neo4j driver not initialized. Call init_neo4j() first.")
+    return _driver
