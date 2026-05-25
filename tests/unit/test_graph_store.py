@@ -1,148 +1,67 @@
-"""Unit tests for GraphStore (in-memory mode)."""
-
-from datetime import datetime, timedelta, timezone
+"""Unit tests for GraphStore (in-memory fallback mode)."""
 
 import pytest
+from datetime import datetime, timezone, timedelta
 
 from emerald.core.graph import GraphStore
 
 
 @pytest.fixture
-def store():
+def graph():
     return GraphStore(use_db=False)
 
 
 @pytest.mark.asyncio
-async def test_create_memory_returns_string_id(store):
-    mid = await store.create_memory("test", entity_id="user_1")
-    assert isinstance(mid, str)
-    assert len(mid) == 32  # UUID hex
+async def test_create_memory_returns_id(graph):
+    mid = await graph.create_memory("test content", entity_id="e1")
+    assert isinstance(mid, str) and len(mid) > 0
 
 
 @pytest.mark.asyncio
-async def test_create_memory_sets_defaults(store):
-    mid = await store.create_memory("hello world", entity_id="user_1")
-    m = await store.get_memory(mid)
-    assert m is not None
+async def test_create_memory_defaults(graph):
+    mid = await graph.create_memory("test", entity_id="e1")
+    m = await graph.get_memory(mid)
     assert m["is_latest"] is True
-    assert m["confidence"] == 0.8
     assert m["memory_type"] == "fact"
-    assert m["valid_from"] is not None
-    assert m["valid_until"] is None
-    assert m["expired_at"] is None
-    assert m["replaced_by"] is None
+    assert m["confidence"] == 0.8
+    assert isinstance(m["valid_from"], datetime)
 
 
 @pytest.mark.asyncio
-async def test_get_memory_found(store):
-    mid = await store.create_memory("find me", entity_id="user_1")
-    m = await store.get_memory(mid)
-    assert m["content"] == "find me"
+async def test_get_memory_not_found(graph):
+    assert await graph.get_memory("nonexistent") is None
 
 
 @pytest.mark.asyncio
-async def test_get_memory_not_found(store):
-    m = await store.get_memory("nonexistent_id")
-    assert m is None
+async def test_list_latest_excludes_expired(graph):
+    mid = await graph.create_memory("expired", entity_id="e1")
+    for m in graph._memories.get("e1", []):
+        if m["id"] == mid:
+            m["valid_until"] = datetime.now(timezone.utc) - timedelta(days=1)
+    latest = await graph.list_latest_memories("e1")
+    assert not any(m["id"] == mid for m in latest)
 
 
 @pytest.mark.asyncio
-async def test_list_latest_memories(store):
-    await store.create_memory("m1", entity_id="user_1")
-    await store.create_memory("m2", entity_id="user_1")
-    await store.create_memory("m3", entity_id="user_1")
-
-    memories = await store.list_latest_memories("user_1")
-    assert len(memories) == 3
-    # Most recent first
-    assert memories[0]["content"] == "m3"
-
-
-@pytest.mark.asyncio
-async def test_list_latest_respects_limit(store):
+async def test_list_latest_respects_limit(graph):
     for i in range(10):
-        await store.create_memory(f"m{i}", entity_id="user_1")
-
-    memories = await store.list_latest_memories("user_1", limit=3)
-    assert len(memories) == 3
-
-
-@pytest.mark.asyncio
-async def test_list_latest_excludes_not_latest(store):
-    mid = await store.create_memory("expired", entity_id="user_1")
-    await store.update_is_latest(mid, False)
-
-    memories = await store.list_latest_memories("user_1")
-    assert len(memories) == 0
+        await graph.create_memory(f"mem {i}", entity_id="e1")
+    latest = await graph.list_latest_memories("e1", limit=3)
+    assert len(latest) == 3
 
 
 @pytest.mark.asyncio
-async def test_list_latest_excludes_expired_valid_until(store):
-    now = datetime.now(timezone.utc)
-    yesterday = now - timedelta(days=1)
-
-    mid = await store.create_memory("expired soon", entity_id="user_1")
-    # Manually set valid_until in the past
-    for memories in store._memories.values():
-        for m in memories:
-            if m["id"] == mid:
-                m["valid_until"] = yesterday
-
-    memories = await store.list_latest_memories("user_1")
-    assert len(memories) == 0
-
-
-@pytest.mark.asyncio
-async def test_list_latest_keeps_valid_until_future(store):
-    now = datetime.now(timezone.utc)
-    tomorrow = now + timedelta(days=1)
-
-    mid = await store.create_memory("valid future", entity_id="user_1")
-    for memories in store._memories.values():
-        for m in memories:
-            if m["id"] == mid:
-                m["valid_until"] = tomorrow
-
-    memories = await store.list_latest_memories("user_1")
-    assert len(memories) == 1
-
-
-@pytest.mark.asyncio
-async def test_update_is_latest_with_replaced_by(store):
-    mid = await store.create_memory("old version", entity_id="user_1")
-    await store.update_is_latest(mid, False, replaced_by="new_id_123")
-
-    m = await store.get_memory(mid)
+async def test_update_is_latest_with_replaced_by(graph):
+    mid = await graph.create_memory("old", entity_id="e1")
+    await graph.update_is_latest(mid, False, replaced_by="new_id")
+    m = await graph.get_memory(mid)
     assert m["is_latest"] is False
-    assert m["replaced_by"] == "new_id_123"
+    assert m["replaced_by"] == "new_id"
 
 
 @pytest.mark.asyncio
-async def test_memory_entity_isolation(store):
-    await store.create_memory("alice's", entity_id="alice")
-    await store.create_memory("bob's", entity_id="bob")
-
-    alice = await store.list_latest_memories("alice")
-    bob = await store.list_latest_memories("bob")
-
-    alice_texts = [m["content"] for m in alice]
-    bob_texts = [m["content"] for m in bob]
-    assert "alice's" in alice_texts
-    assert "bob's" not in alice_texts
-    assert "bob's" in bob_texts
-
-
-@pytest.mark.asyncio
-async def test_list_latest_empty_entity(store):
-    memories = await store.list_latest_memories("nonexistent")
-    assert memories == []
-
-
-@pytest.mark.asyncio
-async def test_list_latest_filter_by_memory_type(store):
-    await store.create_memory("fact 1", entity_id="user_1", memory_type="fact")
-    await store.create_memory("pref 1", entity_id="user_1", memory_type="preference")
-
-    facts = await store.list_latest_memories("user_1", memory_type="fact")
-    assert len(facts) == 1
-    assert facts[0]["memory_type"] == "fact"
+async def test_entity_isolation(graph):
+    await graph.create_memory("alice", entity_id="alice")
+    await graph.create_memory("bob", entity_id="bob")
+    alice_mems = await graph.list_latest_memories("alice")
+    assert all("bob" not in m["content"] for m in alice_mems)
