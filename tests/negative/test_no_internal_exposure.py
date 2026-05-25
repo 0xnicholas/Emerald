@@ -6,11 +6,8 @@ AGENTS.md: "禁止 API 泄漏。SDK 不得暴露内部图谱操作。"
 
 import inspect
 
-import pytest
-
-from emerald.sdk import EmeraldClient
 from emerald.api.app import create_app
-
+from emerald.sdk import EmeraldClient
 
 # ---- SDK: no internal exposure ----
 

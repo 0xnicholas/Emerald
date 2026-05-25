@@ -5,17 +5,18 @@ Routes incoming content through the pipeline: detect type → extract → chunk 
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
 from uuid import uuid4
 
-from emerald.core.extractor import ExtractorRegistry, ExtractedContent
-from emerald.core.chunker import ChunkerRegistry, Chunk
+import structlog
+
+from emerald.core.chunker import Chunk, ChunkerRegistry
 from emerald.core.embedder import EmbeddingProvider, get_embedding_provider
+from emerald.core.extractor import ExtractedContent, ExtractorRegistry
 from emerald.core.graph import GraphStore
-from emerald.core.vector import VectorStore
-from emerald.core.relationship import RelationshipEngine
 from emerald.core.profile import ProfileManager
+from emerald.core.relationship import RelationshipEngine
+from emerald.core.vector import VectorStore
 
 logger = structlog.get_logger(__name__)
 

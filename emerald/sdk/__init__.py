@@ -6,11 +6,11 @@ AGENTS.md principle: "SDK 各语言方法名、参数结构、返回类型一一
 from emerald.sdk.client import EmeraldClient
 from emerald.sdk.models import (
     AddResult,
+    HealthStatus,
+    Profile,
+    ProfileFact,
     SearchResult,
     SearchResults,
-    ProfileFact,
-    Profile,
-    HealthStatus,
 )
 
 __all__ = [

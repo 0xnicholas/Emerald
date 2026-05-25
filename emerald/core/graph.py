@@ -6,9 +6,11 @@ queries latest memories, and supports relationship operations.
 
 from __future__ import annotations
 
-import structlog
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
+
+import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -31,7 +33,7 @@ class GraphStore:
                 # Driver not initialized — silently fall back to in-memory
                 self._use_db = False
         # In-memory store: entity_id → list of memory dicts
-        self._memories: dict[str, list[dict]] = {}
+        self._memories: dict[str, list[dict[str, Any]]] = {}
 
     async def create_memory(
         self,
@@ -50,7 +52,7 @@ class GraphStore:
         Returns the memory ID.
         """
         memory_id = uuid4().hex
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if self._use_db and self._driver:
             async with self._driver.session() as session:
@@ -115,7 +117,7 @@ class GraphStore:
         )
         return memory_id
 
-    async def get_memory(self, memory_id: str) -> dict | None:
+    async def get_memory(self, memory_id: str) -> dict[str, Any] | None:
         """Get a single memory by ID."""
         if self._use_db and self._driver:
             async with self._driver.session() as session:
@@ -139,7 +141,7 @@ class GraphStore:
         *,
         limit: int = 50,
         memory_type: str | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """List latest (is_latest=True, not expired) memories for an entity.
 
         Ordered by created_at descending.
@@ -166,7 +168,7 @@ class GraphStore:
                 return memories
 
         memories = self._memories.get(entity_id, [])
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         latest = [
             m
             for m in memories
@@ -202,7 +204,7 @@ class GraphStore:
             for m in memories:
                 if m["id"] == memory_id:
                     m["is_latest"] = is_latest
-                    m["updated_at"] = datetime.now(timezone.utc)
+                    m["updated_at"] = datetime.now(UTC)
                     if replaced_by is not None:
                         m["replaced_by"] = replaced_by
                     return

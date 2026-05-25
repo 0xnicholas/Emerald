@@ -20,10 +20,11 @@ async def lifespan(app: FastAPI):
     from emerald.core.logging import configure_logging
     configure_logging(level=settings.emerald_log_level)
 
+    from sqlalchemy import text
+
     from emerald.db.neo4j import init_neo4j
     from emerald.db.redis import init_redis
     from emerald.db.session import session_factory
-    from sqlalchemy import text
 
     await init_neo4j()
     await init_redis()
@@ -104,12 +105,12 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
 
     # Register routes
     from emerald.api.routes import (
-        memories,
-        search,
-        profiles,
-        upload,
         connectors,
+        memories,
+        profiles,
+        search,
         system,
+        upload,
     )
 
     app.include_router(memories.router, prefix="/v1")

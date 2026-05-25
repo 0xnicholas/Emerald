@@ -2,14 +2,14 @@
 
 import pytest
 
-from emerald.core.engine import MemoryEngine
+from emerald.core.chunker import ChunkerRegistry
 from emerald.core.embedder import MockEmbeddingProvider
+from emerald.core.engine import MemoryEngine
+from emerald.core.extractor import ExtractorRegistry
 from emerald.core.graph import GraphStore
 from emerald.core.vector import VectorStore
-from emerald.core.extractor import ExtractorRegistry
-from emerald.core.chunker import ChunkerRegistry
-from emerald.pipeline.extraction.text import TextExtractor
 from emerald.pipeline.chunking.text import TextChunker
+from emerald.pipeline.extraction.text import TextExtractor
 
 
 @pytest.fixture

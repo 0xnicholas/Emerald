@@ -17,8 +17,8 @@ class VideoExtractor(BaseExtractor):
     """
 
     async def extract(self, content: bytes, **kwargs) -> ExtractedContent:
-        import subprocess
         import shutil
+        import subprocess
 
         if not shutil.which("ffmpeg"):
             raise ExtractionError(
@@ -28,8 +28,8 @@ class VideoExtractor(BaseExtractor):
             )
 
         try:
-            import tempfile
             import os
+            import tempfile
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
                 f.write(content)

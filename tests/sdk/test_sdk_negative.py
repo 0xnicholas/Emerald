@@ -1,12 +1,10 @@
 """SDK negative tests — error handling for bad inputs."""
 
-import os
 
-import pytest
 import httpx
+import pytest
 
 from emerald.sdk import EmeraldClient
-
 
 # ---- API key ----
 

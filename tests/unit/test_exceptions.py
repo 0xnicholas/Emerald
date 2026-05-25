@@ -1,20 +1,19 @@
 """Unit tests for exceptions module."""
 
-import pytest
 
 from emerald.core.exceptions import (
-    EmeraldError,
-    ExtractionError,
-    EmbeddingError,
-    PipelineError,
-    NotFoundError,
-    ContentTooLargeError,
-    EmptyContentError,
     AuthenticationError,
-    PermissionDeniedError,
-    UnsupportedContentTypeError,
+    ContentTooLargeError,
     DuplicateError,
+    EmbeddingError,
+    EmeraldError,
+    EmptyContentError,
+    ExtractionError,
+    NotFoundError,
+    PermissionDeniedError,
+    PipelineError,
     UnsupportedConnectorError,
+    UnsupportedContentTypeError,
 )
 
 

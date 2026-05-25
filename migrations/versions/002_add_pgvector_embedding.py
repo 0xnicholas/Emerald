@@ -6,7 +6,6 @@ Create Date: 2026-05-25 00:00:00.000000
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers
 revision = "002_add_pgvector_embedding"

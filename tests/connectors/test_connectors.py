@@ -1,10 +1,11 @@
 """Connector integration tests — OAuth flow, sync, webhook, pipeline integration."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
+from emerald.connectors.auth import decrypt_credentials, encrypt_credentials
 from emerald.connectors.base import (
     BaseConnector,
     ConnectorCredentials,
@@ -12,17 +13,15 @@ from emerald.connectors.base import (
     SyncMode,
     SyncResult,
 )
-from emerald.connectors.auth import encrypt_credentials, decrypt_credentials
 from emerald.connectors.registry import ConnectorRegistry
-from emerald.core.engine import MemoryEngine
+from emerald.core.chunker import ChunkerRegistry
 from emerald.core.embedder import MockEmbeddingProvider
+from emerald.core.engine import MemoryEngine
+from emerald.core.extractor import ExtractorRegistry
 from emerald.core.graph import GraphStore
 from emerald.core.vector import VectorStore
-from emerald.core.extractor import ExtractorRegistry
-from emerald.core.chunker import ChunkerRegistry
-from emerald.pipeline.extraction.text import TextExtractor
 from emerald.pipeline.chunking.text import TextChunker
-
+from emerald.pipeline.extraction.text import TextExtractor
 
 # ---- Mock Connector for testing ----
 
@@ -51,7 +50,7 @@ class MockConnector(BaseConnector):
             access_token="mock_access_token_" + uuid.uuid4().hex,
             refresh_token="mock_refresh_token",
             token_type="Bearer",
-            expires_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(UTC),
             scopes=["read", "write"],
         )
 

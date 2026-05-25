@@ -1,7 +1,8 @@
 """Unit tests for GraphStore (in-memory fallback mode)."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timezone, timedelta
 
 from emerald.core.graph import GraphStore
 
@@ -37,7 +38,7 @@ async def test_list_latest_excludes_expired(graph):
     mid = await graph.create_memory("expired", entity_id="e1")
     for m in graph._memories.get("e1", []):
         if m["id"] == mid:
-            m["valid_until"] = datetime.now(timezone.utc) - timedelta(days=1)
+            m["valid_until"] = datetime.now(UTC) - timedelta(days=1)
     latest = await graph.list_latest_memories("e1")
     assert not any(m["id"] == mid for m in latest)
 

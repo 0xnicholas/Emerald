@@ -8,12 +8,11 @@ AGENTS.md requirements:
 - Computed on write (pipeline INDEXING stage), cached in Redis
 """
 
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from emerald.core.profile import ProfileManager, EntityProfile
 from emerald.core.graph import GraphStore
+from emerald.core.profile import ProfileManager
 
 
 @pytest.fixture

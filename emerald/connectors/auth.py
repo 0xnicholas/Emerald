@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from emerald.connectors.base import ConnectorCredentials
 from emerald.config import get_settings
+from emerald.connectors.base import ConnectorCredentials
 
 
 def _get_encryption_key() -> bytes:

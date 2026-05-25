@@ -2,7 +2,6 @@
 
 import pytest
 
-from emerald.core.exceptions import ExtractionError
 from emerald.pipeline.extraction.url import URLExtractor
 
 

@@ -23,8 +23,8 @@ class AudioExtractor(BaseExtractor):
             )
 
         try:
-            import tempfile
             import os
+            import tempfile
 
             model_size = kwargs.get("model_size", "small")
 

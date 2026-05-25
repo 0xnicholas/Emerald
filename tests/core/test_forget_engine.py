@@ -5,7 +5,7 @@ AGENTS.md requirement:
 - "系统必须能区分有意义的事实和短暂的闲聊"
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -29,7 +29,7 @@ def engine(graph):
 @pytest.mark.asyncio
 async def test_time_expiry_marks_expired(engine, graph):
     """Memories past their valid_until are marked is_latest=False."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
 
     # Create a memory that expires yesterday
@@ -54,7 +54,7 @@ async def test_time_expiry_marks_expired(engine, graph):
 @pytest.mark.asyncio
 async def test_time_expiry_ignores_future(engine, graph):
     """Memories with valid_until in the future are untouched."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     tomorrow = now + timedelta(days=1)
 
     mid = await graph.create_memory("明天有考试", entity_id="user_123")
@@ -86,7 +86,7 @@ async def test_time_expiry_ignores_no_valid_until(engine, graph):
 @pytest.mark.asyncio
 async def test_noise_filter_removes_low_confidence_old(engine, graph):
     """Low-confidence, old, unreferenced memories are archived."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     eight_days_ago = now - timedelta(days=8)
 
     mid = await graph.create_memory(
@@ -122,7 +122,7 @@ async def test_noise_filter_keeps_recent(engine, graph):
 @pytest.mark.asyncio
 async def test_noise_filter_keeps_high_confidence(engine, graph):
     """High-confidence old memories are kept."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     eight_days_ago = now - timedelta(days=8)
 
     mid = await graph.create_memory(
@@ -146,7 +146,7 @@ async def test_noise_filter_keeps_high_confidence(engine, graph):
 @pytest.mark.asyncio
 async def test_episodic_decay_archives_old(engine, graph):
     """Episodic memories > 90 days are archived."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ninety_one_days_ago = now - timedelta(days=91)
 
     mid = await graph.create_memory(
@@ -181,7 +181,7 @@ async def test_episodic_decay_keeps_recent(engine, graph):
 @pytest.mark.asyncio
 async def test_episodic_decay_only_affects_episodic(engine, graph):
     """Non-episodic memories are never decayed."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ninety_one_days_ago = now - timedelta(days=91)
 
     mid = await graph.create_memory(

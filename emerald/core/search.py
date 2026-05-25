@@ -7,13 +7,14 @@ and sorted by relevance score.
 
 from __future__ import annotations
 
-import structlog
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
+import structlog
+
+from emerald.core.embedder import EmbeddingProvider
 from emerald.core.graph import GraphStore
 from emerald.core.vector import VectorStore
-from emerald.core.embedder import EmbeddingProvider
 
 logger = structlog.get_logger(__name__)
 

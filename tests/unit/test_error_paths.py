@@ -3,11 +3,10 @@
 import pytest
 
 from emerald.core.exceptions import ExtractionError
-from emerald.pipeline.extraction.pdf import PDFExtractor
-from emerald.pipeline.extraction.image import ImageExtractor
 from emerald.pipeline.extraction.audio import AudioExtractor
+from emerald.pipeline.extraction.image import ImageExtractor
+from emerald.pipeline.extraction.pdf import PDFExtractor
 from emerald.pipeline.extraction.video import VideoExtractor
-
 
 # ---- PDF extractor error paths ----
 
@@ -15,13 +14,15 @@ from emerald.pipeline.extraction.video import VideoExtractor
 async def test_pdf_extractor_missing_pymupdf():
     """When PyMuPDF is not installed, raises ExtractionError(not retryable)."""
     import sys
-    sys.modules.pop("fitz", None)
-
-    extractor = PDFExtractor()
-    with pytest.raises(ExtractionError) as exc:
-        await extractor.extract(b"%PDF-1.4 fake pdf content")
-    assert exc.value.retryable is False
-    assert "PyMuPDF" in str(exc.value)
+    sys.modules["fitz"] = None
+    try:
+        extractor = PDFExtractor()
+        with pytest.raises(ExtractionError) as exc:
+            await extractor.extract(b"%PDF-1.4 fake pdf content")
+        assert exc.value.retryable is False
+        assert "PyMuPDF" in str(exc.value)
+    finally:
+        sys.modules.pop("fitz", None)
 
 
 @pytest.mark.asyncio
@@ -29,7 +30,6 @@ async def test_pdf_extractor_corrupted_file():
     """Corrupted PDF raises ExtractionError(not retryable)."""
     pytest.importorskip("fitz", reason="PyMuPDF not installed")
 
-    import fitz
 
     extractor = PDFExtractor()
     with pytest.raises(ExtractionError) as exc:
@@ -62,13 +62,15 @@ async def test_image_extractor_handles_missing_dependency():
 async def test_audio_extractor_missing_whisper(monkeypatch):
     """When faster-whisper is not installed, raises ExtractionError(not retryable)."""
     import sys
-    sys.modules.pop("faster_whisper", None)
-
-    extractor = AudioExtractor()
-    with pytest.raises(ExtractionError) as exc:
-        await extractor.extract(b"fake audio bytes")
-    assert exc.value.retryable is False
-    assert "faster-whisper" in str(exc.value)
+    sys.modules["faster_whisper"] = None
+    try:
+        extractor = AudioExtractor()
+        with pytest.raises(ExtractionError) as exc:
+            await extractor.extract(b"fake audio bytes")
+        assert exc.value.retryable is False
+        assert "faster-whisper" in str(exc.value)
+    finally:
+        sys.modules.pop("faster_whisper", None)
 
 
 # ---- Video extractor error paths ----
@@ -113,9 +115,9 @@ async def test_engine_handles_unsupported_content_type():
 async def test_engine_handles_empty_content():
     """Engine correctly propagates EmptyContentError from extractor."""
     from emerald.core.engine import MemoryEngine
+    from emerald.core.exceptions import EmptyContentError
     from emerald.core.extractor import ExtractorRegistry
     from emerald.pipeline.extraction.text import TextExtractor
-    from emerald.core.exceptions import EmptyContentError
 
     extractors = ExtractorRegistry()
     extractors.register("text", TextExtractor())
@@ -131,8 +133,8 @@ async def test_engine_handles_empty_content():
 @pytest.mark.asyncio
 async def test_search_handles_embedding_failure():
     """Search gracefully handles embedding generation failure."""
-    from emerald.core.search import SearchOrchestrator, SearchMode
     from emerald.core.graph import GraphStore
+    from emerald.core.search import SearchMode, SearchOrchestrator
 
     # Use graph store for memory search fallback, no embedder
     graph = GraphStore(use_db=False)

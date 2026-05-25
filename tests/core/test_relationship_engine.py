@@ -6,10 +6,10 @@ AGENTS.md requirement: "每种关系类型必须有确定性的测试用例"
 
 import pytest
 
-from emerald.core.relationship import RelationshipEngine, RelationType
-from emerald.core.graph import GraphStore
-from emerald.core.vector import VectorStore
 from emerald.core.embedder import MockEmbeddingProvider
+from emerald.core.graph import GraphStore
+from emerald.core.relationship import RelationshipEngine, RelationType
+from emerald.core.vector import VectorStore
 
 
 @pytest.fixture

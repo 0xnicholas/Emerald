@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from neo4j import AsyncGraphDatabase, AsyncDriver
+from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from emerald.config import get_settings
 

@@ -8,20 +8,20 @@ AGENTS.md: "每种关系类型必须有确定性的测试用例"
 """
 
 import time
+from datetime import UTC
 
 import pytest
 
-from emerald.core.engine import MemoryEngine
-from emerald.core.embedder import MockEmbeddingProvider
-from emerald.core.graph import GraphStore
-from emerald.core.vector import VectorStore
-from emerald.core.extractor import ExtractorRegistry
 from emerald.core.chunker import ChunkerRegistry
-from emerald.core.relationship import RelationshipEngine
-from emerald.core.search import SearchOrchestrator, SearchMode
+from emerald.core.embedder import MockEmbeddingProvider
+from emerald.core.engine import MemoryEngine
+from emerald.core.extractor import ExtractorRegistry
+from emerald.core.graph import GraphStore
 from emerald.core.profile import ProfileManager
-from emerald.pipeline.extraction.text import TextExtractor
+from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.vector import VectorStore
 from emerald.pipeline.chunking.text import TextChunker
+from emerald.pipeline.extraction.text import TextExtractor
 
 
 @pytest.fixture
@@ -90,10 +90,10 @@ class TestTemporalFactTracking:
     @pytest.mark.asyncio
     async def test_temporary_fact_expiry(self, engine):
         """Temporary facts (e.g., 'exam tomorrow') expire after their valid_until."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         entity = "user_temp"
-        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        yesterday = datetime.now(UTC) - timedelta(days=1)
 
         # Add a temporary fact and manually set its valid_until to yesterday
         result = await engine.add("明天有考试", entity_id=entity)

@@ -2,10 +2,10 @@
 
 import pytest
 
-from emerald.core.search import SearchOrchestrator, SearchMode, SearchResult
-from emerald.core.graph import GraphStore
-from emerald.core.vector import VectorStore
 from emerald.core.embedder import MockEmbeddingProvider
+from emerald.core.graph import GraphStore
+from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.vector import VectorStore
 
 
 @pytest.fixture

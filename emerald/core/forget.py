@@ -12,9 +12,10 @@ AGENTS.md: "没有遗忘，每句随意的话都会变成永久记忆。图谱�
 
 from __future__ import annotations
 
-import structlog
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
+
+import structlog
 
 from emerald.core.graph import GraphStore
 
@@ -56,7 +57,7 @@ class ForgetEngine:
             AND m.is_latest = true
           SET m.is_latest = false, m.expired_at = datetime()
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         count = 0
 
         entities = [entity_id] if entity_id else list(self.graph._memories.keys())
@@ -85,7 +86,7 @@ class ForgetEngine:
         - created > NOISE_MIN_AGE_DAYS ago
         - is_latest=True (not already handled by another strategy)
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(days=self.NOISE_MIN_AGE_DAYS)
         count = 0
 
@@ -117,7 +118,7 @@ class ForgetEngine:
         30-90 days: weight already reduced by search (not implemented yet)
         Only affects memory_type='episodic'.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         archive_cutoff = now - timedelta(days=self.EPISODIC_ARCHIVE_DAYS)
         count = 0
 

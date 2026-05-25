@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from emerald.api.schemas import SearchRequest
-from emerald.core.search import SearchOrchestrator, SearchMode, SearchResult
+from emerald.core.search import SearchMode, SearchOrchestrator
 
 router = APIRouter(tags=["Search"])
 

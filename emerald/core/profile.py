@@ -12,9 +12,10 @@ AGENTS.md:
 
 from __future__ import annotations
 
-import structlog
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
+import structlog
 
 from emerald.core.graph import GraphStore
 
@@ -97,7 +98,7 @@ class ProfileManager:
         Dynamic facts: episodic type, created within 7 days, confidence >= 0.3
         """
         all_memories = await self.graph.list_latest_memories(entity_id, limit=200)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(days=self.DYNAMIC_LOOKBACK_DAYS)
 
         static_facts: list[ProfileFact] = []

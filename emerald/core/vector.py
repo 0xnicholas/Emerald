@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import structlog
 
-from emerald.core.exceptions import NotFoundError
-
 logger = structlog.get_logger(__name__)
 
 
@@ -46,13 +44,21 @@ class VectorStore:
         In test mode, stores in memory.
         """
         if self._use_db and self._session_factory:
-            from sqlalchemy import text
+            from sqlalchemy import text as sql_text
             async with self._session_factory.session() as session:
                 await session.execute(
-                    text("""
-                        INSERT INTO embeddings (chunk_id, text, embedding, entity_id, document_id, model_name, dimensions)
-                        VALUES (:chunk_id, :text, :embedding, :entity_id, :document_id, :model_name, :dimensions)
-                    """),
+                    sql_text(
+                        """
+                        INSERT INTO embeddings (
+                            chunk_id, text, embedding, entity_id,
+                            document_id, model_name, dimensions
+                        )
+                        VALUES (
+                            :chunk_id, :text, :embedding, :entity_id,
+                            :document_id, :model_name, :dimensions
+                        )
+                        """
+                    ),
                     {
                         "chunk_id": chunk_id,
                         "text": text,
@@ -82,10 +88,10 @@ class VectorStore:
         Returns list of (chunk_id, text, score) sorted by descending similarity.
         """
         if self._use_db and self._session_factory:
-            from sqlalchemy import text
+            from sqlalchemy import text as sql_text
             async with self._session_factory.session() as session:
                 result = await session.execute(
-                    text("""
+                    sql_text("""
                         SELECT chunk_id, text, 1 - (embedding <=> :query_embedding) AS score
                         FROM embeddings
                         WHERE entity_id = :entity_id
@@ -125,7 +131,7 @@ class VectorStore:
         """Compute cosine similarity between two vectors."""
         import math
 
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))
         if norm_a == 0 or norm_b == 0:

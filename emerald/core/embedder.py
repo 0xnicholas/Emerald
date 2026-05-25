@@ -6,11 +6,12 @@ Supports OpenAI, BGE (local), text2vec (local), and custom providers.
 
 from __future__ import annotations
 
-import structlog
 from abc import ABC, abstractmethod
-from typing import Protocol
 
-from emerald.config import EmbeddingProvider as EmbeddingProviderEnum, get_settings
+import structlog
+
+from emerald.config import EmbeddingProvider as EmbeddingProviderEnum
+from emerald.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -78,7 +79,6 @@ class MockEmbeddingProvider(EmbeddingProvider):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import hashlib
-        import struct
 
         embeddings = []
         for text in texts:

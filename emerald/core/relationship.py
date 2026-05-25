@@ -9,8 +9,9 @@ AGENTS.md requirement: "图谱操作必须是原子的。一个事实更新取�
 from __future__ import annotations
 
 import re
-import structlog
 from enum import Enum
+
+import structlog
 
 from emerald.core.graph import GraphStore
 from emerald.core.vector import VectorStore

@@ -2,7 +2,7 @@
 
 import pytest
 
-from emerald.core.exceptions import EmptyContentError, ExtractionError
+from emerald.core.exceptions import EmptyContentError
 from emerald.pipeline.extraction.text import TextExtractor
 
 

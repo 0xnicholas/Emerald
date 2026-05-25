@@ -7,11 +7,12 @@ embed → index) and provides both sync (lightweight content) and async
 
 from __future__ import annotations
 
-import structlog
 from uuid import uuid4
 
-from emerald.pipeline.extraction.registry import ExtractorRegistry
+import structlog
+
 from emerald.pipeline.chunking.registry import ChunkerRegistry
+from emerald.pipeline.extraction.registry import ExtractorRegistry
 
 logger = structlog.get_logger(__name__)
 

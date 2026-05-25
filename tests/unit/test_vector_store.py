@@ -1,7 +1,8 @@
 """Unit tests for VectorStore (in-memory fallback mode)."""
 
-import pytest
 import math
+
+import pytest
 
 from emerald.core.vector import VectorStore
 
