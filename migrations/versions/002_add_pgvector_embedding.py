@@ -16,10 +16,27 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    op.execute("ALTER TABLE embeddings DROP COLUMN embedding")
-    op.execute("ALTER TABLE embeddings ADD COLUMN embedding vector(1536) NOT NULL")
+    # Idempotent: only convert if embedding is not already a vector type.
+    # In production, run a data-migration batch before applying this.
     op.execute(
-        "CREATE INDEX idx_embeddings_hnsw ON embeddings "
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'embeddings'
+                  AND column_name = 'embedding'
+                  AND udt_name = 'vector'
+            ) THEN
+                ALTER TABLE embeddings
+                    ALTER COLUMN embedding TYPE vector(1536)
+                    USING embedding::text::vector(1536);
+            END IF;
+        END $$;
+        """
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON embeddings "
         "USING hnsw (embedding vector_cosine_ops) "
         "WITH (m = 16, ef_construction = 64)"
     )

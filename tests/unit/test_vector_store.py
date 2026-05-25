@@ -53,6 +53,35 @@ async def test_search_respects_top_k(vector):
 
 
 @pytest.mark.asyncio
+async def test_cosine_similarity_opposite(vector):
+    """Opposite vectors have cosine similarity -1."""
+    a = [1.0, 0.0]
+    b = [-1.0, 0.0]
+    score = vector._cosine_similarity(a, b)
+    assert math.isclose(score, -1.0, abs_tol=1e-9)
+
+
+@pytest.mark.asyncio
+async def test_cosine_similarity_zero_vector(vector):
+    """Zero vector returns 0.0 (degenerate case)."""
+    score = vector._cosine_similarity([0.0, 0.0], [1.0, 0.0])
+    assert score == 0.0
+
+
+@pytest.mark.asyncio
+async def test_results_sorted_by_score_descending(vector):
+    """Search results are returned in descending similarity order."""
+    query = [1.0, 0.0, 0.0]
+    await vector.store("c1", "best", [1.0, 0.0, 0.0], entity_id="e1")
+    await vector.store("c2", "medium", [1.0, 1.0, 0.0], entity_id="e1")
+    await vector.store("c3", "worst", [0.0, 1.0, 0.0], entity_id="e1")
+
+    results = await vector.search(query, entity_id="e1", top_k=3)
+    scores = [s for _, _, s in results]
+    assert scores[0] >= scores[1] >= scores[2]
+
+
+@pytest.mark.asyncio
 async def test_search_empty_store(vector):
     results = await vector.search([1.0, 0.0], entity_id="e1", top_k=5)
     assert results == []

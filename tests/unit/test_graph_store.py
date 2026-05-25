@@ -61,6 +61,41 @@ async def test_update_is_latest_with_replaced_by(graph):
 
 
 @pytest.mark.asyncio
+async def test_list_latest_keeps_valid_until_future(graph):
+    """Memories with a future valid_until remain in latest list."""
+    future = datetime.now(UTC) + timedelta(days=1)
+    mid = await graph.create_memory("future", entity_id="e1", valid_until=future)
+    latest = await graph.list_latest_memories("e1")
+    assert any(m["id"] == mid for m in latest)
+
+
+@pytest.mark.asyncio
+async def test_list_latest_excludes_not_latest(graph):
+    """Memories with is_latest=False are excluded from latest list."""
+    mid = await graph.create_memory("superseded", entity_id="e1")
+    await graph.update_is_latest(mid, is_latest=False)
+    latest = await graph.list_latest_memories("e1")
+    assert not any(m["id"] == mid for m in latest)
+
+
+@pytest.mark.asyncio
+async def test_list_latest_empty_entity(graph):
+    """Querying a non-existent entity returns an empty list."""
+    latest = await graph.list_latest_memories("nonexistent")
+    assert latest == []
+
+
+@pytest.mark.asyncio
+async def test_list_latest_filter_by_memory_type(graph):
+    """Filtering by memory_type returns only matching memories."""
+    await graph.create_memory("fact 1", entity_id="e1", memory_type="fact")
+    await graph.create_memory("pref 1", entity_id="e1", memory_type="preference")
+    facts = await graph.list_latest_memories("e1", memory_type="fact")
+    assert len(facts) == 1
+    assert facts[0]["memory_type"] == "fact"
+
+
+@pytest.mark.asyncio
 async def test_entity_isolation(graph):
     await graph.create_memory("alice", entity_id="alice")
     await graph.create_memory("bob", entity_id="bob")

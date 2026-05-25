@@ -64,7 +64,7 @@ class GraphStore:
                         id: $id, content: $content, summary: $summary,
                         memory_type: $memory_type, confidence: $confidence,
                         is_latest: true, valid_from: datetime(),
-                        valid_until: $valid_until,
+                        valid_until: datetime($valid_until),
                         replaced_by: null,
                         source_document_id: $document_id,
                         source_type: $source_type,

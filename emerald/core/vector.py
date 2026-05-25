@@ -18,7 +18,7 @@ def _pg_vector_literal(embedding: list[float]) -> str:
         from pgvector.utils import Vector as PgVector
 
         return str(PgVector(embedding).to_text())
-    except Exception:
+    except ImportError:
         # Fallback if pgvector python package is not installed
         return "[" + ",".join(str(v) for v in embedding) + "]"
 
