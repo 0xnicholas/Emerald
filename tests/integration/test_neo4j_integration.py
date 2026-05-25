@@ -1,53 +1,76 @@
-"""Neo4j integration tests — verify GraphStore with real Neo4j via testcontainers."""
+"""Neo4j integration tests — verify GraphStore with a real Neo4j instance.
+
+Uses a local Neo4j (localhost:7687, neo4j/emerald_dev) instead of
+testcontainers when Docker is unavailable.
+
+Start a local Neo4j manually before running these tests:
+    cd /tmp/neo4j-community-5.26.0
+    bin/neo4j start
+    bin/neo4j-admin dbms set-initial-password emerald_dev
+
+Or set EMERALD_TEST_NEO4J_URI / EMERALD_TEST_NEO4J_PASSWORD to point elsewhere.
+"""
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
-pytestmark = pytest.mark.integration
+NEO4J_URI = os.environ.get("EMERALD_TEST_NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.environ.get("EMERALD_TEST_NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ.get("EMERALD_TEST_NEO4J_PASSWORD", "emerald_dev")
 
 
 @pytest.fixture(scope="module")
-def docker_skipif():
-    """Skip entire module if Docker is not available."""
-    import shutil
+def neo4j_available():
+    """Skip module if local Neo4j is not reachable."""
+    import asyncio
 
-    if shutil.which("docker") is None:
-        pytest.skip("Docker not available", allow_module_level=True)
+    from neo4j import AsyncGraphDatabase
+
+    async def _check():
+        try:
+            driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            await driver.verify_connectivity()
+            await driver.close()
+            return True
+        except Exception:
+            return False
+
+    if not asyncio.run(_check()):
+        pytest.skip("Local Neo4j not reachable at " + NEO4J_URI, allow_module_level=True)
 
 
 @pytest.fixture
-async def neo4j_driver(docker_skipif):
-    """Yield an initialized Neo4j driver backed by a testcontainers container."""
-    from testcontainers.neo4j import Neo4jContainer
+async def neo4j_driver(neo4j_available):
+    """Yield an initialized Neo4j driver connected to the local instance."""
+    from neo4j import AsyncGraphDatabase
 
-    from emerald.db.neo4j import close_neo4j, init_neo4j
+    driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    await driver.verify_connectivity()
 
-    container = Neo4jContainer("neo4j:5-community")
-    container.with_env("NEO4J_PLUGINS", '["apoc"]')
+    # Patch get_neo4j_driver to return this driver
+    import emerald.db.neo4j as neo4j_mod
 
-    with container:
-        bolt_url = container.get_connection_url()
-        # Monkeypatch get_settings to return test URL
-        import emerald.config as config_mod
+    original = neo4j_mod.get_neo4j_driver
 
-        original_get_settings = config_mod.get_settings
-        test_settings = original_get_settings()
-        test_settings.neo4j_uri = bolt_url
-        test_settings.neo4j_user = "neo4j"
-        test_settings.neo4j_password = container.password
+    def _patched():
+        return driver
 
-        config_mod.get_settings = lambda: test_settings
+    neo4j_mod.get_neo4j_driver = _patched
+    neo4j_mod._driver = driver
 
-        await init_neo4j()
+    yield driver
 
-        from emerald.db.neo4j import get_neo4j_driver
+    # Cleanup: delete test data
+    async with driver.session() as session:
+        await session.run("MATCH (m:Memory) WHERE m.id STARTS WITH 'user_int_test' DETACH DELETE m")
+        await session.run("MATCH (e:Entity) WHERE e.id STARTS WITH 'user_int_test' DELETE e")
 
-        driver = get_neo4j_driver()
-        yield driver
-
-        await close_neo4j()
-        config_mod.get_settings = original_get_settings
+    await driver.close()
+    neo4j_mod.get_neo4j_driver = original
+    neo4j_mod._driver = None
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,22 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def _pg_vector_literal(embedding: list[float]) -> str:
+    """Convert a Python list of floats into pgvector text literal.
+
+    asyncpg does not know how to serialise the VECTOR type natively;
+    passing the vector as a string literal '[a,b,c]' works with
+    pgvector's implicit cast.
+    """
+    try:
+        from pgvector.utils import Vector as PgVector
+
+        return str(PgVector(embedding).to_text())
+    except Exception:
+        # Fallback if pgvector python package is not installed
+        return "[" + ",".join(str(v) for v in embedding) + "]"
+
+
 class VectorStore:
     """Manages embedding storage and similarity search via pgvector.
 
@@ -62,7 +78,7 @@ class VectorStore:
                     {
                         "chunk_id": chunk_id,
                         "text": text,
-                        "embedding": embedding,
+                        "embedding": _pg_vector_literal(embedding),
                         "entity_id": entity_id,
                         "document_id": document_id,
                         "model_name": model_name,
@@ -99,7 +115,7 @@ class VectorStore:
                         LIMIT :top_k
                     """),
                     {
-                        "query_embedding": query_embedding,
+                        "query_embedding": _pg_vector_literal(query_embedding),
                         "entity_id": entity_id,
                         "top_k": top_k,
                     },

@@ -1,66 +1,69 @@
-"""PostgreSQL + pgvector integration tests — verify SessionFactory and VectorStore."""
+"""PostgreSQL + pgvector integration tests — verify SessionFactory and VectorStore.
+
+Uses local PostgreSQL (Postgres.app) instead of testcontainers when Docker
+is unavailable. Set EMERALD_TEST_PG_URL to override the connection string.
+"""
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
-pytestmark = pytest.mark.integration
+PG_TEST_URL = os.environ.get(
+    "EMERALD_TEST_PG_URL",
+    "postgresql+asyncpg://nicholasl@localhost:5432/emerald_test",
+)
 
 
 @pytest.fixture(scope="module")
-def docker_skipif():
-    """Skip entire module if Docker is not available."""
+def pg_available():
+    """Skip module if local PostgreSQL is not reachable."""
     import shutil
 
-    if shutil.which("docker") is None:
-        pytest.skip("Docker not available", allow_module_level=True)
+    if shutil.which("psql") is None:
+        pytest.skip("psql not found in PATH", allow_module_level=True)
 
 
 @pytest.fixture
-async def pg_session_factory(docker_skipif):
-    """Yield a SessionFactory connected to a real PostgreSQL + pgvector container."""
-    from testcontainers.postgres import PostgresContainer
-
+async def pg_session_factory(pg_available):
+    """Yield a SessionFactory connected to the local test database."""
     from emerald.db.session import SessionFactory
 
-    container = PostgresContainer(
-        "pgvector/pgvector:pg16",
-        username="test",
-        password="test",
-        dbname="test",
-    )
+    factory = SessionFactory(PG_TEST_URL)
 
-    with container:
-        url = container.get_connection_url().replace(
-            "postgresql://", "postgresql+asyncpg://"
-        )
-        factory = SessionFactory(url)
+    # Create embeddings table + pgvector extension
+    from sqlalchemy import text
 
-        # Create embeddings table + pgvector extension
-        from sqlalchemy import text
+    async with factory.session() as s:
+        await s.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await s.execute(text("""
+            DROP TABLE IF EXISTS embeddings
+        """))
+        await s.execute(text("""
+            CREATE TABLE embeddings (
+                chunk_id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                embedding VECTOR(3),
+                entity_id TEXT NOT NULL,
+                document_id TEXT,
+                model_name TEXT,
+                dimensions INT
+            )
+        """))
 
-        async with factory.session() as s:
-            await s.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            await s.execute(text("""
-                CREATE TABLE IF NOT EXISTS embeddings (
-                    chunk_id TEXT PRIMARY KEY,
-                    text TEXT NOT NULL,
-                    embedding VECTOR(3),
-                    entity_id TEXT NOT NULL,
-                    document_id TEXT,
-                    model_name TEXT,
-                    dimensions INT
-                )
-            """))
+    yield factory
 
-        yield factory
+    # Cleanup
+    async with factory.session() as s:
+        await s.execute(text("DROP TABLE IF EXISTS embeddings"))
 
-        await factory.close()
+    await factory.close()
 
 
 @pytest.mark.asyncio
 async def test_session_factory_basic_query(pg_session_factory):
-    """SessionFactory can execute a simple query against the container."""
+    """SessionFactory can execute a simple query against local PostgreSQL."""
     from sqlalchemy import text
 
     async with pg_session_factory.session() as s:
