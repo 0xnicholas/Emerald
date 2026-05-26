@@ -1,0 +1,110 @@
+# Standalone Docker Compose for testing — no host port bindings
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: emerald-postgres-test
+    environment:
+      POSTGRES_DB: emerald
+      POSTGRES_USER: emerald
+      POSTGRES_PASSWORD: emerald_dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emerald"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - emerald-test-net
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: emerald-neo4j-test
+    environment:
+      NEO4J_AUTH: neo4j/emerald_dev
+      NEO4J_PLUGINS: '["apoc"]'
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "emerald_dev", "RETURN 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - emerald-test-net
+
+  redis:
+    image: redis:8.0
+    container_name: emerald-redis-test
+    command: redis-server --appendonly yes --requirepass emerald_dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - emerald-test-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: emerald-minio-test
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: emerald_admin
+      MINIO_ROOT_PASSWORD: emerald_dev123
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - emerald-test-net
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: emerald-minio-init-test
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 emerald_admin emerald_dev123; do
+        echo 'Waiting for MinIO...'; sleep 2;
+      done;
+      mc mb --ignore-existing local/emerald-documents;
+      mc mb --ignore-existing local/emerald-temp;
+      echo 'Buckets created';
+      exit 0;
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - emerald-test-net
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: emerald-test
+    command: >
+      bash -c "
+        pip install -e '.[dev,extraction]' -q 2>/dev/null &&
+        alembic upgrade head &&
+        pytest tests/unit/ tests/core/ tests/api/ tests/integration/ -x -v
+      "
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - emerald-test-net
+
+networks:
+  emerald-test-net:
+    driver: bridge
