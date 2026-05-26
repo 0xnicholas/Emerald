@@ -8,6 +8,7 @@ and sorted by relevance score.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 
 import structlog
@@ -107,7 +108,59 @@ class SearchOrchestrator:
         top_k: int,
         filters: dict | None,
     ) -> list[SearchResult]:
-        """Search the memory graph for keyword matches."""
+        if not self.embedder:
+            # Fallback to keyword search when embedder is unavailable
+            return await self._search_memory_keyword(q, entity_id, top_k, filters)
+
+        query_embedding = (await self.embedder.embed([q]))[0]
+        candidate_limit = min(top_k * 5, 100)
+        candidates = await self.vector.search(
+            query_embedding, entity_id=entity_id, top_k=candidate_limit
+        )
+
+        results = []
+        now = datetime.now(timezone.utc)
+
+        for chunk_id, text, vec_score in candidates:
+            memory = await self.graph.get_memory(chunk_id)
+            if not memory:
+                continue
+            if not memory.get("is_latest", True):
+                continue
+            valid_until = memory.get("valid_until")
+            if valid_until is not None:
+                # Neo4j returns neo4j.time.DateTime; convert to Python datetime
+                if hasattr(valid_until, "to_native"):
+                    valid_until = valid_until.to_native()
+                if valid_until < now:
+                    continue
+            if filters and not self._passes_filters(memory, filters):
+                continue
+
+            score = vec_score * memory.get("confidence", 0.5)
+            results.append(
+                SearchResult(
+                    id=memory["id"],
+                    content=memory["content"],
+                    summary=memory.get("summary", "")[:200],
+                    score=score,
+                    source="memory",
+                    memory_type=memory.get("memory_type", "fact"),
+                    is_latest=memory.get("is_latest", True),
+                )
+            )
+
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
+
+    async def _search_memory_keyword(
+        self,
+        q: str,
+        entity_id: str,
+        top_k: int,
+        filters: dict | None,
+    ) -> list[SearchResult]:
+        """Fallback keyword-based memory search."""
         memories = await self.graph.list_latest_memories(
             entity_id, limit=100,
         )
@@ -143,6 +196,15 @@ class SearchOrchestrator:
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:top_k]
+
+    def _passes_filters(self, memory: dict, filters: dict) -> bool:
+        mtype = filters.get("memory_type")
+        min_conf = filters.get("min_confidence")
+        if mtype and memory.get("memory_type") != mtype:
+            return False
+        if min_conf is not None and memory.get("confidence", 0) < min_conf:
+            return False
+        return True
 
     # ---- RAG search (vector) ----
 
