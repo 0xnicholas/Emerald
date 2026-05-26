@@ -22,6 +22,7 @@ class PipelineJob(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("documents.id")
     )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(
         String(20), default="queued", server_default="queued", nullable=False
     )
