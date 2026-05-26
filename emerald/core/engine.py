@@ -126,11 +126,50 @@ class MemoryEngine:
         )
 
     async def _embed(self, chunks: list[Chunk]) -> list[list[float]]:
-        """Generate embeddings for all chunks."""
+        """Generate embeddings for all chunks with Redis cache."""
         texts = [c.text for c in chunks]
         if not texts:
             return []
-        return await self.embedder.embed(texts)
+
+        try:
+            from emerald.db.redis import get_redis_client
+
+            redis = get_redis_client()
+        except RuntimeError:
+            redis = None
+
+        import hashlib
+        import json
+
+        hashes = [hashlib.sha256(t.encode()).hexdigest() for t in texts]
+
+        embeddings: list[list[float] | None] = [None] * len(texts)
+        to_embed: list[str] = []
+        to_embed_indices: list[int] = []
+
+        if redis:
+            cached = await redis.mget([f"emb:{h}" for h in hashes])
+        else:
+            cached = [None] * len(texts)
+
+        for i, c in enumerate(cached):
+            if c is not None:
+                embeddings[i] = json.loads(c)
+            else:
+                to_embed.append(texts[i])
+                to_embed_indices.append(i)
+
+        if to_embed:
+            new_embeddings = await self.embedder.embed(to_embed)
+            if redis:
+                pipe = redis.pipeline()
+                for idx, emb in zip(to_embed_indices, new_embeddings):
+                    pipe.setex(f"emb:{hashes[idx]}", 7 * 86400, json.dumps(emb))
+                await pipe.execute()
+            for idx, emb in zip(to_embed_indices, new_embeddings):
+                embeddings[idx] = emb
+
+        return [e for e in embeddings if e is not None]
 
     async def _index(
         self,
