@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from emerald.api.dependencies import rate_limit
 from emerald.api.schemas import AddMemoryRequest
 
 router = APIRouter(tags=["Memories"])
@@ -21,7 +22,11 @@ def _get_engine(request: Request):
     return engine
 
 
-@router.post("/memories", status_code=status.HTTP_200_OK)
+@router.post(
+    "/memories",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit)],
+)
 async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
     """Add content to the memory graph."""
     engine = _get_engine(request)

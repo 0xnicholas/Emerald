@@ -107,6 +107,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     from emerald.api.routes import (
         connectors,
         memories,
+        pipelines,
         profiles,
         search,
         system,
@@ -117,6 +118,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(search.router, prefix="/v1")
     app.include_router(profiles.router, prefix="/v1")
     app.include_router(upload.router, prefix="/v1")
+    app.include_router(pipelines.router, prefix="/v1")
     app.include_router(connectors.router, prefix="/v1")
     app.include_router(system.router, prefix="/v1")
 

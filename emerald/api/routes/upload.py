@@ -2,45 +2,101 @@
 
 from __future__ import annotations
 
+import io
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from emerald.api.dependencies import api_key_auth, require_write_permission
+from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
+from emerald.config import get_settings
 
 router = APIRouter(tags=["Upload"])
 
 
 @router.post(
     "/upload",
-    response_model=dict,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(api_key_auth), Depends(require_write_permission)],
+    dependencies=[
+        Depends(api_key_auth),
+        Depends(require_write_permission),
+        Depends(rate_limit),
+    ],
 )
 async def upload_file(
     file: UploadFile = File(...),
     entity_id: str = Form(...),
     content_type: str | None = Form(default=None),
     title: str | None = Form(default=None),
-    metadata: str | None = Form(default=None),
 ) -> dict:
-    """Upload a file for processing.
+    settings = get_settings()
 
-    Files up to 50MB. Returns HTTP 202 with pipeline_id for async processing.
-    """
-    # TODO:
-    # 1. Validate file size (50MB limit)
-    # 2. Detect content_type if not provided
-    # 3. Upload to MinIO
-    # 4. Create Document record in PostgreSQL
-    # 5. Submit async pipeline task
+    # 1. Read and validate size
+    contents = await file.read()
+    max_size = 50 * 1024 * 1024
+    if len(contents) > max_size:
+        raise HTTPException(
+            413, f"File too large: {len(contents)} bytes (max {max_size})"
+        )
+
+    # 2. Detect content type
+    detected = content_type or _detect_mime(file.filename)
+
+    # 3. Store in MinIO
+    storage_key = f"{entity_id}/{uuid4().hex}/{file.filename or 'untitled'}"
+    minio_client = _get_minio_client()
+    minio_client.put_object(
+        settings.minio_bucket,
+        storage_key,
+        io.BytesIO(contents),
+        len(contents),
+        content_type=detected,
+    )
+
+    # 4. Resolve external entity_id → internal UUID, then create Document
+    from emerald.db.session import session_factory
+    from emerald.models.document import Document
+    from emerald.models.entity import Entity
+    from sqlalchemy import select
+
+    async with session_factory.session() as session:
+        result = await session.execute(
+            select(Entity).where(Entity.external_id == entity_id)
+        )
+        entity = result.scalar_one_or_none()
+        if not entity:
+            raise HTTPException(404, f"Entity '{entity_id}' not found")
+
+        doc = Document(
+            entity_id=entity.id,
+            title=title or file.filename or "untitled",
+            content_type=detected,
+            storage_key=storage_key,
+            file_size_bytes=len(contents),
+        )
+        session.add(doc)
+        await session.commit()
+        await session.refresh(doc)
+
+    # 5. Submit async pipeline
+    from emerald.pipeline.orchestrator import PipelineOrchestrator
+
+    orchestrator = PipelineOrchestrator()
+    pipeline_id = await orchestrator.process_async(
+        content=contents,
+        content_type=detected,
+        entity_id=entity_id,
+        document_id=str(doc.id),
+    )
+
     return {
         "data": {
-            "document_id": "",
-            "pipeline_id": "",
+            "document_id": str(doc.id),
+            "pipeline_id": pipeline_id,
             "pipeline_status": "queued",
-            "file_size_bytes": 0,
-            "content_type": content_type or "auto",
+            "file_size_bytes": len(contents),
+            "content_type": detected,
             "title": title or file.filename or "untitled",
-        },
+        }
     }
 
 
@@ -62,19 +118,34 @@ async def list_files(
             "total": 0,
             "page": page,
             "page_size": page_size,
-        },
+        }
     }
 
 
-@router.get(
-    "/pipelines/{pipeline_id}",
-    response_model=dict,
-    dependencies=[Depends(api_key_auth)],
-)
-async def get_pipeline_status(pipeline_id: str) -> dict:
-    """Check pipeline processing status."""
-    # TODO: query pipeline_jobs table
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Pipeline {pipeline_id} not found",
+def _detect_mime(filename: str | None) -> str:
+    if not filename:
+        return "application/octet-stream"
+    ext = filename.lower().split(".")[-1] if "." in filename else ""
+    mapping = {
+        "pdf": "application/pdf",
+        "txt": "text/plain",
+        "md": "text/markdown",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+    }
+    return mapping.get(ext, "application/octet-stream")
+
+
+def _get_minio_client():
+    from minio import Minio
+
+    settings = get_settings()
+    return Minio(
+        settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure,
     )
