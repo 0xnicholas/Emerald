@@ -1,0 +1,30 @@
+"""Integration tests for OpenAI embedder. Skipped if no API key."""
+
+import os
+import pytest
+
+from emerald.core.embedder import OpenAIProvider
+
+
+@pytest.fixture
+async def real_provider():
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY not set")
+    return OpenAIProvider(api_key=api_key)
+
+
+@pytest.mark.asyncio
+async def test_real_openai_embeds_semantically(real_provider):
+    """'cat' and 'feline' should have high cosine similarity."""
+    import math
+
+    vecs = await real_provider.embed(["cat", "feline", "car"])
+
+    def cos(a, b):
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        return dot / (na * nb)
+
+    assert cos(vecs[0], vecs[1]) > cos(vecs[0], vecs[2])
