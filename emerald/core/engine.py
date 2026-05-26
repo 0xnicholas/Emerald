@@ -144,7 +144,7 @@ class MemoryEngine:
         memory_ids = []
 
         for chunk, embedding in zip(chunks, embeddings):
-            # Store in Neo4j graph
+            # Store in Neo4j graph — memory_id becomes the canonical ID
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,
@@ -152,11 +152,15 @@ class MemoryEngine:
                 confidence=0.8,
                 source_type="conversation" if content_type == "conversation" else "document",
             )
+            # Unify IDs: vector-store row uses the same ID as the graph node.
+            # This lets SearchOrchestrator resolve vector hits directly via
+            # GraphStore.get_memory() without a translation table.
+            chunk.id = memory_id
             memory_ids.append(memory_id)
 
             # Store embedding in vector store
             await self.vector.store(
-                chunk_id=chunk.id,
+                chunk_id=memory_id,
                 text=chunk.text,
                 embedding=embedding,
                 entity_id=entity_id,

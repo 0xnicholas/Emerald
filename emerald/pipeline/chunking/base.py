@@ -9,17 +9,19 @@ from uuid import uuid4
 
 @dataclass
 class Chunk:
-    """A single semantic chunk ready for embedding."""
+    """A single semantic chunk ready for embedding.
+
+    The ``id`` field defaults to a random UUID but can be overwritten
+    (e.g. with a ``memory_id``) so that the graph node and the vector-store
+    row share the same canonical identifier.
+    """
 
     text: str
     index: int
     token_count: int = 0
     content_type: str = "text"
     metadata: dict = field(default_factory=dict)
-
-    @property
-    def id(self) -> str:
-        return uuid4().hex
+    id: str = field(default_factory=lambda: uuid4().hex)
 
 
 class BaseChunker(ABC):
