@@ -70,6 +70,28 @@ The entire `SearchOrchestrator` currently operates on **mock embeddings** — ve
 4. **Graceful Degradation.** Missing `OPENAI_API_KEY` → auto-fallback to `MockEmbeddingProvider` with a warning log. Missing PyMuPDF → `ExtractionError(retryable=False)`.
 5. **No Internal API Leakage.** SDK surface remains `add`, `search`, `profile`, `upload`.
 
+### 3.1 Closed Architecture Decisions
+
+The following decisions were raised during spec review and are now **resolved**.
+
+**Decision 1: No `source_type` column on `embeddings` table**
+
+| Option | Rationale | Verdict |
+|---|---|---|
+| Add `source_type ENUM('memory','document')` | Explicit, self-documenting | Rejected |
+| Use `document_id IS NULL` as heuristic | Simpler schema; only two types exist today | **Accepted** |
+
+Memory embeddings (created via `MemoryEngine.add()`) do not supply a `document_id`; RAG/document embeddings (created via upload pipeline) always have one. This implicit discriminator is sufficient until a third source type (e.g., "profile") is introduced. Adding the column now would be premature per YAGNI.
+
+**Decision 2: No `offset` parameter in `VectorStore.search()`**
+
+| Option | Rationale | Verdict |
+|---|---|---|
+| Add `offset: int = 0` with pagination | Handles pathological cases (entity with thousands of expired memories) | Rejected |
+| Static expansion `min(top_k * 5, 100)` | Keeps search latency < 50ms; covers 99% of real-world entity sizes | **Accepted** |
+
+Per AGENTS.md §6, search must be fast. Pagination adds latency and complexity. If an entity has >100 active memories and most top candidates are expired, returning fewer than `top_k` results is acceptable — better than slow pagination. Should this become a real-world issue (e.g., long-lived enterprise agents with 10k+ memories), we can introduce `offset` as a backward-compatible addition.
+
 ---
 
 ## 4. Module Specifications

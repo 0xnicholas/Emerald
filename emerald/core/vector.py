@@ -58,6 +58,10 @@ class VectorStore:
 
         In DB mode, writes to the embeddings table with pgvector.
         In test mode, stores in memory.
+
+        Architecture note: ``document_id`` distinguishes RAG chunks (always
+        present) from memory embeddings (``None``).  We intentionally do NOT
+        store a separate ``source_type`` column; see spec §3.1 Decision 1.
         """
         if self._use_db and self._session_factory:
             from sqlalchemy import text as sql_text
@@ -102,6 +106,10 @@ class VectorStore:
         """Search for similar embeddings.
 
         Returns list of (chunk_id, text, score) sorted by descending similarity.
+
+        Architecture note: There is no ``offset`` parameter.  Callers that need
+        more candidates than ``top_k`` should request a larger ``top_k`` value.
+        See spec §3.1 Decision 2 for the rationale.
         """
         if self._use_db and self._session_factory:
             from sqlalchemy import text as sql_text
