@@ -7,12 +7,25 @@ embed → index) and provides both sync (lightweight content) and async
 
 from __future__ import annotations
 
+from hashlib import sha256
 from uuid import uuid4
 
 import structlog
+from celery import chain
 
+from emerald.config import get_settings
+from emerald.db.session import session_factory
+from emerald.models.pipeline_job import PipelineJob
 from emerald.pipeline.chunking.registry import ChunkerRegistry
 from emerald.pipeline.extraction.registry import ExtractorRegistry
+from emerald.pipeline.tasks import (
+    chunk_task,
+    embed_task,
+    extract_task,
+    index_task,
+    postprocess_task,
+)
+from emerald.utils import _is_uuid
 
 logger = structlog.get_logger(__name__)
 
@@ -82,21 +95,50 @@ class PipelineOrchestrator:
         Suitable for files, URLs, and batch content.
         Returns the pipeline_id for status polling.
         """
-        from hashlib import sha256
+        import uuid
 
         pipeline_id = uuid4().hex
         content_hash = sha256(
             content.encode() if isinstance(content, str) else content
         ).hexdigest()
 
-        # TODO: Write PipelineJob record to PostgreSQL
-        # TODO: Submit Celery chain:
-        #   chain(extract_task, chunk_task, embed_task, index_task, postprocess_task)
+        async with session_factory.session() as session:
+            from sqlalchemy import select
+            from emerald.models.entity import Entity
+
+            result = await session.execute(
+                select(Entity).where(Entity.external_id == entity_id)
+            )
+            entity = result.scalar_one_or_none()
+            if not entity:
+                raise ValueError(f"Entity '{entity_id}' not found")
+
+            session.add(
+                PipelineJob(
+                    id=uuid.UUID(pipeline_id),
+                    entity_id=entity.id,
+                    document_id=uuid.UUID(document_id)
+                    if document_id and _is_uuid(document_id)
+                    else None,
+                    content_hash=content_hash,
+                    content_type=content_type,
+                    status="queued",
+                )
+            )
+            await session.commit()
+
+        chain(
+            extract_task.s(pipeline_id, content, content_type),
+            chunk_task.s(),
+            embed_task.s(),
+            index_task.s(entity_id),
+            postprocess_task.s(entity_id),
+        ).apply_async()
+
         logger.info(
             "pipeline.async.submitted",
             pipeline_id=pipeline_id,
             entity_id=entity_id,
             content_type=content_type,
         )
-
         return pipeline_id
