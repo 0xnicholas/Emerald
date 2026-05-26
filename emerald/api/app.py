@@ -39,6 +39,14 @@ async def lifespan(app: FastAPI):
     await close_redis()
     await session_factory.close()
 
+    # Close embedding provider httpx client to avoid connection leaks
+    engine = getattr(app.state, "engine", None)
+    if engine:
+        from emerald.core.embedder import OpenAIProvider
+        embedder = getattr(engine, "embedder", None)
+        if isinstance(embedder, OpenAIProvider):
+            await embedder.close()
+
 
 def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     settings = get_settings()

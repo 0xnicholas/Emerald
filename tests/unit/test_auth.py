@@ -11,9 +11,12 @@ from emerald.api.dependencies import api_key_auth, require_write_permission, rat
 
 
 class FakeRequest:
-    def __init__(self, headers=None, state=None):
+    def __init__(self, headers=None, state=None, url_path="/v1/memories"):
         self.headers = headers or {}
         self.state = state or type("State", (), {})()
+        self.url = MagicMock()
+        self.url.path = url_path
+        self.scope = {"route": None}
 
 
 @pytest.mark.asyncio

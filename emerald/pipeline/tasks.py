@@ -41,101 +41,86 @@ async def _update_error(pipeline_id: str, stage: str, error: str) -> None:
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def extract_task(self, pipeline_id: str, content: str | bytes, content_type: str) -> dict:
-    return run_async(_run_extract)(self, pipeline_id, content, content_type)
-
-
-async def _run_extract(task_self, pipeline_id, content, content_type):
-    from emerald.db.neo4j import close_neo4j, init_neo4j
-
-    await init_neo4j()
     try:
-        await _update_status(pipeline_id, "extracting")
-        from emerald.pipeline.extraction.registry import ExtractorRegistry
-
-        extractor = ExtractorRegistry().get(content_type)
-        result = await extractor.extract(content)
-
-        from emerald.db.redis import get_redis_client
-
-        redis = get_redis_client()
-        await redis.setex(f"pipeline:{pipeline_id}:text", 86400, result.text)
-
-        return {"pipeline_id": pipeline_id, "content_type": content_type}
+        return run_async(_run_extract)(self, pipeline_id, content, content_type)
     except Exception as exc:
-        await _update_error(pipeline_id, "extracting", str(exc))
-        raise task_self.retry(exc=exc)
-    finally:
-        await close_neo4j()
+        run_async(_update_error)(pipeline_id, "extracting", str(exc))
+        raise self.retry(exc=exc)
+
+
+async def _run_extract(pipeline_id, content, content_type):
+    await _update_status(pipeline_id, "extracting")
+    from emerald.pipeline.extraction.registry import ExtractorRegistry
+
+    extractor = ExtractorRegistry().get(content_type)
+    result = await extractor.extract(content)
+
+    from emerald.db.redis import get_redis_client
+
+    redis = get_redis_client()
+    await redis.setex(f"pipeline:{pipeline_id}:text", 86400, result.text)
+
+    return {"pipeline_id": pipeline_id, "content_type": content_type}
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 def chunk_task(self, prev_result: dict) -> dict:
-    return run_async(_run_chunk)(self, prev_result)
-
-
-async def _run_chunk(task_self, prev_result: dict) -> dict:
-    pipeline_id = prev_result["pipeline_id"]
-    from emerald.db.neo4j import close_neo4j, init_neo4j
-
-    await init_neo4j()
     try:
-        await _update_status(pipeline_id, "chunking")
-        from emerald.db.redis import get_redis_client
-
-        redis = get_redis_client()
-        text = await redis.get(f"pipeline:{pipeline_id}:text")
-
-        from emerald.pipeline.chunking.registry import ChunkerRegistry
-
-        chunker = ChunkerRegistry().get(prev_result.get("content_type", "text"))
-        chunks = chunker.chunk(text or "")
-
-        data = [
-            {"id": c.id, "text": c.text, "index": c.index, "token_count": c.token_count}
-            for c in chunks
-        ]
-        await redis.setex(f"pipeline:{pipeline_id}:chunks", 86400, json.dumps(data))
-        return {"pipeline_id": pipeline_id, "chunk_count": len(chunks)}
+        return run_async(_run_chunk)(self, prev_result)
     except Exception as exc:
-        await _update_error(pipeline_id, "chunking", str(exc))
-        raise task_self.retry(exc=exc)
-    finally:
-        await close_neo4j()
+        run_async(_update_error)(prev_result["pipeline_id"], "chunking", str(exc))
+        raise self.retry(exc=exc)
+
+
+async def _run_chunk(prev_result: dict) -> dict:
+    pipeline_id = prev_result["pipeline_id"]
+    await _update_status(pipeline_id, "chunking")
+    from emerald.db.redis import get_redis_client
+
+    redis = get_redis_client()
+    text = await redis.get(f"pipeline:{pipeline_id}:text")
+
+    from emerald.pipeline.chunking.registry import ChunkerRegistry
+
+    chunker = ChunkerRegistry().get(prev_result.get("content_type", "text"))
+    chunks = chunker.chunk(text or "")
+
+    data = [
+        {"id": c.id, "text": c.text, "index": c.index, "token_count": c.token_count}
+        for c in chunks
+    ]
+    await redis.setex(f"pipeline:{pipeline_id}:chunks", 86400, json.dumps(data))
+    return {"pipeline_id": pipeline_id, "chunk_count": len(chunks)}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def embed_task(self, prev_result: dict) -> dict:
-    return run_async(_run_embed)(self, prev_result)
-
-
-async def _run_embed(task_self, prev_result: dict) -> dict:
-    pipeline_id = prev_result["pipeline_id"]
-    from emerald.db.neo4j import close_neo4j, init_neo4j
-
-    await init_neo4j()
     try:
-        await _update_status(pipeline_id, "embedding")
-        from emerald.db.redis import get_redis_client
-
-        redis = get_redis_client()
-        chunks_raw = await redis.get(f"pipeline:{pipeline_id}:chunks")
-        chunks_data = json.loads(chunks_raw or "[]")
-        texts = [c["text"] for c in chunks_data]
-
-        from emerald.core.embedder import get_embedding_provider
-
-        provider = get_embedding_provider()
-        embeddings = await provider.embed(texts)
-
-        await redis.setex(
-            f"pipeline:{pipeline_id}:embeddings", 86400, json.dumps(embeddings)
-        )
-        return {"pipeline_id": pipeline_id}
+        return run_async(_run_embed)(self, prev_result)
     except Exception as exc:
-        await _update_error(pipeline_id, "embedding", str(exc))
-        raise task_self.retry(exc=exc)
-    finally:
-        await close_neo4j()
+        run_async(_update_error)(prev_result["pipeline_id"], "embedding", str(exc))
+        raise self.retry(exc=exc)
+
+
+async def _run_embed(prev_result: dict) -> dict:
+    pipeline_id = prev_result["pipeline_id"]
+    await _update_status(pipeline_id, "embedding")
+    from emerald.db.redis import get_redis_client
+
+    redis = get_redis_client()
+    chunks_raw = await redis.get(f"pipeline:{pipeline_id}:chunks")
+    chunks_data = json.loads(chunks_raw or "[]")
+    texts = [c["text"] for c in chunks_data]
+
+    from emerald.core.embedder import get_embedding_provider
+
+    provider = get_embedding_provider()
+    embeddings = await provider.embed(texts)
+
+    await redis.setex(
+        f"pipeline:{pipeline_id}:embeddings", 86400, json.dumps(embeddings)
+    )
+    return {"pipeline_id": pipeline_id}
 
 
 @shared_task(bind=True)
@@ -198,29 +183,24 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
     pipeline_id = prev_result["pipeline_id"]
     memory_ids = prev_result.get("memory_ids", [])
 
-    from emerald.db.neo4j import close_neo4j, init_neo4j
+    from emerald.core.graph import GraphStore
+    from emerald.core.relationship import RelationshipEngine
 
-    await init_neo4j()
-    try:
-        from emerald.core.relationship import RelationshipEngine
+    rel_engine = RelationshipEngine(graph=GraphStore(use_db=True))
+    await rel_engine.infer(memory_ids, entity_id)
 
-        rel_engine = RelationshipEngine(graph=GraphStore(use_db=True))
-        await rel_engine.infer(memory_ids, entity_id)
+    from emerald.core.profile import ProfileManager
 
-        from emerald.core.profile import ProfileManager
+    profile_mgr = ProfileManager(graph=GraphStore(use_db=True))
+    await profile_mgr.invalidate(entity_id)
 
-        profile_mgr = ProfileManager(graph=GraphStore(use_db=True))
-        await profile_mgr.invalidate(entity_id)
+    from emerald.db.redis import get_redis_client
 
-        from emerald.db.redis import get_redis_client
+    redis = get_redis_client()
+    for key in ["text", "chunks", "embeddings"]:
+        await redis.delete(f"pipeline:{pipeline_id}:{key}")
 
-        redis = get_redis_client()
-        for key in ["text", "chunks", "embeddings"]:
-            await redis.delete(f"pipeline:{pipeline_id}:{key}")
-
-        await _update_status(pipeline_id, "done")
-    finally:
-        await close_neo4j()
+    await _update_status(pipeline_id, "done")
 
 
 # ---- Scheduled tasks (kept async for Celery Beat compatibility) ----

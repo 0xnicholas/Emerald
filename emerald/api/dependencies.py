@@ -55,7 +55,12 @@ async def rate_limit(request: Request) -> None:
     if not key_id:
         return  # Auth hasn't run yet or failed
 
-    endpoint = request.url.path
+    # Use route pattern (e.g. /v1/pipelines/{pipeline_id}) instead of
+    # full path so that path parameters don't create separate buckets.
+    route = request.scope.get("route")
+    endpoint = getattr(route, "path", None) if route else None
+    if not endpoint:
+        endpoint = request.url.path
     limit = 60  # Fixed-window: 60 requests per minute per endpoint
 
     try:

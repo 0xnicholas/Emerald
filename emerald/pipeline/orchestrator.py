@@ -57,30 +57,19 @@ class PipelineOrchestrator:
 
         Returns the list of created memory IDs.
         """
-        pipeline_id = uuid4().hex
-        logger.info(
-            "pipeline.sync.start",
-            pipeline_id=pipeline_id,
+        from emerald.core.engine import MemoryEngine
+
+        engine = MemoryEngine(
+            extractor_registry=self.extractors,
+            chunker_registry=self.chunkers,
+        )
+        result = await engine.add(
+            content=content,
             entity_id=entity_id,
             content_type=content_type,
+            metadata=metadata,
         )
-
-        # Stage 1: Extract
-        extracted = await self.extractors.run(content, content_type)
-
-        # Stage 2: Chunk
-        chunks = self.chunkers.run(extracted.text, content_type, metadata=extracted.metadata)
-
-        # Stage 3-4: Embed + Index (delegated to MemoryEngine / Celery task)
-        # For now, placeholder
-        memory_ids = [uuid4().hex for _ in chunks]
-
-        logger.info(
-            "pipeline.sync.complete",
-            pipeline_id=pipeline_id,
-            memory_count=len(memory_ids),
-        )
-        return memory_ids
+        return result.memory_ids
 
     async def process_async(
         self,

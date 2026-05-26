@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import io
 
-from PIL import ImageFilter
-
 from emerald.core.exceptions import ExtractionError
 from emerald.pipeline.extraction.base import BaseExtractor, ExtractedContent
 
@@ -30,6 +28,8 @@ class ImageExtractor(BaseExtractor):
         try:
             img = Image.open(io.BytesIO(content))
             # Preprocess: grayscale → denoise → threshold
+            from PIL import ImageFilter
+
             gray = img.convert("L")
             denoised = gray.filter(ImageFilter.MedianFilter(size=3))
             thresh = denoised.point(lambda x: 0 if x < 128 else 255, "1")
