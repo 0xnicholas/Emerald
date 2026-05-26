@@ -48,7 +48,7 @@
 | Celery tasks (5) | ❌ All stubs (`# TODO: Implement`) |
 | PDF Extractor | ⚠️ Partial: PyMuPDF text layer only |
 | Image Extractor | ⚠️ Partial: OCR with basic preprocessing |
-| Alembic 001 migration | ❌ Missing — only 002 (pgvector) exists |
+| Alembic 001 migration | ✅ Exists (`35500f582718_initial_schema.py`); 002 misplaced (fixed) |
 
 ### 2.2 The Semantic Gap
 
@@ -724,7 +724,7 @@ POST /v1/search
 EmbeddingProvider.embed(["户外活动偏好"])  →  query vector
   ↓
 mode=memory:
-  VectorStore.search(query_vec)  →  candidate chunk_ids (top_k * 3)
+  VectorStore.search(query_vec)  →  candidate chunk_ids (min(top_k * 5, 100))
   GraphStore.get_memory() per candidate  →  filter is_latest, valid_until
   Blend score: vec_similarity × confidence
   ↓
@@ -743,7 +743,7 @@ mode=hybrid:
 
 | File | Purpose |
 |---|---|
-| `migrations/versions/001_initial.py` | Initial schema: entities, api_keys, documents, connectors, pipeline_jobs, embeddings |
+| *(none — 001 `35500f582718_initial_schema.py` already exists)* | — |
 | `scripts/seed_dev_api_key.py` | Bootstrap a test API key for local development |
 | `emerald/api/routes/pipelines.py` | `GET /v1/pipelines/{id}` endpoint |
 | `tests/integration/test_embedder_integration.py` | OpenAI embedder with real API (or skip) |
@@ -764,7 +764,6 @@ mode=hybrid:
 | `emerald/api/routes/upload.py` | Full MinIO + PG + Celery integration |
 | `emerald/pipeline/orchestrator.py` | Implement `process_async` with PG job tracking |
 | `emerald/pipeline/tasks.py` | Real Celery task implementations |
-| `emerald/pipeline/celery.py` | Celery app instance with broker/backend config |
 | `emerald/pipeline/extraction/pdf.py` | OCR fallback for image-only pages |
 | `emerald/pipeline/extraction/image.py` | Preprocessing pipeline (grayscale → denoise → threshold) |
 
@@ -777,6 +776,7 @@ mode=hybrid:
 | `emerald/core/relationship.py` | Rule-based logic sufficient |
 | `emerald/core/forget.py` | Logic sound; Celery Beat wiring only |
 | `emerald/pipeline/chunking/*.py` | Already implemented |
+| `emerald/pipeline/celery.py` | Already configured with broker, backend, Beat schedule, autodiscover |
 
 ---
 
@@ -852,7 +852,7 @@ async def test_full_docker_e2e():
 
 | Day | Task |
 |---|---|
-| 0 | Write Alembic 001 initial migration (entities, api_keys, documents, connectors, pipeline_jobs, embeddings). Verify `alembic upgrade head` on fresh PostgreSQL. **Blocks all database-dependent tasks.** |
+| 0 | Verify full migration chain (001 `35500f582718` → 002 pgvector → 003 `content_type`) on fresh PostgreSQL. **Unblocks all database-dependent tasks.** |
 
 ### Week 1: Embedder + Search
 
@@ -879,7 +879,7 @@ async def test_full_docker_e2e():
 | Day | Task |
 |---|---|
 | 11 | Implement `PipelineOrchestrator.process_async` with PG job tracking |
-| 12 | Implement Celery app config (`emerald/pipeline/celery.py`) |
+| 12 | Verify Celery app config (`emerald/pipeline/celery.py`) and wire stub tasks into Beat schedule |
 | 13 | Implement `extract_task` and `chunk_task` |
 | 14 | Implement `embed_task` and `index_task` |
 | 15 | Implement `postprocess_task`; wire Celery Beat schedule |
