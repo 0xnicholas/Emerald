@@ -8,10 +8,22 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import httpx
 import structlog
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from emerald.config import EmbeddingProvider as EmbeddingProviderEnum
 from emerald.config import get_settings
+from emerald.core.exceptions import (
+    AuthenticationError,
+    EmbeddingError,
+    EmbeddingRetryableError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -32,7 +44,10 @@ class EmbeddingProvider(ABC):
 
 
 class OpenAIProvider(EmbeddingProvider):
-    """OpenAI text-embedding-3 provider."""
+    """OpenAI text-embedding-3 provider with batching and retry."""
+
+    BATCH_SIZE = 2048
+    MAX_RETRIES = 3
 
     def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
         self._api_key = api_key
@@ -41,13 +56,56 @@ class OpenAIProvider(EmbeddingProvider):
             "text-embedding-3-small": 1536,
             "text-embedding-3-large": 3072,
         }
+        self._client = httpx.AsyncClient(
+            base_url="https://api.openai.com/v1",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0,
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        # TODO: actual OpenAI API call
-        raise NotImplementedError("OpenAI embedding not yet implemented")
+        if not texts:
+            return []
+
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), self.BATCH_SIZE):
+            batch = texts[i : i + self.BATCH_SIZE]
+            batch_embeddings = await self._embed_batch_with_retry(batch)
+            all_embeddings.extend(batch_embeddings)
+
+        return all_embeddings
+
+    async def _embed_batch(self, batch: list[str]) -> list[list[float]]:
+        response = await self._client.post(
+            "/embeddings",
+            json={"input": batch, "model": self._model},
+        )
+
+        if response.status_code in (429, 502, 503, 504):
+            raise EmbeddingRetryableError(
+                f"HTTP {response.status_code}: {response.text}"
+            )
+        if response.status_code == 401:
+            raise AuthenticationError("Invalid OpenAI API key")
+        if response.status_code == 400:
+            raise ValueError(f"Bad request: {response.text}")
+
+        response.raise_for_status()
+        data = response.json()["data"]
+        data.sort(key=lambda d: d["index"])
+        return [d["embedding"] for d in data]
+
+    _embed_batch_with_retry = retry(
+        retry=retry_if_exception_type(EmbeddingRetryableError),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )(_embed_batch)
 
     def dimension(self) -> int:
         return self._dimensions_map.get(self._model, 1536)
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
 
 class LocalProvider(EmbeddingProvider):
