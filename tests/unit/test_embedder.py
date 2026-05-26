@@ -132,3 +132,48 @@ async def test_openai_embed_raises_after_max_retries(openai_provider):
             await openai_provider.embed(["hello"])
 
     assert mock_post.call_count == 3  # initial + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_openai_cache_hit_skips_api_call(openai_provider):
+    """Second call with same text returns cached vector, no API call."""
+    import json
+    import fakeredis.aioredis
+
+    fake_redis = fakeredis.aioredis.FakeRedis()
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": [{"index": 0, "embedding": [0.2] * 1536}]
+    }
+
+    with patch("emerald.db.redis.get_redis_client", return_value=fake_redis):
+        with patch.object(
+            openai_provider._client, "post", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = mock_response
+            # First call — hits API
+            r1 = await openai_provider.embed(["cached_text"])
+            # Second call — should hit cache
+            r2 = await openai_provider.embed(["cached_text"])
+
+    assert mock_post.call_count == 1  # Only one API call
+    assert r1 == r2
+
+
+def test_mock_fallback_when_key_missing(monkeypatch):
+    """OPENAI_API_KEY empty → MockEmbeddingProvider."""
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    # Must reload settings cache
+    from emerald.config import get_settings
+    get_settings.cache_clear()
+
+    p = get_embedding_provider()
+    assert isinstance(p, MockEmbeddingProvider)
+    assert p.dimension() == 1536
+
+    # Restore settings for other tests
+    get_settings.cache_clear()

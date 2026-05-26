@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import hashlib
+import json
+
 import httpx
 import structlog
 from tenacity import (
@@ -66,13 +69,54 @@ class OpenAIProvider(EmbeddingProvider):
         if not texts:
             return []
 
-        all_embeddings: list[list[float]] = []
-        for i in range(0, len(texts), self.BATCH_SIZE):
-            batch = texts[i : i + self.BATCH_SIZE]
-            batch_embeddings = await self._embed_batch_with_retry(batch)
-            all_embeddings.extend(batch_embeddings)
+        # Check Redis cache
+        try:
+            from emerald.db.redis import get_redis_client
 
-        return all_embeddings
+            redis = get_redis_client()
+        except RuntimeError:
+            redis = None
+
+        hashes = [
+            hashlib.sha256((t + self._model).encode()).hexdigest() for t in texts
+        ]
+        cached: list[str | None] = []
+        if redis:
+            cached = await redis.mget([f"emb:{h}" for h in hashes])
+        else:
+            cached = [None] * len(texts)
+
+        to_fetch: list[str] = []
+        to_fetch_indices: list[int] = []
+        results: list[list[float] | None] = [None] * len(texts)
+
+        for i, c in enumerate(cached):
+            if c is not None:
+                results[i] = json.loads(c)
+            else:
+                to_fetch.append(texts[i])
+                to_fetch_indices.append(i)
+
+        if to_fetch:
+            fetched: list[list[float]] = []
+            fetched_idx_map: list[int] = []
+            for i in range(0, len(to_fetch), self.BATCH_SIZE):
+                batch = to_fetch[i : i + self.BATCH_SIZE]
+                batch_indices = to_fetch_indices[i : i + self.BATCH_SIZE]
+                batch_embeddings = await self._embed_batch_with_retry(batch)
+                fetched.extend(batch_embeddings)
+                fetched_idx_map.extend(batch_indices)
+
+            if redis:
+                pipe = redis.pipeline()
+                for idx, vec in zip(fetched_idx_map, fetched):
+                    h = hashes[idx]
+                    pipe.setex(f"emb:{h}", 7 * 86400, json.dumps(vec))
+                await pipe.execute()
+            for idx, vec in zip(fetched_idx_map, fetched):
+                results[idx] = vec
+
+        return [r for r in results if r is not None]
 
     async def _embed_batch(self, batch: list[str]) -> list[list[float]]:
         response = await self._client.post(
@@ -162,10 +206,16 @@ def get_embedding_provider() -> EmbeddingProvider:
     settings = get_settings()
 
     if settings.embedding_provider == EmbeddingProviderEnum.openai:
-        return OpenAIProvider(
-            api_key=settings.openai_api_key,
-            model=settings.openai_embedding_model,
+        if settings.openai_api_key:
+            return OpenAIProvider(
+                api_key=settings.openai_api_key,
+                model=settings.openai_embedding_model,
+            )
+        logger.warning(
+            "OpenAI API key missing; falling back to MockEmbeddingProvider"
         )
+        return MockEmbeddingProvider(dimension=1536)
+
     if settings.embedding_provider in (
         EmbeddingProviderEnum.bge,
         EmbeddingProviderEnum.text2vec,
