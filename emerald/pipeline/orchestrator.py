@@ -28,9 +28,18 @@ class PipelineOrchestrator:
         self,
         extractor_registry: ExtractorRegistry | None = None,
         chunker_registry: ChunkerRegistry | None = None,
+        *,
+        use_db: bool = True,
     ) -> None:
-        self.extractors = extractor_registry or ExtractorRegistry()
-        self.chunkers = chunker_registry or ChunkerRegistry()
+        # Lazy import to avoid circular dependency:
+        # pipeline.orchestrator -> core.engine -> core.chunker -> pipeline.chunking.base
+        from emerald.core.engine import MemoryEngine
+
+        self._engine = MemoryEngine(
+            extractor_registry=extractor_registry,
+            chunker_registry=chunker_registry,
+            use_db=use_db,
+        )
 
     async def process_sync(
         self,
@@ -42,32 +51,19 @@ class PipelineOrchestrator:
     ) -> list[str]:
         """Process lightweight content synchronously.
 
+        When *use_db* is ``True`` (the default), memory nodes are written to
+        Neo4j and embeddings to pgvector.  When ``False``, the pipeline runs
+        in-memory and only returns memory IDs.
+
         Returns the list of created memory IDs.
         """
-        pipeline_id = uuid4().hex
-        logger.info(
-            "pipeline.sync.start",
-            pipeline_id=pipeline_id,
+        result = await self._engine.add(
+            content,
             entity_id=entity_id,
             content_type=content_type,
+            metadata=metadata,
         )
-
-        # Stage 1: Extract
-        extracted = await self.extractors.run(content, content_type)
-
-        # Stage 2: Chunk
-        chunks = self.chunkers.run(extracted.text, content_type, metadata=extracted.metadata)
-
-        # Stage 3-4: Embed + Index (delegated to MemoryEngine / Celery task)
-        # For now, placeholder
-        memory_ids = [uuid4().hex for _ in chunks]
-
-        logger.info(
-            "pipeline.sync.complete",
-            pipeline_id=pipeline_id,
-            memory_count=len(memory_ids),
-        )
-        return memory_ids
+        return result.memory_ids
 
     async def process_async(
         self,

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from celery import Celery
+from celery import signals as celery_signals
 
 from emerald.config import get_settings
 
@@ -68,3 +71,21 @@ celery_app.conf.beat_schedule = {
 celery_app.autodiscover_tasks(
     ["emerald.pipeline", "emerald.connectors"], force=True
 )
+
+
+# ---- Worker lifecycle signals ----
+# Neo4j driver is initialized once per worker process and shared across
+# all tasks, avoiding per-task connection overhead.
+
+@celery_signals.worker_process_init.connect
+def _init_neo4j_on_worker_start(**kwargs) -> None:
+    from emerald.db.neo4j import init_neo4j
+
+    asyncio.run(init_neo4j())
+
+
+@celery_signals.worker_process_shutdown.connect
+def _close_neo4j_on_worker_shutdown(**kwargs) -> None:
+    from emerald.db.neo4j import close_neo4j
+
+    asyncio.run(close_neo4j())
