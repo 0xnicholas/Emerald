@@ -38,5 +38,7 @@ def get_connector_registry() -> ConnectorRegistry:
     registry = ConnectorRegistry()
     # Eager-import to trigger registration side-effects.
     from emerald.connectors.github import GitHubConnector
+    from emerald.connectors.google_drive import GoogleDriveConnector
     registry.register("github", GitHubConnector)
+    registry.register("google_drive", GoogleDriveConnector)
     return registry
