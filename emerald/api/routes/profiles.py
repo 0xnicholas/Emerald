@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from emerald.api.dependencies import api_key_auth, rate_limit
 from emerald.core.profile import ProfileManager
 
 router = APIRouter(tags=["Profiles"])
@@ -18,7 +19,7 @@ def _get_engine(request: Request):
     return engine
 
 
-@router.get("/profiles/{entity_id}")
+@router.get("/profiles/{entity_id}", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def get_profile(entity_id: str, request: Request) -> dict:
     """Get entity profile (static + dynamic facts)."""
     engine = _get_engine(request)

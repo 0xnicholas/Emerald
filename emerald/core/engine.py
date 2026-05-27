@@ -198,12 +198,13 @@ class MemoryEngine:
             memory_ids.append(memory_id)
 
             # Store embedding in vector store
+            model_name = getattr(self.embedder, "_model", "unknown")
             await self.vector.store(
                 chunk_id=memory_id,
                 text=chunk.text,
                 embedding=embedding,
                 entity_id=entity_id,
-                model_name="mock-128" if not self.embedder else "text-embedding-3-small",
+                model_name=model_name,
             )
 
         return memory_ids
@@ -218,20 +219,18 @@ class MemoryEngine:
     ) -> str:
         """Submit content for async pipeline processing (files, batch).
 
+        Delegates to PipelineOrchestrator for full Celery chain execution.
         Returns pipeline_id for status tracking.
         """
-        from hashlib import sha256
+        from emerald.pipeline.orchestrator import PipelineOrchestrator
 
-        pipeline_id = uuid4().hex
-        content_hash = sha256(
-            content.encode() if isinstance(content, str) else content
-        ).hexdigest()
-
-        logger.info(
-            "memory.add.async",
-            pipeline_id=pipeline_id,
-            entity_id=entity_id,
-            content_type=content_type,
+        orchestrator = PipelineOrchestrator(
+            extractor_registry=self.extractors,
+            chunker_registry=self.chunkers,
         )
-
-        return pipeline_id
+        return await orchestrator.process_async(
+            content=content,
+            content_type=content_type,
+            entity_id=entity_id,
+            document_id=document_id,
+        )
