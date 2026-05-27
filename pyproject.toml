@@ -50,6 +50,10 @@ dev = [
     "tenacity>=8.0",
 ]
 
+mcp = [
+    "fastmcp>=3.0,<4.0",
+]
+
 extraction = [
     "PyMuPDF>=1.23",
     "faster-whisper>=1.0",
