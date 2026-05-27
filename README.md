@@ -227,7 +227,7 @@ client.upload(file=pdf_bytes, title="架构文档.pdf")
 
 ## 项目状态
 
-Emerald 正在积极开发中。
+**Beta** — 核心管线、混合搜索、用户画像、API 层和 Python SDK 已实现并通过测试。可处理文本、URL、PDF、图片、音频、视频、代码和 Markdown 的提取与索引。
 
 规划中：
 - 框架集成（LangChain、OpenAI Agents SDK 等）

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,6 +23,7 @@ def _get_engine(request: Request):
 @router.get("/profiles/{entity_id}", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def get_profile(entity_id: str, request: Request) -> dict:
     """Get entity profile (static + dynamic facts)."""
+    start = time.perf_counter()
     engine = _get_engine(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
@@ -43,5 +45,8 @@ async def get_profile(entity_id: str, request: Request) -> dict:
             "computed_at": profile.computed_at,
             "version": profile.version,
         },
-        "meta": {"request_id": request_id},
+        "meta": {
+            "request_id": request_id,
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }

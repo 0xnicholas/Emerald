@@ -1,7 +1,8 @@
-"""Connector routes — OAuth flow, webhooks, status."""
+"""Connector routes - OAuth flow, webhooks, status."""
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -39,6 +40,7 @@ async def connect_provider(
     Providers: google_drive, gmail, notion, github.
     Returns the OAuth authorization URL for the user to visit.
     """
+    start = time.perf_counter()
     valid_providers = {"google_drive", "gmail", "notion", "github"}
     if provider not in valid_providers:
         raise HTTPException(
@@ -66,6 +68,10 @@ async def connect_provider(
             "state_token": state_token,
             "expires_in": 600,
         },
+        "meta": {
+            "request_id": getattr(request.state, "request_id", str(uuid.uuid4())[:8]),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 
@@ -81,7 +87,8 @@ async def handle_oauth_callback(
     state: str,
     request: Request,
 ) -> dict:
-    """OAuth callback — exchange code for token and store credentials."""
+    """OAuth callback - exchange code for token and store credentials."""
+    start = time.perf_counter()
     registry = get_connector_registry()
     connector_cls = registry.get(provider)
 
@@ -131,6 +138,10 @@ async def handle_oauth_callback(
             "status": "connected",
             "entity_id": entity_id,
         },
+        "meta": {
+            "request_id": str(uuid.uuid4())[:8],
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 
@@ -148,6 +159,7 @@ async def handle_webhook(
 
     Validates signature, deduplicates, triggers incremental sync.
     """
+    start = time.perf_counter()
     raw_body = await request.body()
     payload = await request.json()
     payload["_raw_body"] = raw_body
@@ -164,8 +176,14 @@ async def handle_webhook(
     triggered = await connector.handle_webhook(payload, signature)
 
     return {
-        "status": "accepted",
-        "sync_triggered": triggered,
+        "data": {
+            "status": "accepted",
+            "sync_triggered": triggered,
+        },
+        "meta": {
+            "request_id": getattr(request.state, "request_id", str(uuid.uuid4())[:8]),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 
@@ -181,6 +199,7 @@ async def get_connector_status(
     request: Request,
 ) -> dict:
     """Get connector sync status for the authenticated entity."""
+    start = time.perf_counter()
     entity_id = _get_entity_id(request)
 
     async with session_factory.session() as session:
@@ -210,6 +229,10 @@ async def get_connector_status(
             "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
             "error_message": row.error_message,
             "connected_at": row.created_at.isoformat() if row.created_at else None,
+        },
+        "meta": {
+            "request_id": getattr(request.state, "request_id", str(uuid.uuid4())[:8]),
+            "took_ms": int((time.perf_counter() - start) * 1000),
         },
     }
 

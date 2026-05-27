@@ -161,7 +161,7 @@ services:
   # Redis
   # ============================================
   redis:
-    image: redis:7-alpine
+    image: redis:8.0
     container_name: emerald-redis
     command: redis-server --appendonly yes --requirepass emerald_dev
     ports:

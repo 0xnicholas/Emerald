@@ -158,6 +158,23 @@ def test_response_has_meta(client):
     data = response.json()
     assert "meta" in data
     assert "request_id" in data["meta"]
+    assert "took_ms" in data["meta"]
+    assert isinstance(data["meta"]["took_ms"], int)
+
+
+def test_search_get_supports_rewrite_query(client):
+    client.post(
+        "/v1/memories",
+        json={"content": "用户喜欢 Python 编程", "entity_id": "user_123"},
+    )
+    response = client.get(
+        "/v1/search?q=Python&entity_id=user_123&search_mode=memory&rewrite_query=true"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "query_rewritten" in data["data"]
+    assert "meta" in data
+    assert "took_ms" in data["meta"]
 
 
 # ---- 404 handling ----

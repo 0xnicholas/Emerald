@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import time
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -28,6 +29,7 @@ async def upload_file(
     content_type: str | None = Form(default=None),
     title: str | None = Form(default=None),
 ) -> dict:
+    start = time.perf_counter()
     settings = get_settings()
 
     # 1. Read and validate size
@@ -96,7 +98,11 @@ async def upload_file(
             "file_size_bytes": len(contents),
             "content_type": detected,
             "title": title or file.filename or "untitled",
-        }
+        },
+        "meta": {
+            "request_id": getattr(request.state, "request_id", str(uuid4())[:8]),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 
@@ -112,13 +118,18 @@ async def list_files(
     page_size: int = 20,
 ) -> dict:
     """List uploaded files for an entity."""
+    start = time.perf_counter()
     return {
         "data": {
             "items": [],
             "total": 0,
             "page": page,
             "page_size": page_size,
-        }
+        },
+        "meta": {
+            "request_id": str(uuid4())[:8],
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 

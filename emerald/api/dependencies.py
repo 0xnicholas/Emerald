@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import time
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request, status
 
+from emerald.config import get_settings
 from emerald.db.session import session_factory
 from emerald.models.api_key import ApiKey
 
@@ -50,6 +53,20 @@ async def require_write_permission(request: Request) -> str:
     return "authorized"
 
 
+def _get_endpoint_limit(endpoint: str) -> int:
+    """Return per-endpoint request limit from settings."""
+    settings = get_settings()
+    if "/memories" in endpoint:
+        return settings.rate_limit_memories
+    if "/search" in endpoint:
+        return settings.rate_limit_search
+    if "/profiles" in endpoint:
+        return settings.rate_limit_profiles
+    if "/upload" in endpoint:
+        return settings.rate_limit_upload
+    return 60  # default
+
+
 async def rate_limit(request: Request) -> None:
     key_id = getattr(request.state, "api_key_id", None)
     if not key_id:
@@ -61,7 +78,9 @@ async def rate_limit(request: Request) -> None:
     endpoint = getattr(route, "path", None) if route else None
     if not endpoint:
         endpoint = request.url.path
-    limit = 60  # Fixed-window: 60 requests per minute per endpoint
+
+    limit = _get_endpoint_limit(endpoint)
+    window = 60  # 1 minute sliding window
 
     try:
         from emerald.db.redis import get_redis_client
@@ -70,13 +89,29 @@ async def rate_limit(request: Request) -> None:
     except RuntimeError:
         return  # Redis unavailable — skip rate limiting
 
-    key = f"ratelimit:{key_id}:{endpoint}"
-    current = await redis.incr(key)
-    if current == 1:
-        await redis.expire(key, 60)
-    if current > limit:
+    key = f"ratelimit:sliding:{key_id}:{endpoint}"
+    now = time.time()
+    member = f"{now}:{uuid.uuid4().hex}"
+
+    # Remove entries outside the sliding window
+    pipe = redis.pipeline()
+    pipe.zremrangebyscore(key, "-inf", now - window)
+    pipe.zcard(key)
+    _, current = await pipe.execute()
+
+    if current >= limit:
+        # Calculate approximate retry-after based on oldest member in window
+        oldest = await redis.zrange(key, 0, 0, withscores=True)
+        retry_after = window
+        if oldest:
+            oldest_ts = oldest[0][1]
+            retry_after = max(1, int(oldest_ts + window - now))
         raise HTTPException(
             429,
             "Rate limit exceeded",
-            headers={"Retry-After": "60"},
+            headers={"Retry-After": str(retry_after)},
         )
+
+    # Record this request and set TTL
+    await redis.zadd(key, {member: now})
+    await redis.expire(key, window)

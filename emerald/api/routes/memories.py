@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -29,6 +30,7 @@ def _get_engine(request: Request):
 )
 async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
     """Add content to the memory graph."""
+    start = time.perf_counter()
     engine = _get_engine(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
@@ -45,18 +47,25 @@ async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
             "pipeline_status": result.pipeline_status,
             "extracted_count": result.extracted_count,
         },
-        "meta": {"request_id": request_id},
+        "meta": {
+            "request_id": request_id,
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 
 @router.get("/memories/{memory_id}", dependencies=[Depends(api_key_auth)])
 async def get_memory(memory_id: str, request: Request) -> dict:
     """Get a single memory by ID."""
+    start = time.perf_counter()
     engine = _get_engine(request)
     memory = await engine.graph.get_memory(memory_id)
     if not memory:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {
         "data": memory,
-        "meta": {"request_id": getattr(request.state, "request_id", "")},
+        "meta": {
+            "request_id": getattr(request.state, "request_id", ""),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }

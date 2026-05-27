@@ -73,31 +73,42 @@ class SearchOrchestrator:
         filters: dict | None = None,
     ) -> SearchResponse:
         """Execute a hybrid search query."""
+        rewritten_q = self._rewrite_query(q) if rewrite_query else q
+
         logger.info(
             "search.start",
             entity_id=entity_id,
             search_mode=search_mode,
             q=q[:100],
+            rewritten=rewritten_q[:100] if rewrite_query else None,
         )
 
         results: list[SearchResult] = []
 
         # Memory search
         if search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
-            memory_results = await self._search_memory(q, entity_id, top_k, filters)
+            memory_results = await self._search_memory(rewritten_q, entity_id, top_k, filters)
             results.extend(memory_results)
 
         # RAG search
         if search_mode in (SearchMode.HYBRID, SearchMode.RAG):
-            rag_results = await self._search_rag(q, entity_id, top_k, filters)
+            rag_results = await self._search_rag(rewritten_q, entity_id, top_k, filters)
             results.extend(rag_results)
 
         # Merge, deduplicate, sort
         results = self._merge_results(results, top_k)
 
-        logger.info("search.complete", result_count=len(results), mode=search_mode)
+        # Optional rerank: boost results with direct keyword matches
+        if rerank:
+            results = self._rerank_results(results, rewritten_q)
 
-        return SearchResponse(results=results, search_mode=search_mode)
+        logger.info("search.complete", result_count=len(results), mode=search_mode, reranked=rerank)
+
+        return SearchResponse(
+            results=results,
+            search_mode=search_mode,
+            query_rewritten=rewritten_q if rewrite_query else None,
+        )
 
     # ---- Memory search (graph) ----
 
@@ -271,6 +282,49 @@ class SearchOrchestrator:
                     break
 
         return merged
+
+    # ---- Rerank (stub) ----
+
+    def _rerank_results(
+        self, results: list[SearchResult], q: str
+    ) -> list[SearchResult]:
+        """Stub reranker — boost results with direct keyword overlap.
+
+        In production this delegates to a cross-encoder (e.g. bge-reranker).
+        """
+        query_terms = set(self._tokenize(q))
+        if not query_terms:
+            return results
+
+        def _boost(r: SearchResult) -> float:
+            content_terms = set(self._tokenize(r.content))
+            overlap = len(query_terms & content_terms) / len(query_terms)
+            # Boost up to 15% for perfect keyword overlap
+            return r.score * (1.0 + 0.15 * overlap)
+
+        results.sort(key=_boost, reverse=True)
+        return results
+
+    # ---- Query rewriting (stub) ----
+
+    @staticmethod
+    def _rewrite_query(q: str) -> str:
+        """Stub query rewriter — expands short or ambiguous queries.
+
+        In production this delegates to an LLM or learned rewriter.
+        """
+        q = q.strip()
+        if not q:
+            return q
+        # Pattern-based expansions for common interrogatives (checked first)
+        if q.startswith("如何"):
+            return f"{q} 方法 步骤"
+        if q.startswith("什么是") or q.startswith("啥是"):
+            return f"{q} 定义 说明"
+        # Short queries: append generic expansion terms to improve recall
+        if len(q) <= 10:
+            return f"{q} 相关信息"
+        return q
 
     # ---- Scoring ----
 

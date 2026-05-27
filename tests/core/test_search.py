@@ -4,7 +4,7 @@ import pytest
 
 from emerald.core.embedder import MockEmbeddingProvider
 from emerald.core.graph import GraphStore
-from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.search import SearchMode, SearchOrchestrator, SearchResult
 from emerald.core.vector import VectorStore
 
 
@@ -157,3 +157,71 @@ async def test_memory_search_empty_for_unrelated(populated):
         "量子计算 黑洞 相对论", entity_id="charlie", search_mode=SearchMode.MEMORY,
     )
     assert len(results.results) == 0
+
+
+# ---- Query rewriting stub ----
+
+@pytest.mark.asyncio
+async def test_rewrite_query_false_returns_original(populated):
+    """When rewrite_query=False, query_rewritten is None."""
+    results = await populated.search(
+        "Python", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=False,
+    )
+    assert results.query_rewritten is None
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_expands_short_query(populated):
+    """When rewrite_query=True, short queries are expanded."""
+    results = await populated.search(
+        "Python", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
+    )
+    assert results.query_rewritten is not None
+    assert "Python" in results.query_rewritten
+    assert "相关信息" in results.query_rewritten
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_expands_howto(populated):
+    """Pattern-based expansion for '如何' queries."""
+    results = await populated.search(
+        "如何部署", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
+    )
+    assert "方法" in results.query_rewritten
+    assert "步骤" in results.query_rewritten
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_noop_for_long_query(populated):
+    """Long queries without patterns are returned as-is."""
+    long_query = "这是一个非常长的查询语句用来测试查询重写器不会对超过十个字符的查询进行无意义的扩展"
+    results = await populated.search(
+        long_query, entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
+    )
+    assert results.query_rewritten == long_query
+
+
+# ---- Rerank stub ----
+
+def test_rerank_boosts_keyword_matches():
+    """_rerank_results boosts results with direct keyword overlap."""
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
+        SearchResult(id="2", content="Alice 喜欢 TypeScript 和函数式编程", score=0.8, source="memory"),
+    ]
+    reranked = orchestrator._rerank_results(results, "TypeScript")
+    # The TypeScript result should move ahead despite lower initial score
+    assert reranked[0].id == "2"
+
+
+def test_rerank_no_overlap_unchanged():
+    """_rerank_results preserves order when no keyword overlap."""
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
+        SearchResult(id="2", content="Bob 喜欢 Rust", score=0.8, source="memory"),
+    ]
+    reranked = orchestrator._rerank_results(results, "量子计算")
+    assert reranked[0].id == "1"
+    assert reranked[1].id == "2"

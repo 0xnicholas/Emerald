@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter
 
 from emerald.config import get_settings
@@ -46,6 +48,7 @@ async def _probe_minio() -> None:
 
 @router.get("/health", response_model=dict)
 async def health_check() -> dict:
+    start = time.perf_counter()
     checks = {}
     overall = "ok"
 
@@ -62,4 +65,11 @@ async def health_check() -> dict:
             checks[name] = f"error: {e}"
             overall = "degraded"
 
-    return {"status": overall, "version": "0.1.0", "checks": checks}
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "checks": checks,
+        "meta": {
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
+    }

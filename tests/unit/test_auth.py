@@ -126,8 +126,9 @@ async def test_write_permission_granted():
 
 @pytest.mark.asyncio
 async def test_rate_limit_allows_under_limit():
-    """Rate limit allows requests under the limit."""
+    """Sliding-window rate limit allows requests under the limit."""
     import fakeredis.aioredis
+    import time
 
     fake_redis = fakeredis.aioredis.FakeRedis()
 
@@ -139,22 +140,60 @@ async def test_rate_limit_allows_under_limit():
     with patch("emerald.db.redis.get_redis_client", return_value=fake_redis):
         await rate_limit(req)
 
-    # Should not raise
+    # Verify entry was recorded as sorted-set member
+    key = "ratelimit:sliding:key_1:/v1/memories"
+    count = await fake_redis.zcard(key)
+    assert count == 1
 
 
 @pytest.mark.asyncio
 async def test_rate_limit_blocks_over_limit():
-    """Rate limit raises 429 when over the limit."""
+    """Sliding-window rate limit raises 429 when over the limit."""
     import fakeredis.aioredis
+    import time
 
     fake_redis = fakeredis.aioredis.FakeRedis()
-    # Pre-seed the counter to exceed limit
-    await fake_redis.setex("ratelimit:key_1:/v1/memories", 60, "61")
+    now = time.time()
+    key = "ratelimit:sliding:key_1:/v1/memories"
+    limit = 60  # default for /memories
+
+    # Pre-seed the sorted set with exactly 'limit' entries inside the window
+    members = {f"{now - i * 0.1}:{i}": now - i * 0.1 for i in range(limit)}
+    await fake_redis.zadd(key, members)
+    await fake_redis.expire(key, 60)
 
     req = FakeRequest()
     req.state.api_key_id = "key_1"
     req.url = MagicMock()
     req.url.path = "/v1/memories"
+
+    with patch("emerald.db.redis.get_redis_client", return_value=fake_redis):
+        with pytest.raises(HTTPException) as exc_info:
+            await rate_limit(req)
+
+    assert exc_info.value.status_code == 429
+    assert "Retry-After" in exc_info.value.headers
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_uses_endpoint_specific_limits():
+    """Different endpoints use different limits from settings."""
+    import fakeredis.aioredis
+    import time
+
+    fake_redis = fakeredis.aioredis.FakeRedis()
+    now = time.time()
+
+    # /upload has limit=10 — seed 10 entries
+    upload_key = "ratelimit:sliding:key_1:/v1/upload"
+    members = {f"{now - i * 0.1}:{i}": now - i * 0.1 for i in range(10)}
+    await fake_redis.zadd(upload_key, members)
+    await fake_redis.expire(upload_key, 60)
+
+    req = FakeRequest()
+    req.state.api_key_id = "key_1"
+    req.url = MagicMock()
+    req.url.path = "/v1/upload"
 
     with patch("emerald.db.redis.get_redis_client", return_value=fake_redis):
         with pytest.raises(HTTPException) as exc_info:

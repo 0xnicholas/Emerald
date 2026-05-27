@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from emerald.api.dependencies import api_key_auth
@@ -16,6 +19,7 @@ async def get_pipeline_status(
     pipeline_id: str,
     _: str = Depends(api_key_auth),
 ) -> dict:
+    start = time.perf_counter()
     from sqlalchemy import select
 
     async with session_factory.session() as session:
@@ -39,5 +43,9 @@ async def get_pipeline_status(
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-        }
+        },
+        "meta": {
+            "request_id": str(uuid.uuid4())[:8],
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }

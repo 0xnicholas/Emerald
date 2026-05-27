@@ -204,19 +204,54 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
     await _update_status(pipeline_id, "done")
 
 
-# ---- Scheduled tasks (kept async for Celery Beat compatibility) ----
+# ---- Scheduled tasks (Celery Beat) ----
+
+from celery import shared_task
 
 
-async def forget_expired() -> None:
+@shared_task
+def forget_expired_task() -> dict:
     """Celery Beat: hourly - expire past valid_until memories."""
-    logger.info("pipeline.task.forget_expired")
+    return run_async(_run_forget_expired)()
 
 
-async def forget_noise() -> None:
+async def _run_forget_expired() -> dict:
+    from emerald.core.forget import ForgetEngine
+    from emerald.core.graph import GraphStore
+
+    engine = ForgetEngine(graph=GraphStore(use_db=True))
+    count = await engine.forget_expired()
+    logger.info("pipeline.task.forget_expired", count=count)
+    return {"strategy": "time_expiry", "count": count}
+
+
+@shared_task
+def forget_noise_task() -> dict:
     """Celery Beat: daily 3 AM - archive noise memories."""
-    logger.info("pipeline.task.forget_noise")
+    return run_async(_run_forget_noise)()
 
 
-async def decay_episodic() -> None:
+async def _run_forget_noise() -> dict:
+    from emerald.core.forget import ForgetEngine
+    from emerald.core.graph import GraphStore
+
+    engine = ForgetEngine(graph=GraphStore(use_db=True))
+    count = await engine.forget_noise()
+    logger.info("pipeline.task.forget_noise", count=count)
+    return {"strategy": "noise_filter", "count": count}
+
+
+@shared_task
+def decay_episodic_task() -> dict:
     """Celery Beat: daily 4 AM - decay old episodic memories."""
-    logger.info("pipeline.task.decay_episodic")
+    return run_async(_run_decay_episodic)()
+
+
+async def _run_decay_episodic() -> dict:
+    from emerald.core.forget import ForgetEngine
+    from emerald.core.graph import GraphStore
+
+    engine = ForgetEngine(graph=GraphStore(use_db=True))
+    count = await engine.decay_episodic()
+    logger.info("pipeline.task.decay_episodic", count=count)
+    return {"strategy": "episodic_decay", "count": count}

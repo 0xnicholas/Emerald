@@ -80,3 +80,56 @@ async def test_update_error_writes_failed_status():
     mock_session.execute.assert_called_once()
     call_args = mock_session.execute.call_args
     assert "Something broke" in str(call_args)
+
+
+# ---- Forget engine tasks ----
+
+@pytest.mark.asyncio
+async def test_forget_expired_task_runs():
+    """forget_expired_task delegates to ForgetEngine."""
+    from emerald.pipeline.tasks import _run_forget_expired
+
+    with patch("emerald.core.forget.ForgetEngine") as mock_cls:
+        instance = MagicMock()
+        instance.forget_expired = AsyncMock(return_value=3)
+        mock_cls.return_value = instance
+
+        result = await _run_forget_expired()
+
+    assert result["strategy"] == "time_expiry"
+    assert result["count"] == 3
+    instance.forget_expired.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_forget_noise_task_runs():
+    """forget_noise_task delegates to ForgetEngine."""
+    from emerald.pipeline.tasks import _run_forget_noise
+
+    with patch("emerald.core.forget.ForgetEngine") as mock_cls:
+        instance = MagicMock()
+        instance.forget_noise = AsyncMock(return_value=5)
+        mock_cls.return_value = instance
+
+        result = await _run_forget_noise()
+
+    assert result["strategy"] == "noise_filter"
+    assert result["count"] == 5
+    instance.forget_noise.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_decay_episodic_task_runs():
+    """decay_episodic_task delegates to ForgetEngine."""
+    from emerald.pipeline.tasks import _run_decay_episodic
+
+    with patch("emerald.core.forget.ForgetEngine") as mock_cls:
+        instance = MagicMock()
+        instance.decay_episodic = AsyncMock(return_value=2)
+        mock_cls.return_value = instance
+
+        result = await _run_decay_episodic()
+
+    assert result["strategy"] == "episodic_decay"
+    assert result["count"] == 2
+    instance.decay_episodic.assert_awaited_once()

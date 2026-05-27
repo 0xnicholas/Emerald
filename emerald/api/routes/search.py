@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -33,6 +34,7 @@ def _get_search_orchestrator(request: Request, engine=None) -> SearchOrchestrato
 @router.post("/search", dependencies=[Depends(rate_limit)])
 async def search(body: SearchRequest, request: Request) -> dict:
     """Hybrid search across memory (graph) and RAG (vector)."""
+    start = time.perf_counter()
     engine = _get_engine(request)
     orchestrator = _get_search_orchestrator(request, engine)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
@@ -66,7 +68,10 @@ async def search(body: SearchRequest, request: Request) -> dict:
             "search_mode": results.search_mode.value,
             "query_rewritten": results.query_rewritten,
         },
-        "meta": {"request_id": request_id},
+        "meta": {
+            "request_id": request_id,
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
 
 
@@ -76,9 +81,11 @@ async def search_get(
     entity_id: str = Query(...),
     search_mode: str = Query("hybrid"),
     top_k: int = Query(10, ge=1, le=100),
+    rewrite_query: bool = Query(False),
     request: Request = None,  # type: ignore
 ) -> dict:
     """GET variant of search."""
+    start = time.perf_counter()
     engine = _get_engine(request)
     orchestrator = _get_search_orchestrator(request, engine)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
@@ -88,6 +95,7 @@ async def search_get(
         entity_id=entity_id,
         search_mode=SearchMode(search_mode),
         top_k=top_k,
+        rewrite_query=rewrite_query,
     )
 
     return {
@@ -97,6 +105,10 @@ async def search_get(
                 for r in results.results
             ],
             "search_mode": results.search_mode.value,
+            "query_rewritten": results.query_rewritten,
         },
-        "meta": {"request_id": request_id},
+        "meta": {
+            "request_id": request_id,
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
     }
