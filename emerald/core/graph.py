@@ -26,15 +26,19 @@ class GraphStore:
     def __init__(self, use_db: bool = True) -> None:
         self._use_db = use_db
         self._driver = None
-        if use_db:
-            try:
-                from emerald.db.neo4j import get_neo4j_driver
-                self._driver = get_neo4j_driver()
-            except RuntimeError:
-                # Driver not initialized — silently fall back to in-memory
-                self._use_db = False
         # In-memory store: entity_id → list of memory dicts
         self._memories: dict[str, list[dict[str, Any]]] = {}
+
+    def _init_driver(self) -> None:
+        """Lazy-init Neo4j driver; retry on each call if not yet available."""
+        if not self._use_db or self._driver is not None:
+            return
+        try:
+            from emerald.db.neo4j import get_neo4j_driver
+            self._driver = get_neo4j_driver()
+        except RuntimeError:
+            # Driver not initialized — silently fall back to in-memory
+            self._use_db = False
 
     async def create_memory(
         self,
@@ -53,6 +57,7 @@ class GraphStore:
 
         Returns the memory ID.
         """
+        self._init_driver()
         memory_id = uuid4().hex
         now = datetime.now(UTC)
 
@@ -128,6 +133,7 @@ class GraphStore:
 
     async def get_memory(self, memory_id: str) -> dict[str, Any] | None:
         """Get a single memory by ID."""
+        self._init_driver()
         if self._use_db and self._driver:
             async with self._driver.session() as session:
                 result = await session.run(
@@ -155,6 +161,7 @@ class GraphStore:
 
         Ordered by created_at descending.
         """
+        self._init_driver()
         if self._use_db and self._driver:
             async with self._driver.session() as session:
                 result = await session.run(
@@ -194,6 +201,7 @@ class GraphStore:
         self, memory_id: str, is_latest: bool, replaced_by: str | None = None
     ) -> None:
         """Set the is_latest flag on a memory, optionally recording what replaced it."""
+        self._init_driver()
         if self._use_db and self._driver:
             async with self._driver.session() as session:
                 await session.run(
