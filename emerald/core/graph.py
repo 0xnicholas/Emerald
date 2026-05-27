@@ -6,6 +6,7 @@ queries latest memories, and supports relationship operations.
 
 from __future__ import annotations
 
+import copy
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -113,7 +114,7 @@ class GraphStore:
                 "last_accessed_at": None,
                 "created_at": now,
                 "updated_at": now,
-                "metadata": metadata,
+                "metadata": copy.deepcopy(metadata) if metadata is not None else None,
             }
             self._memories.setdefault(entity_id, []).append(memory)
 
