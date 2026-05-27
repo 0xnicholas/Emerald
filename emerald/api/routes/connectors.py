@@ -16,6 +16,10 @@ from emerald.models.connector import Connector
 
 router = APIRouter(prefix="/connectors", tags=["Connectors"])
 
+# In-memory state store for OAuth callbacks.
+# Production should use Redis with TTL (e.g. 10 minutes).
+_oauth_state_store: dict[str, str] = {}
+
 
 # ---- Helper: resolve entity from request state ----
 
@@ -60,6 +64,7 @@ async def connect_provider(
         redirect_uri = f"{base}/v1/connectors/{provider}/callback"
 
     auth_url, state_token = await connector.get_auth_url(redirect_uri)
+    _oauth_state_store[state_token] = entity_id
 
     return {
         "data": {
@@ -92,14 +97,13 @@ async def handle_oauth_callback(
     registry = get_connector_registry()
     connector_cls = registry.get(provider)
 
-    # For GitHub we don't have entity_id in the callback; state encodes it
-    # In production, state should be looked up in a temporary Redis/cache store.
-    # For now, we require the entity_id to be passed or derive from state.
-    entity_id = request.query_params.get("entity_id", "")
+    # Resolve entity_id from the state token stored during connect_provider.
+    # In production this should be a Redis lookup with TTL.
+    entity_id = _oauth_state_store.pop(state, "")
     if not entity_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="entity_id required in callback",
+            detail="Invalid or expired state token",
         )
 
     connector = connector_cls(entity_id=entity_id)
