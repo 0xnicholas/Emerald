@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import BYTEA, UUID
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from emerald.models.base import Base, TimestampMixin, UUIDMixin
@@ -29,3 +29,4 @@ class Connector(Base, UUIDMixin, TimestampMixin):
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    sync_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
