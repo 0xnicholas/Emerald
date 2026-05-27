@@ -13,6 +13,13 @@ from emerald.connectors.gmail import GmailConnector
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"  # Will match connector constant
 
+
+@pytest.fixture(autouse=True)
+def _clear_config_cache():
+    from emerald.config import get_settings
+    get_settings.cache_clear()
+    yield
+
 # ---- Helpers ----
 
 

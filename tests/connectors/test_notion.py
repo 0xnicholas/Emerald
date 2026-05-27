@@ -10,6 +10,13 @@ from emerald.connectors.base import SyncMode
 from emerald.connectors.notion import NotionConnector
 
 
+@pytest.fixture(autouse=True)
+def _clear_config_cache():
+    from emerald.config import get_settings
+    get_settings.cache_clear()
+    yield
+
+
 # ---- OAuth Tests ----
 
 
