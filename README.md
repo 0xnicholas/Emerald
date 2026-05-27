@@ -225,13 +225,79 @@ client.upload(file=pdf_bytes, title="架构文档.pdf")
 
 ---
 
+## Pandaria 集成
+
+[Pandaria](https://github.com/earendil-works/pandaria)（Rust Agent Runtime）通过 HTTP 适配器 `EmeraldMemoryStore` 与 Emerald 集成。Agent 的每一轮对话自动保存到 Emerald，后续对话自动召回相关记忆。
+
+```rust
+use pandaria::memory::EmeraldMemoryStore;
+
+let memory = EmeraldMemoryStore::new(
+    "http://localhost:8000",
+    "em_xxx",
+);
+
+// 自动调用：remember() → POST /v1/memories
+// 自动调用：recall()  → POST /v1/search
+```
+
+- `tenant_id` → `entity_id`（跨 session 用户级记忆）
+- `session_id` → `metadata.session_id`（session 级追踪）
+- `content_type="conversation"`（自动识别 **User**:/**Assistant**: 格式）
+
+详见 [`docs/integration-guide.md`](docs/integration-guide.md)。
+
+---
+
+## MCP Server
+
+Emerald 提供 [MCP (Model Context Protocol)](https://modelcontextprotocol.io) 服务，任何 MCP 客户端（Claude Desktop、Cursor 等）可直接调用记忆操作。
+
+```bash
+# stdio 模式（Claude Desktop 推荐）
+EMERALD_API_KEY=em_xxx python -m emerald.mcp.server --transport stdio
+
+# SSE 模式（远程访问）
+EMERALD_API_KEY=em_xxx python -m emerald.mcp.server --transport sse --port 8001
+```
+
+暴露 3 个工具：
+- `emerald_add` — 保存记忆
+- `emerald_search` — 搜索记忆和文档
+- `emerald_profile` — 获取用户画像
+
+Claude Desktop 配置 (`claude_desktop_config.json`)：
+
+```json
+{
+  "mcpServers": {
+    "emerald": {
+      "command": "python",
+      "args": ["-m", "emerald.mcp.server", "--transport", "stdio"],
+      "env": {
+        "EMERALD_API_KEY": "em_xxx",
+        "EMERALD_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+Docker Compose 已包含 `mcp` 服务：
+
+```bash
+docker compose up -d mcp
+# SSE 端点：http://localhost:8001
+```
+
+---
+
 ## 项目状态
 
-**Beta** — 核心管线、混合搜索、用户画像、API 层和 Python SDK 已实现并通过测试。可处理文本、URL、PDF、图片、音频、视频、代码和 Markdown 的提取与索引。
+**Beta** — 核心管线、混合搜索、用户画像、API 层、Python SDK、MCP Server 和 Pandaria 集成已实现并通过测试。可处理文本、URL、PDF、图片、音频、视频、代码和 Markdown 的提取与索引。
 
 规划中：
 - 框架集成（LangChain、OpenAI Agents SDK 等）
-- 面向 AI 助手的 MCP 服务
 - 面向个人的记忆管理应用
 - 开源记忆基准测试框架
 

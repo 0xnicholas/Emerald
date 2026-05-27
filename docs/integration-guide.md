@@ -384,7 +384,148 @@ results = await client.search("秘密", entity_id="bob")
 
 ---
 
-## 10. 故障处理
+## 10. Pandaria 集成
+
+Pandaria（Rust Agent Runtime）通过 `EmeraldMemoryStore` HTTP 适配器与 Emerald 集成。
+
+### 10.1 架构
+
+```
+Pandaria Agent Runtime
+  │
+  ├── MemoryStore trait
+  │      └── EmeraldMemoryStore  (HTTP adapter)
+  │            ├── remember() → POST /v1/memories
+  │            └── recall()   → POST /v1/search
+  │
+  └── Emerald REST API
+         ├── /v1/memories
+         ├── /v1/search
+         └── /v1/profiles/{id}
+```
+
+### 10.2 Entity 映射策略
+
+| Pandaria 字段 | Emerald 字段 | 说明 |
+|---|---|---|
+| `tenant_id` | `entity_id` | 用户/租户级标识，跨 session 共享记忆 |
+| `session_id` | `metadata.session_id` | Session 级追踪，不影响搜索范围 |
+| `model` | `metadata.model` | 记录使用的 LLM 模型 |
+
+**设计原则：** `tenant_id` 作为 `entity_id` 允许同一用户在不同 session 之间共享长期记忆。`session_id` 仅用于元数据追踪，不改变记忆归属。
+
+### 10.3 配置示例
+
+```rust
+use pandaria::memory::EmeraldMemoryStore;
+
+let memory = EmeraldMemoryStore::new(
+    "http://localhost:8000",   // Emerald base URL
+    "em_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  // API Key
+);
+
+// 在 Agent 配置中注册
+let agent = Agent::builder()
+    .memory_store(memory)
+    .build();
+```
+
+### 10.4 对话格式
+
+Pandaria 输出的 Markdown 格式对话自动识别：
+
+```markdown
+**User**: 你好，我想了解 TypeScript 泛型
+**Assistant**: TypeScript 泛型允许创建可复用的类型安全组件...
+**User**: 和接口有什么区别？
+```
+
+Emerald 的 `ConversationChunker` 自动识别 `**User**:` / `**Assistant**:` 格式，将每轮对话分割为独立 chunk 并标注说话人。
+
+### 10.5 超时和错误处理
+
+| 操作 | 超时 | 错误处理 |
+|---|---|---|
+| `remember()` | 5s | `MemoryError::StoreError` |
+| `recall()` | 3s | 返回空列表，不阻塞 Agent |
+| `forget_session()` | — | v0.2.0 为 no-op（依赖 Emerald 自动遗忘） |
+
+推荐：在 Pandaria 侧实现指数退避重试（max 3 次），Emerald 短暂不可用时 Agent 继续运行。
+
+---
+
+## 11. MCP Server
+
+Emerald 提供 [MCP (Model Context Protocol)](https://modelcontextprotocol.io) 服务，任何 MCP 客户端可直接调用。
+
+### 11.1 安装
+
+```bash
+pip install -e ".[mcp]"  # 安装 fastmcp>=3.0,<4.0
+```
+
+### 11.2 启动
+
+```bash
+# stdio 模式（Claude Desktop 推荐）
+EMERALD_API_KEY=em_xxx python -m emerald.mcp.server --transport stdio
+
+# SSE 模式（HTTP，远程访问）
+EMERALD_API_KEY=em_xxx python -m emerald.mcp.server --transport sse --port 8001
+```
+
+### 11.3 暴露的工具
+
+| 工具 | 功能 | 参数 |
+|---|---|---|
+| `emerald_add` | 保存记忆 | `content`, `entity_id`, `content_type`, `metadata` |
+| `emerald_search` | 搜索记忆和文档 | `q`, `entity_id`, `search_mode`, `top_k` |
+| `emerald_profile` | 获取用户画像 | `entity_id` |
+
+### 11.4 Claude Desktop 配置
+
+编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）或相应平台配置：
+
+```json
+{
+  "mcpServers": {
+    "emerald": {
+      "command": "python",
+      "args": ["-m", "emerald.mcp.server", "--transport", "stdio"],
+      "env": {
+        "EMERALD_API_KEY": "em_xxx",
+        "EMERALD_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+重启 Claude Desktop 后，在对话中直接调用：
+
+> "保存这条信息：用户偏好使用 TypeScript"
+> "搜索用户关于部署的记忆"
+> "获取用户画像"
+
+### 11.5 Docker Compose
+
+`docker-compose.yml` 已包含 `mcp` 服务：
+
+```bash
+docker compose up -d mcp
+# SSE 端点：http://localhost:8001
+```
+
+### 11.6 环境变量
+
+| 变量 | 必需 | 默认值 | 说明 |
+|---|---|---|---|
+| `EMERALD_API_KEY` | ✅ | — | Emerald API Key |
+| `EMERALD_BASE_URL` | ❌ | `http://localhost:8000` | Emerald REST API 地址 |
+
+---
+
+## 12. 故障处理
 
 | 场景 | 行为 |
 |---|---|
