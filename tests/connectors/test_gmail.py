@@ -49,7 +49,8 @@ def _make_gmail_message(msg_id: str, subject: str, body_plain: str | None = None
 
 
 @pytest.mark.asyncio
-async def test_get_auth_url_returns_valid_url():
+async def test_get_auth_url_returns_valid_url(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
     connector = GmailConnector(entity_id="user_123")
     url, state = await connector.get_auth_url("https://emerald.ai/callback")
     assert "accounts.google.com/o/oauth2/v2/auth" in url
@@ -108,9 +109,8 @@ def test_extract_html_collapses_multiple_newlines():
 @pytest.mark.asyncio
 async def test_sync_unconnected_returns_error():
     connector = GmailConnector(entity_id="user_123")
-    result = await connector.sync(SyncMode.INCREMENTAL)
-    assert result.files_synced == 0
-    assert len(result.errors) > 0
+    with pytest.raises(RuntimeError, match="credentials not available"):
+        await connector.sync(SyncMode.INCREMENTAL)
 
 
 # ---- Status / Revoke Tests ----
