@@ -143,7 +143,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Emerald",
-        version="0.1.0",
+        version="0.2.0",
         description="Memory and context infrastructure for AI agents",
         docs_url="/docs" if settings.emerald_env == "development" else None,
         lifespan=lifespan,
