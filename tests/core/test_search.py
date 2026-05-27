@@ -49,10 +49,13 @@ async def populated(orchestrator, graph, vector, embedder):
 # ---- Search modes ----
 
 @pytest.mark.asyncio
-async def test_search_memory_mode( populated):
+async def test_search_memory_mode(populated):
     """search_mode=memory returns only graph memories."""
+    # Exact match because MockEmbeddingProvider is hash-based
     results = await populated.search(
-        "TypeScript", entity_id="alice", search_mode=SearchMode.MEMORY,
+        "Alice 喜欢 TypeScript 和函数式编程",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
     )
     assert len(results.results) > 0
     for r in results.results:
@@ -149,9 +152,8 @@ async def test_top_k_respected(populated):
 
 @pytest.mark.asyncio
 async def test_memory_search_empty_for_unrelated(populated):
-    """Memory (keyword) search returns empty for unmatched queries."""
+    """Semantic search returns empty for entities with no memories."""
     results = await populated.search(
-        "量子计算 黑洞 相对论", entity_id="alice", search_mode=SearchMode.MEMORY,
+        "量子计算 黑洞 相对论", entity_id="charlie", search_mode=SearchMode.MEMORY,
     )
-    # Memory search is keyword-based, so unrelated queries yield no results
     assert len(results.results) == 0

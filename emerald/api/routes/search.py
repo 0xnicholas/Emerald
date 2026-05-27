@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from emerald.api.dependencies import rate_limit
 from emerald.api.schemas import SearchRequest
 from emerald.core.search import SearchMode, SearchOrchestrator
 
@@ -29,7 +30,7 @@ def _get_search_orchestrator(request: Request, engine=None) -> SearchOrchestrato
     )
 
 
-@router.post("/search")
+@router.post("/search", dependencies=[Depends(rate_limit)])
 async def search(body: SearchRequest, request: Request) -> dict:
     """Hybrid search across memory (graph) and RAG (vector)."""
     engine = _get_engine(request)
@@ -69,7 +70,7 @@ async def search(body: SearchRequest, request: Request) -> dict:
     }
 
 
-@router.get("/search")
+@router.get("/search", dependencies=[Depends(rate_limit)])
 async def search_get(
     q: str = Query(...),
     entity_id: str = Query(...),

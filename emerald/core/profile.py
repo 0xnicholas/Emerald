@@ -12,6 +12,7 @@ AGENTS.md:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -44,42 +45,90 @@ class EntityProfile:
 class ProfileManager:
     """Manages entity profiles: compute, cache, invalidate.
 
-    Uses in-memory cache (dict) for testing. In production, substitutes
-    with Redis via the same interface.
+    Uses Redis in production; in-memory dict fallback for tests without Redis.
     """
 
-    # Thresholds
     STATIC_CONFIDENCE_MIN = 0.5
     DYNAMIC_CONFIDENCE_MIN = 0.3
     DYNAMIC_LOOKBACK_DAYS = 7
     STATIC_MAX_ITEMS = 10
     DYNAMIC_MAX_ITEMS = 5
+    TTL = 24 * 3600
 
     def __init__(
         self,
         graph: GraphStore | None = None,
-        cache: dict | None = None,
+        redis_client=None,
     ) -> None:
         self.graph = graph or GraphStore(use_db=False)
-        self._cache: dict[str, EntityProfile] = cache or {}
-        self._versions: dict[str, int] = {}  # Survives invalidation
+        self._redis = redis_client
+        self._memory_cache: dict[str, EntityProfile] = {}
+        self._versions: dict[str, int] = {}
+
+    def _get_redis(self):
+        if self._redis is not None:
+            return self._redis
+        try:
+            from emerald.db.redis import get_redis_client
+            return get_redis_client()
+        except RuntimeError:
+            return None
 
     async def get(self, entity_id: str) -> EntityProfile:
-        """Get entity profile. Checks cache first, computes on miss.
+        """Get entity profile. Checks Redis cache first, computes on miss.
 
         Target: ~50ms when cached.
         """
-        # Cache hit
-        if entity_id in self._cache:
-            logger.debug("profile.cache.hit", entity_id=entity_id)
-            return self._cache[entity_id]
+        # Check in-memory fallback first (tests without Redis)
+        if entity_id in self._memory_cache:
+            logger.debug("profile.cache.hit", entity_id=entity_id, backend="memory")
+            return self._memory_cache[entity_id]
 
-        # Cache miss — compute from graph
+        redis = self._get_redis()
+        if redis:
+            cached = await redis.get(f"profile:{entity_id}")
+            if cached:
+                logger.debug("profile.cache.hit", entity_id=entity_id, backend="redis")
+                data = json.loads(cached)
+                return EntityProfile(
+                    entity_id=data["entity_id"],
+                    static=[ProfileFact(**f) for f in data["static"]],
+                    dynamic=[ProfileFact(**f) for f in data["dynamic"]],
+                    memory_count=data["memory_count"],
+                    computed_at=data["computed_at"],
+                    version=data["version"],
+                )
+
         logger.info("profile.cache.miss", entity_id=entity_id)
         profile = await self.compute(entity_id)
 
-        # Store in cache
-        self._cache[entity_id] = profile
+        if redis:
+            await redis.setex(
+                f"profile:{entity_id}",
+                self.TTL,
+                json.dumps({
+                    "entity_id": profile.entity_id,
+                    "static": [
+                        {"content": f.content, "importance": f.importance}
+                        for f in profile.static
+                    ],
+                    "dynamic": [
+                        {
+                            "content": f.content,
+                            "relevance": f.relevance,
+                            "source": f.source,
+                            "acquired_at": f.acquired_at,
+                        }
+                        for f in profile.dynamic
+                    ],
+                    "memory_count": profile.memory_count,
+                    "computed_at": profile.computed_at,
+                    "version": profile.version,
+                }),
+            )
+        else:
+            # In-memory fallback for tests without Redis
+            self._memory_cache[entity_id] = profile
         return profile
 
     async def invalidate(self, entity_id: str) -> None:
@@ -87,9 +136,12 @@ class ProfileManager:
 
         Called at the end of the pipeline INDEXING stage.
         """
-        if entity_id in self._cache:
-            del self._cache[entity_id]
+        redis = self._get_redis()
+        if redis:
+            await redis.delete(f"profile:{entity_id}")
             logger.info("profile.cache.invalidated", entity_id=entity_id)
+        if entity_id in self._memory_cache:
+            del self._memory_cache[entity_id]
 
     async def compute(self, entity_id: str) -> EntityProfile:
         """Compute profile from the graph store.

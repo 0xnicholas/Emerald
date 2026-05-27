@@ -39,7 +39,22 @@ def engine():
 @pytest.fixture
 async def client(engine):
     """SDK client wired to in-memory FastAPI app."""
+    from fastapi import Request
+    from emerald.api.dependencies import api_key_auth, require_write_permission, rate_limit
+
+    async def _bypass_auth(request: Request):
+        return "authenticated"
+
+    async def _bypass_write(request: Request):
+        return "authorized"
+
+    async def _bypass_rate(request: Request):
+        return None
+
     app = create_app(engine=engine)
+    app.dependency_overrides[api_key_auth] = _bypass_auth
+    app.dependency_overrides[require_write_permission] = _bypass_write
+    app.dependency_overrides[rate_limit] = _bypass_rate
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         c = EmeraldClient(

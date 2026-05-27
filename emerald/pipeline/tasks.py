@@ -129,12 +129,11 @@ def index_task(self, prev_result: dict, entity_id: str) -> dict:
 
 
 async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
-    """Stage 4: Write to Neo4j + pgvector, infer relationships.
-
-    Neo4j driver is initialised once per worker process via
-    ``worker_process_init`` signal (see :mod:`emerald.pipeline.celery`).
-    """
+    """Stage 4: Write to Neo4j + pgvector, infer relationships."""
     pipeline_id = prev_result["pipeline_id"]
+    from emerald.db.neo4j import close_neo4j, init_neo4j
+
+    await init_neo4j()
     try:
         await _update_status(pipeline_id, "indexing")
         from emerald.db.redis import get_redis_client
@@ -172,6 +171,8 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
     except Exception as exc:
         await _update_error(pipeline_id, "indexing", str(exc))
         raise
+    finally:
+        await close_neo4j()
 
 
 @shared_task

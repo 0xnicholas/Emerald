@@ -43,12 +43,19 @@ class ChunkingError(EmeraldError):
 
 
 class EmbeddingError(EmeraldError):
-    """Raised when embedding generation fails."""
+    """Raised when embedding generation fails after all retries."""
 
     def __init__(self, reason: str, retryable: bool = True) -> None:
         self.reason = reason
         self.retryable = retryable
         super().__init__(f"Embedding failed: {reason}")
+
+
+class EmbeddingRetryableError(EmbeddingError):
+    """Raised on transient embedding failures (429, 502, 503, 504)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason, retryable=True)
 
 
 class IndexingError(EmeraldError):

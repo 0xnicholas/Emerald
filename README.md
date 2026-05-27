@@ -235,6 +235,33 @@ Emerald 正在积极开发中。
 - 面向个人的记忆管理应用
 - 开源记忆基准测试框架
 
+## OpenAI API Key
+
+Set your OpenAI API key for real semantic embeddings:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+If not set, the system falls back to `MockEmbeddingProvider` (deterministic but not semantic).
+
+## Development Setup
+
+```bash
+# 1. Start infrastructure
+docker compose up -d
+
+# 2. Run migrations
+alembic upgrade head
+
+# 3. Seed dev API key
+python scripts/seed_dev_api_key.py
+
+# 4. Run tests
+pytest tests/unit/ -x
+pytest tests/integration/ -x  # requires running services
+```
+
 ---
 
 **给你的 AI 一段记忆。**

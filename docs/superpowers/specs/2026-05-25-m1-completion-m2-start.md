@@ -2,7 +2,8 @@
 
 > **Version:** 1.0  
 > **Date:** 2026-05-25  
-> **Status:** Draft  
+> **Status:** Frozen  
+> **Plan:** `docs/superpowers/plans/2026-05-26-m1-completion-m2-start.md`  
 > **Scope:** Close the "semantic gap" (mock → real embeddings) and enable file uploads (PDF, image).
 
 ---

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
 from emerald.api.schemas import AddMemoryRequest
 
 router = APIRouter(tags=["Memories"])
@@ -21,7 +22,11 @@ def _get_engine(request: Request):
     return engine
 
 
-@router.post("/memories", status_code=status.HTTP_200_OK)
+@router.post(
+    "/memories",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(api_key_auth), Depends(require_write_permission), Depends(rate_limit)],
+)
 async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
     """Add content to the memory graph."""
     engine = _get_engine(request)
@@ -44,7 +49,7 @@ async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
     }
 
 
-@router.get("/memories/{memory_id}")
+@router.get("/memories/{memory_id}", dependencies=[Depends(api_key_auth)])
 async def get_memory(memory_id: str, request: Request) -> dict:
     """Get a single memory by ID."""
     engine = _get_engine(request)
