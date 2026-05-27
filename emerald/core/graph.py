@@ -46,6 +46,7 @@ class GraphStore:
         source_type: str = "conversation",
         document_id: str | None = None,
         valid_until: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Create a Memory node linked to an Entity.
 
@@ -53,6 +54,10 @@ class GraphStore:
         """
         memory_id = uuid4().hex
         now = datetime.now(UTC)
+
+        import json
+
+        metadata_json = json.dumps(metadata) if metadata else None
 
         if self._use_db and self._driver:
             async with self._driver.session() as session:
@@ -72,7 +77,8 @@ class GraphStore:
                         access_count: 0,
                         last_accessed_at: null,
                         created_at: datetime(),
-                        updated_at: datetime()
+                        updated_at: datetime(),
+                        metadata: $metadata
                     })
                     CREATE (e)-[:HAS_MEMORY {created_at: datetime()}]->(m)
                     """,
@@ -86,6 +92,7 @@ class GraphStore:
                     document_id=document_id,
                     source_type=source_type,
                     tokens=len(content) // 4,
+                    metadata=metadata_json,
                 )
         else:
             memory = {
@@ -106,6 +113,7 @@ class GraphStore:
                 "last_accessed_at": None,
                 "created_at": now,
                 "updated_at": now,
+                "metadata": metadata,
             }
             self._memories.setdefault(entity_id, []).append(memory)
 

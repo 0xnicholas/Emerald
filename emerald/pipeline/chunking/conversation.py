@@ -6,8 +6,13 @@ import re
 
 from emerald.pipeline.chunking.base import BaseChunker, Chunk
 
-# Matches speaker labels at the start of a line: "User:", "Assistant:", "System:"
-_SPEAKER_RE = re.compile(r"^(User|Assistant|System|AI|Human|Bot)\s*:\s*", re.IGNORECASE | re.MULTILINE)
+# Matches speaker labels at the start of a line:
+# Plain text: "User:", "Assistant:", "System:"
+# Markdown bold: "**User**:", "**Assistant**:", "**System**:"
+_SPEAKER_RE = re.compile(
+    r"^(?:\*\*)?(User|Assistant|System|AI|Human|Bot)(?:\*\*)?\s*:\s*",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 class ConversationChunker(BaseChunker):

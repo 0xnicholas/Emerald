@@ -190,6 +190,7 @@ class MemoryEngine:
                 memory_type="fact",
                 confidence=0.8,
                 source_type="conversation" if content_type == "conversation" else "document",
+                metadata=metadata,
             )
             # Unify IDs: vector-store row uses the same ID as the graph node.
             # This lets SearchOrchestrator resolve vector hits directly via

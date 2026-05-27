@@ -14,6 +14,96 @@ from emerald.core.engine import MemoryEngine
 from emerald.core.exceptions import EmeraldError
 
 
+def _init_engine() -> MemoryEngine:
+    """Build a MemoryEngine with all built-in extractors and chunkers registered.
+
+    Extractors/chunkers that require optional dependencies (e.g. PyMuPDF,
+    tree-sitter, Pillow) are imported inside try/except so the app can start
+    even when ``pip install -e '.[extraction]'`` has not been run.
+    """
+    import logging
+
+    from emerald.pipeline.chunking.conversation import ConversationChunker
+    from emerald.pipeline.chunking.markdown import MarkdownChunker
+    from emerald.pipeline.chunking.registry import ChunkerRegistry
+    from emerald.pipeline.chunking.text import TextChunker
+    from emerald.pipeline.extraction.registry import ExtractorRegistry
+    from emerald.pipeline.extraction.text import TextExtractor
+
+    logger = logging.getLogger(__name__)
+
+    extractors = ExtractorRegistry()
+    extractors.register("text", TextExtractor())
+    extractors.register("conversation", TextExtractor())
+    extractors.register("markdown", TextExtractor())
+
+    # --- Optional: URL extractor (trafilatura) ---
+    try:
+        from emerald.pipeline.extraction.url import URLExtractor
+        extractors.register("url", URLExtractor())
+    except ImportError as e:
+        logger.warning("URLExtractor not available: %s", e)
+
+    # --- Optional: PDF extractor (PyMuPDF) ---
+    try:
+        from emerald.pipeline.extraction.pdf import PDFExtractor
+        extractors.register("pdf", PDFExtractor())
+    except ImportError as e:
+        logger.warning("PDFExtractor not available: %s", e)
+
+    # --- Optional: Image extractor (Pillow + pytesseract) ---
+    try:
+        from emerald.pipeline.extraction.image import ImageExtractor
+        extractors.register("image", ImageExtractor())
+    except ImportError as e:
+        logger.warning("ImageExtractor not available: %s", e)
+
+    # --- Optional: Audio extractor (faster-whisper) ---
+    try:
+        from emerald.pipeline.extraction.audio import AudioExtractor
+        extractors.register("audio", AudioExtractor())
+    except ImportError as e:
+        logger.warning("AudioExtractor not available: %s", e)
+
+    # --- Optional: Video extractor (ffmpeg + faster-whisper) ---
+    try:
+        from emerald.pipeline.extraction.video import VideoExtractor
+        extractors.register("video", VideoExtractor())
+    except ImportError as e:
+        logger.warning("VideoExtractor not available: %s", e)
+
+    # --- Optional: Code extractor (tree-sitter) ---
+    try:
+        from emerald.pipeline.extraction.code import CodeExtractor
+        extractors.register("code", CodeExtractor())
+    except ImportError as e:
+        logger.warning("CodeExtractor not available: %s", e)
+
+    chunkers = ChunkerRegistry()
+    chunkers.register("text", TextChunker())
+    chunkers.register("conversation", ConversationChunker())
+    chunkers.register("markdown", MarkdownChunker())
+
+    # --- Optional: PDF chunker (PyMuPDF) ---
+    try:
+        from emerald.pipeline.chunking.pdf import PDFChunker
+        chunkers.register("pdf", PDFChunker())
+    except ImportError as e:
+        logger.warning("PDFChunker not available: %s", e)
+
+    # --- Optional: Code chunker (tree-sitter) ---
+    try:
+        from emerald.pipeline.chunking.code import CodeChunker
+        chunkers.register("code", CodeChunker())
+    except ImportError as e:
+        logger.warning("CodeChunker not available: %s", e)
+
+    return MemoryEngine(
+        extractor_registry=extractors,
+        chunker_registry=chunkers,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -71,6 +161,9 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     # Store engine in app state so routes can access it
     if engine is not None:
         app.state.engine = engine
+    else:
+        # Auto-initialize engine with built-in extractors/chunkers
+        app.state.engine = _init_engine()
 
     # ---- Middleware: request ID + response wrapping ----
 
