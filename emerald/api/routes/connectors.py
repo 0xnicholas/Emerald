@@ -2,22 +2,38 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
 
 from emerald.api.dependencies import api_key_auth, require_write_permission
+from emerald.connectors.auth import encrypt_credentials
+from emerald.connectors.registry import get_connector_registry
+from emerald.db.session import session_factory
+from emerald.models.connector import Connector
 
-router = APIRouter(
-    prefix="/connectors",
-    tags=["Connectors"],
-)
+router = APIRouter(prefix="/connectors", tags=["Connectors"])
 
+
+# ---- Helper: resolve entity from request state ----
+
+def _get_entity_id(request: Request) -> str:
+    return getattr(request.state, "entity_id", "")
+
+
+# ---- OAuth Connect ----
 
 @router.post(
     "/{provider}/connect",
     response_model=dict,
     dependencies=[Depends(api_key_auth), Depends(require_write_permission)],
 )
-async def connect_provider(provider: str) -> dict:
+async def connect_provider(
+    provider: str,
+    request: Request,
+    redirect_uri: str = "",
+) -> dict:
     """Initiate OAuth connection to an external data source.
 
     Providers: google_drive, gmail, notion, github.
@@ -29,54 +45,208 @@ async def connect_provider(provider: str) -> dict:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown provider '{provider}'. Valid: {valid_providers}",
         )
-    # TODO: delegate to connector registry
+
+    registry = get_connector_registry()
+    connector_cls = registry.get(provider)
+    entity_id = _get_entity_id(request)
+    connector = connector_cls(entity_id=entity_id)
+
+    # Default redirect URI if not provided
+    if not redirect_uri:
+        from emerald.config import get_settings
+        base = get_settings().emerald_env == "production" and "https://api.emerald.ai" or "http://localhost:8000"
+        redirect_uri = f"{base}/v1/connectors/{provider}/callback"
+
+    auth_url, state_token = await connector.get_auth_url(redirect_uri)
+
     return {
         "data": {
             "provider": provider,
-            "auth_url": "",
-            "state_token": "",
+            "auth_url": auth_url,
+            "state_token": state_token,
             "expires_in": 600,
         },
     }
 
 
+# ---- OAuth Callback ----
+
+@router.get(
+    "/{provider}/callback",
+    response_model=dict,
+)
+async def handle_oauth_callback(
+    provider: str,
+    code: str,
+    state: str,
+    request: Request,
+) -> dict:
+    """OAuth callback — exchange code for token and store credentials."""
+    registry = get_connector_registry()
+    connector_cls = registry.get(provider)
+
+    # For GitHub we don't have entity_id in the callback; state encodes it
+    # In production, state should be looked up in a temporary Redis/cache store.
+    # For now, we require the entity_id to be passed or derive from state.
+    entity_id = request.query_params.get("entity_id", "")
+    if not entity_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="entity_id required in callback",
+        )
+
+    connector = connector_cls(entity_id=entity_id)
+    creds = await connector.handle_callback(code, state)
+
+    # Encrypt and store credentials
+    encrypted = encrypt_credentials(creds)
+
+    async with session_factory.session() as session:
+        result = await session.execute(
+            select(Connector).where(
+                Connector.entity_id == uuid.UUID(entity_id),
+                Connector.provider == provider,
+            )
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.credentials = encrypted
+            existing.sync_status = "active"
+            existing.error_message = None
+        else:
+            session.add(
+                Connector(
+                    entity_id=uuid.UUID(entity_id),
+                    provider=provider,
+                    credentials=encrypted,
+                    sync_status="active",
+                )
+            )
+        await session.commit()
+
+    return {
+        "data": {
+            "provider": provider,
+            "status": "connected",
+            "entity_id": entity_id,
+        },
+    }
+
+
+# ---- Webhook ----
+
 @router.post(
     "/{provider}/webhook",
     response_model=dict,
 )
-async def handle_webhook(provider: str, request: Request) -> dict:
+async def handle_webhook(
+    provider: str,
+    request: Request,
+) -> dict:
     """Receive webhook notifications from external providers.
 
     Validates signature, deduplicates, triggers incremental sync.
     """
-    # TODO: signature verification, event dedup, sync trigger
-    return {"status": "accepted"}
+    raw_body = await request.body()
+    payload = await request.json()
+    payload["_raw_body"] = raw_body
 
+    signature = request.headers.get("X-Hub-Signature-256", "")
+
+    registry = get_connector_registry()
+    connector_cls = registry.get(provider)
+
+    # For webhooks, entity_id is typically encoded in the webhook path or payload
+    entity_id = payload.get("repository", {}).get("owner", {}).get("login", "")
+    connector = connector_cls(entity_id=entity_id)
+
+    triggered = await connector.handle_webhook(payload, signature)
+
+    return {
+        "status": "accepted",
+        "sync_triggered": triggered,
+    }
+
+
+# ---- Status ----
 
 @router.get(
     "/{provider}",
     response_model=dict,
     dependencies=[Depends(api_key_auth)],
 )
-async def get_connector_status(provider: str) -> dict:
+async def get_connector_status(
+    provider: str,
+    request: Request,
+) -> dict:
     """Get connector sync status for the authenticated entity."""
+    entity_id = _get_entity_id(request)
+
+    async with session_factory.session() as session:
+        result = await session.execute(
+            select(Connector).where(
+                Connector.entity_id == uuid.UUID(entity_id),
+                Connector.provider == provider,
+            )
+        )
+        row = result.scalar_one_or_none()
+
+    if not row:
+        return {
+            "data": {
+                "provider": provider,
+                "sync_status": "inactive",
+                "last_synced_at": None,
+                "error_message": None,
+                "connected_at": None,
+            },
+        }
+
     return {
         "data": {
-            "provider": provider,
-            "sync_status": "active",
-            "last_synced_at": None,
-            "error_message": None,
-            "connected_at": None,
+            "provider": row.provider,
+            "sync_status": row.sync_status,
+            "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
+            "error_message": row.error_message,
+            "connected_at": row.created_at.isoformat() if row.created_at else None,
         },
     }
 
+
+# ---- Revoke ----
 
 @router.delete(
     "/{provider}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(api_key_auth), Depends(require_write_permission)],
 )
-async def revoke_connector(provider: str) -> None:
+async def revoke_connector(
+    provider: str,
+    request: Request,
+) -> None:
     """Revoke OAuth connection and delete stored credentials."""
-    # TODO: revoke tokens, clean up connector record
-    pass
+    entity_id = _get_entity_id(request)
+
+    async with session_factory.session() as session:
+        result = await session.execute(
+            select(Connector).where(
+                Connector.entity_id == uuid.UUID(entity_id),
+                Connector.provider == provider,
+            )
+        )
+        row = result.scalar_one_or_none()
+
+        if row:
+            # Decrypt and revoke tokens
+            from emerald.connectors.auth import decrypt_credentials
+            from emerald.connectors.registry import get_connector_registry
+
+            registry = get_connector_registry()
+            connector_cls = registry.get(provider)
+            connector = connector_cls(entity_id=entity_id)
+            connector.credentials = decrypt_credentials(row.credentials)
+            await connector.revoke()
+
+            await session.delete(row)
+            await session.commit()

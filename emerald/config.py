@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     github_app_private_key: str = ""
     github_client_id: str = ""
     github_client_secret: str = ""
+    github_webhook_secret: str = ""
 
     # ---- Rate Limiting ----
     rate_limit_memories: int = 60

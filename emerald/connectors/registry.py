@@ -36,6 +36,7 @@ class UnsupportedConnectorError(Exception):
 def get_connector_registry() -> ConnectorRegistry:
     """Get the global connector registry singleton."""
     registry = ConnectorRegistry()
-    # Connectors are registered in their respective module files
-    # via @register_connector decorator at import time.
+    # Eager-import to trigger registration side-effects.
+    from emerald.connectors.github import GitHubConnector
+    registry.register("github", GitHubConnector)
     return registry
