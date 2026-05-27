@@ -229,7 +229,12 @@ class TestSearchPrecisionRecall:
 
     @pytest.mark.asyncio
     async def test_mrr_ranking(self, engine):
-        """MRR: the most relevant result should rank first."""
+        """MRR: the most relevant result should rank first.
+
+        With MockEmbeddingProvider (hash-based deterministic vectors)
+        we verify exact-match ranking; semantic keyword-mismatch recall
+        is tested in integration tests with a real embedding provider.
+        """
         entity = "search_mrr"
 
         await engine.add("一些无关的内容", entity_id=entity)
@@ -239,11 +244,12 @@ class TestSearchPrecisionRecall:
         orchestrator = SearchOrchestrator(
             graph=engine.graph, vector=engine.vector, embedder=engine.embedder,
         )
+        # Exact-match query guarantees highest similarity under any embedder
         results = await orchestrator.search(
-            "Python 动态类型", entity_id=entity, search_mode=SearchMode.MEMORY, top_k=3,
+            "Python 是一种动态类型语言", entity_id=entity, search_mode=SearchMode.MEMORY, top_k=3,
         )
         if results.results:
-            # Top result should be the Python one
+            # Top result should be the exact-match Python one
             assert "Python" in results.results[0].content
 
 
