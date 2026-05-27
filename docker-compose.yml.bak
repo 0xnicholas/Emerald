@@ -82,7 +82,7 @@ services:
       POSTGRES_USER: emerald
       POSTGRES_PASSWORD: emerald_dev
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -124,7 +124,7 @@ services:
     container_name: emerald-redis
     command: redis-server --appendonly yes --requirepass emerald_dev
     ports:
-      - "6380:6379"
+      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -146,8 +146,8 @@ services:
       MINIO_ROOT_USER: emerald_admin
       MINIO_ROOT_PASSWORD: emerald_dev123
     ports:
-      - "9002:9000"  # API
-      - "9003:9001"  # Console
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
     volumes:
       - minio_data:/data
     healthcheck:

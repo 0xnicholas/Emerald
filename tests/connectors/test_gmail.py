@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import base64
-import json
 
 import pytest
 import httpx
 
-from emerald.connectors.base import SyncMode, SyncResult
+from emerald.connectors.base import SyncMode
 from emerald.connectors.gmail import GmailConnector
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"  # Will match connector constant
@@ -23,33 +22,29 @@ def _clear_config_cache():
 # ---- Helpers ----
 
 
-def _mock_response(status_code=200, json_data=None, text_data=None):
-    """Build a mock httpx.Response."""
-    request = httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages")
-    return httpx.Response(
-        status_code=status_code,
-        json=json_data,
-        text=text_data,
-        request=request,
-    )
-
-
-def _make_gmail_message(msg_id: str, subject: str, body_plain: str | None = None,
-                        body_html: str | None = None) -> dict:
-    """Build a realistic Gmail API message dict."""
-    headers = [
-        {"name": "From", "value": "sender@example.com"},
-        {"name": "To", "value": "receiver@example.com"},
-        {"name": "Subject", "value": subject},
-        {"name": "Date", "value": "Mon, 26 May 2026 10:00:00 +0000"},
-    ]
-    payload = {"mimeType": "text/plain", "headers": headers}
-    if body_plain:
-        payload["body"] = {"data": base64.urlsafe_b64encode(body_plain.encode()).decode()}
-    if body_html and not body_plain:
-        payload["mimeType"] = "text/html"
-        payload["body"] = {"data": base64.urlsafe_b64encode(body_html.encode()).decode()}
-    return {"id": msg_id, "threadId": "thread_1", "payload": payload}
+def _make_multipart_message(msg_id: str, subject: str, plain_body: str, html_body: str) -> dict:
+    """Build a multipart/alternative Gmail message with text/plain and text/html parts."""
+    return {
+        "id": msg_id,
+        "threadId": "thread_1",
+        "payload": {
+            "mimeType": "multipart/alternative",
+            "headers": [
+                {"name": "From", "value": "sender@example.com"},
+                {"name": "Subject", "value": subject},
+            ],
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": {"data": base64.urlsafe_b64encode(plain_body.encode()).decode()},
+                },
+                {
+                    "mimeType": "text/html",
+                    "body": {"data": base64.urlsafe_b64encode(html_body.encode()).decode()},
+                },
+            ],
+        },
+    }
 
 
 # ---- OAuth Tests ----
@@ -108,6 +103,36 @@ def test_extract_html_collapses_multiple_newlines():
     result = GmailConnector._extract_html_to_text("<p>a</p><br><br><br><p>b</p>")
     # Should not have 3+ consecutive newlines
     assert "\n\n\n\n" not in result
+
+
+# ---- Multipart Email Tests ----
+
+
+def test_extract_multipart_prefers_plain_text():
+    """Multipart/alternative should prefer text/plain over text/html."""
+    msg = _make_multipart_message(
+        "msg_multi", "Hello", "Plain text version", "<p>HTML version</p>"
+    )
+    result = GmailConnector._extract_email_body(msg["payload"])
+    assert result == "Plain text version"
+
+
+def test_extract_plain_only():
+    """Single-part text/plain message."""
+    payload = {
+        "mimeType": "text/plain",
+        "body": {"data": base64.urlsafe_b64encode(b"Just text").decode()},
+        "headers": [],
+    }
+    result = GmailConnector._extract_email_body(payload)
+    assert result == "Just text"
+
+
+def test_extract_empty_payload_returns_none():
+    """Payload with no body and no parts returns None."""
+    payload = {"mimeType": "multipart/mixed", "headers": [], "parts": []}
+    result = GmailConnector._extract_email_body(payload)
+    assert result is None
 
 
 # ---- Sync Tests ----

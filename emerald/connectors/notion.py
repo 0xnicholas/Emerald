@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
@@ -84,7 +86,7 @@ class NotionConnector(BaseConnector):
             raise RuntimeError("Notion client secret not configured")
 
         import base64 as _base64
-        auth_header = _base64.b64encode(
+        auth_header = base64.b64encode(
             f"{settings.notion_client_id}:{settings.notion_client_secret}".encode()
         ).decode()
 
@@ -274,6 +276,7 @@ class NotionConnector(BaseConnector):
 
         db_id = database["id"]
         db_title = _extract_page_title(database)
+        orchestrator = PipelineOrchestrator()
         synced_any = False
         cursor: str | None = None
 
@@ -295,7 +298,6 @@ class NotionConnector(BaseConnector):
                 if not row_text:
                     continue
 
-                orchestrator = PipelineOrchestrator()
                 await orchestrator.process_async(
                     content=row_text.encode("utf-8"),
                     content_type="text",
@@ -411,7 +413,6 @@ class NotionConnector(BaseConnector):
 # ---- Module-level helpers ----
 
 async def _notion_rate_limit_sleep():
-    import asyncio
     await asyncio.sleep(0.35)
 
 

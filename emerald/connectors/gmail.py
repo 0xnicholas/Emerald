@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html as html_module
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -90,7 +91,7 @@ class GmailConnector(BaseConnector):
 
         expires_at = None
         if "expires_in" in data:
-            expires_at = datetime.now(UTC) + __import__("datetime").timedelta(seconds=data["expires_in"])
+            expires_at = datetime.now(UTC) + timedelta(seconds=data["expires_in"])
 
         creds = ConnectorCredentials(
             access_token=data["access_token"],
@@ -190,12 +191,6 @@ class GmailConnector(BaseConnector):
         """Full sync — last 30 days of messages. Returns the latest historyId."""
         page_token: str | None = None
         processed_ids: set[str] = set()
-        latest_history_id: str | None = None
-
-        # Get current historyId as baseline
-        profile_resp = await client.get("/users/me/profile")
-        profile_resp.raise_for_status()
-        latest_history_id = str(profile_resp.json().get("historyId", ""))
 
         while True:
             params: dict[str, Any] = {
@@ -231,6 +226,12 @@ class GmailConnector(BaseConnector):
             page_token = data.get("nextPageToken")
             if not page_token:
                 break
+
+        # Capture historyId AFTER sync completes, so we don't miss
+        # messages that arrived during a long sync.
+        profile_resp = await client.get("/users/me/profile")
+        profile_resp.raise_for_status()
+        latest_history_id = str(profile_resp.json().get("historyId", ""))
 
         logger.info("gmail.sync.full_complete", entity_id=self.entity_id, synced=result.files_synced)
         return latest_history_id
@@ -363,5 +364,4 @@ class GmailConnector(BaseConnector):
 
 
 async def _rate_limit_sleep():
-    import asyncio
     await asyncio.sleep(0.2)
