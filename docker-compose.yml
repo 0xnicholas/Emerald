@@ -182,6 +182,25 @@ services:
       - emerald-net
 
   # ============================================
+  # MCP Server
+  # ============================================
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: emerald-mcp
+    command: python -m emerald.mcp.server --transport sse --port 8001
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    depends_on:
+      - api
+    networks:
+      - emerald-net
+
+  # ============================================
   # Nginx (反向代理)
   # ============================================
   nginx:
