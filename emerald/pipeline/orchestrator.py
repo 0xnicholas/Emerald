@@ -48,9 +48,11 @@ class PipelineOrchestrator:
         # pipeline.orchestrator -> core.engine -> core.chunker -> pipeline.chunking.base
         from emerald.core.engine import MemoryEngine
 
+        self.extractors = extractor_registry or ExtractorRegistry()
+        self.chunkers = chunker_registry or ChunkerRegistry()
         self._engine = MemoryEngine(
-            extractor_registry=extractor_registry,
-            chunker_registry=chunker_registry,
+            extractor_registry=self.extractors,
+            chunker_registry=self.chunkers,
             use_db=use_db,
         )
 
@@ -70,13 +72,7 @@ class PipelineOrchestrator:
 
         Returns the list of created memory IDs.
         """
-        from emerald.core.engine import MemoryEngine
-
-        engine = MemoryEngine(
-            extractor_registry=self.extractors,
-            chunker_registry=self.chunkers,
-        )
-        result = await engine.add(
+        result = await self._engine.add(
             content=content,
             entity_id=entity_id,
             content_type=content_type,

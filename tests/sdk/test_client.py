@@ -200,6 +200,159 @@ async def test_sdk_entity_isolation(client):
     assert not any("Alice" in t for t in bob_texts)
 
 
+# ---- upload() ----
+
+@pytest.mark.asyncio
+async def test_upload_bytes(client):
+    """upload() accepts bytes and returns pipeline_id."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_response = MagicMock()
+    mock_response.status_code = 202
+    mock_response.json.return_value = {
+        "data": {
+            "document_id": "doc_123",
+            "pipeline_id": "pipe_456",
+            "pipeline_status": "queued",
+        }
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_http_client = AsyncMock()
+    mock_http_client.post.return_value = mock_response
+
+    with patch("emerald.sdk.client.httpx.AsyncClient", return_value=mock_http_client):
+        result = await client.upload(
+            b"test file content",
+            entity_id="user_123",
+            title="test.txt",
+        )
+    assert isinstance(result, AddResult)
+    assert result.pipeline_status == "queued"
+    assert result.pipeline_id == "pipe_456"
+
+
+@pytest.mark.asyncio
+async def test_upload_str_path(tmp_path, client):
+    """upload() accepts file path string."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_response = MagicMock()
+    mock_response.status_code = 202
+    mock_response.json.return_value = {
+        "data": {
+            "document_id": "doc_123",
+            "pipeline_id": "pipe_789",
+            "pipeline_status": "queued",
+        }
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_http_client = AsyncMock()
+    mock_http_client.post.return_value = mock_response
+
+    test_file = tmp_path / "test.md"
+    test_file.write_text("# Hello")
+
+    with patch("emerald.sdk.client.httpx.AsyncClient", return_value=mock_http_client):
+        result = await client.upload(
+            str(test_file),
+            entity_id="user_123",
+        )
+    assert isinstance(result, AddResult)
+    assert result.pipeline_status == "queued"
+
+
+# ---- health() ----
+
+@pytest.mark.asyncio
+async def test_health_returns_status(client):
+    """health() returns HealthStatus with checks."""
+    status = await client.health()
+    assert status.status in ("ok", "degraded")
+    assert "version" in status.checks or status.version
+
+
+# ---- pipeline_status() ----
+
+@pytest.mark.asyncio
+async def test_pipeline_status_not_found(client):
+    """pipeline_status() for unknown pipeline raises."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not found", request=MagicMock(), response=mock_response
+    )
+
+    original_client = client._client
+    client._client = AsyncMock()
+    client._client.get.return_value = mock_response
+
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.pipeline_status("nonexistent")
+    finally:
+        client._client = original_client
+
+
+@pytest.mark.asyncio
+async def test_pipeline_status_found(client):
+    """pipeline_status() returns PipelineStatus for valid pipeline."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": {
+            "pipeline_id": "pipe_123",
+            "status": "done",
+            "stage": "indexing",
+            "document_id": "doc_456",
+            "content_type": "pdf",
+            "chunk_count": 12,
+            "error_message": None,
+        }
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    original_client = client._client
+    client._client = AsyncMock()
+    client._client.get.return_value = mock_response
+
+    try:
+        status = await client.pipeline_status("pipe_123")
+        assert status.pipeline_id == "pipe_123"
+        assert status.status == "done"
+        assert status.chunk_count == 12
+    finally:
+        client._client = original_client
+
+
+# ---- get_memory() ----
+
+@pytest.mark.asyncio
+async def test_get_memory_found(client):
+    """get_memory() returns memory dict for existing memory."""
+    add_result = await client.add("测试记忆", entity_id="user_123")
+    mid = add_result.memory_ids[0]
+
+    memory = await client.get_memory(mid)
+    assert memory["id"] == mid
+    assert "测试记忆" in memory["content"]
+
+
+# ---- close() ----
+
+@pytest.mark.asyncio
+async def test_close_idempotent(client):
+    """close() can be called multiple times safely."""
+    await client.close()
+    await client.close()  # should not raise
+    assert client._client is None
+
+
 # ---- SDK auth header ----
 
 @pytest.mark.asyncio
@@ -208,3 +361,15 @@ async def test_client_sets_auth_header(client):
     assert client.api_key == "em_test123"
     assert client._headers["Authorization"] == "Bearer em_test123"
     assert client._headers["Content-Type"] == "application/json"
+
+
+# ---- init from env ----
+
+def test_client_reads_env(monkeypatch):
+    """Client reads api_key and base_url from environment."""
+    monkeypatch.setenv("EMERALD_API_KEY", "em_env_key")
+    monkeypatch.setenv("EMERALD_BASE_URL", "http://env.test")
+
+    c = EmeraldClient()
+    assert c.api_key == "em_env_key"
+    assert c.base_url == "http://env.test"
