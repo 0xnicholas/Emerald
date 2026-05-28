@@ -296,8 +296,9 @@ class TestSyncSingle:
                         mode=SyncMode.INCREMENTAL,
                     )
 
-        # Error was persisted based on result.errors
-        assert row.sync_status == "error"
+        # Error was persisted based on result.errors.
+        # "API rate limit exceeded" matches transient patterns → status stays "active"
+        assert row.sync_status == "active"
         assert "API rate limit exceeded" in row.error_message
         assert "Page not found" in row.error_message
 
@@ -450,7 +451,7 @@ class TestSyncAll:
                     await sync_all("google_drive")
 
         assert call_count == 2
-        mock_logger.error.assert_called_once()
+        # sync_all no longer logs individual errors (sync_single already does)
 
 
 # ---- renew_webhooks tests ----

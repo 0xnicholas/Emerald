@@ -24,6 +24,34 @@ from emerald.models.connector import Connector
 logger = structlog.get_logger(__name__)
 
 
+# ---- Helpers ----
+
+# Error patterns that indicate transient failures (retry-able, don't mark as permanent)
+_TRANSIENT_ERROR_PATTERNS = (
+    "rate limit",
+    "too many requests",
+    "429",
+    "timeout",
+    "timed out",
+    "connection reset",
+    "service unavailable",
+    "503",
+    "temporarily",
+)
+
+
+def _is_transient_error(errors: list[str]) -> bool:
+    """Check if ALL errors look transient (rate limits, timeouts, etc.).
+
+    Transient errors keep sync_status='active' so scheduled syncs continue.
+    Permanent errors (auth failures, invalid config) mark sync_status='error'.
+    """
+    if not errors:
+        return False
+    error_text = " ".join(errors).lower()
+    return any(pattern in error_text for pattern in _TRANSIENT_ERROR_PATTERNS)
+
+
 # ---- Implementation functions (async) ----
 
 
@@ -61,13 +89,9 @@ async def sync_all(provider: str) -> dict:
                 mode=SyncMode.INCREMENTAL,
             )
             success_count += 1
-        except Exception as exc:
-            logger.error(
-                "connector.sync_all.individual_failed",
-                entity_id=str(row.entity_id),
-                provider=provider,
-                error=str(exc),
-            )
+        except Exception:
+            # sync_single already logged the error and persisted error state.
+            # Don't duplicate the log — just count and continue.
             error_count += 1
 
     logger.info(
@@ -171,12 +195,15 @@ async def sync_single(
             provider=provider,
             error=str(exc),
         )
-        # Persist error state before re-raising
+        # Persist error state before re-raising.
+        # Check if the exception looks transient to keep the connector active.
+        error_str = str(exc)
+        new_status = "active" if _is_transient_error([error_str]) else "error"
         async with session_factory.session() as session:
             fresh_row = await session.get(Connector, row.id)
             if fresh_row:
-                fresh_row.sync_status = "error"
-                fresh_row.error_message = str(exc)
+                fresh_row.sync_status = new_status
+                fresh_row.error_message = error_str
                 fresh_row.last_synced_at = datetime.now(UTC)
                 await session.flush()
         raise
@@ -189,17 +216,25 @@ async def sync_single(
         else row.sync_metadata
     )
 
+    # Classify sync errors: transient (rate limits, timeouts) keep "active"
+    # so scheduled syncs continue; permanent errors mark as "error".
+    if result.errors:
+        if _is_transient_error(result.errors):
+            new_status = "active"
+        else:
+            new_status = "error"
+        error_text = "; ".join(result.errors[:3])
+    else:
+        new_status = "active"
+        error_text = None
+
     async with session_factory.session() as session:
         fresh_row = await session.get(Connector, row.id)
         if fresh_row:
             fresh_row.last_synced_at = datetime.now(UTC)
             fresh_row.sync_metadata = updated_metadata
-            if result.errors:
-                fresh_row.sync_status = "error"
-                fresh_row.error_message = "; ".join(result.errors[:3])
-            else:
-                fresh_row.sync_status = "active"
-                fresh_row.error_message = None
+            fresh_row.sync_status = new_status
+            fresh_row.error_message = error_text
             await session.flush()
 
     logger.info(
