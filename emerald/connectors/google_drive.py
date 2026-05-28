@@ -56,10 +56,12 @@ class GoogleDriveConnector(BaseConnector):
 
     provider = "google_drive"
 
-    def __init__(self, entity_id: str) -> None:
+    def __init__(self, entity_id: str, sync_metadata: dict | None = None) -> None:
         self.entity_id = entity_id
         self.credentials: ConnectorCredentials | None = None
         self._client: httpx.AsyncClient | None = None
+        self._sync_metadata_in: dict | None = sync_metadata
+        self._sync_metadata_out: dict | None = None
 
     # ---- OAuth ----
 
@@ -149,13 +151,15 @@ class GoogleDriveConnector(BaseConnector):
 
         client = self._get_api_client()
         result = SyncResult(provider="google_drive")
+        next_page_token: str | None = None
 
         try:
-            # Use changes API for incremental sync when possible
-            if mode == SyncMode.INCREMENTAL and False:  # TODO: store pageToken
-                files = await self._fetch_changes(client)
+            # Use changes API for incremental sync when pageToken is available
+            page_token = (self._sync_metadata_in or {}).get("pageToken")
+            if mode == SyncMode.INCREMENTAL and page_token:
+                next_page_token, files = await self._fetch_changes(client, page_token)
             else:
-                files = await self._fetch_files(client)
+                next_page_token, files = await self._fetch_files(client)
 
             logger.info(
                 "google_drive.sync.files_fetched",
@@ -176,6 +180,13 @@ class GoogleDriveConnector(BaseConnector):
                     result.files_failed += 1
                     result.errors.append(f"{file_meta.get('name')}: {exc}")
 
+            # Persist sync metadata for next incremental sync
+            self._sync_metadata_out = {
+                "last_synced_at": datetime.now(UTC).isoformat(),
+            }
+            if next_page_token:
+                self._sync_metadata_out["pageToken"] = next_page_token
+
         except Exception as exc:
             logger.error("google_drive.sync.failed", error=str(exc))
             result.errors.append(str(exc))
@@ -184,10 +195,14 @@ class GoogleDriveConnector(BaseConnector):
 
         return result
 
-    async def _fetch_files(self, client: httpx.AsyncClient) -> list[dict]:
-        """Fetch list of files from Google Drive."""
+    async def _fetch_files(self, client: httpx.AsyncClient) -> tuple[str | None, list[dict]]:
+        """Fetch list of files from Google Drive.
+
+        Returns (nextPageToken, files).
+        """
         files: list[dict] = []
         page_token: str | None = None
+        last_page_token: str | None = None
 
         while True:
             params: dict[str, Any] = {
@@ -207,11 +222,60 @@ class GoogleDriveConnector(BaseConnector):
                 if mime in _SUPPORTED_MIMETYPES or mime in _EXPORTABLE_MIMETYPES:
                     files.append(f)
 
-            page_token = data.get("nextPageToken")
-            if not page_token:
+            last_page_token = data.get("nextPageToken")
+            if not last_page_token:
                 break
+            page_token = last_page_token
 
-        return files
+        return last_page_token, files
+
+    async def _fetch_changes(
+        self, client: httpx.AsyncClient, start_page_token: str
+    ) -> tuple[str | None, list[dict]]:
+        """Fetch file changes since the given pageToken via the changes API.
+
+        Returns (newStartPageToken, changed_files).
+        """
+        changed_files: list[dict] = []
+        page_token: str = start_page_token
+        new_start_page_token: str | None = None
+
+        while True:
+            params: dict[str, Any] = {
+                "pageToken": page_token,
+                "pageSize": 100,
+                "fields": (
+                    "nextPageToken, newStartPageToken, "
+                    "changes(fileId, file(id, name, mimeType, modifiedTime, size))"
+                ),
+            }
+
+            response = await client.get("/changes", params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Track the latest page token for the next sync
+            if data.get("newStartPageToken"):
+                new_start_page_token = str(data["newStartPageToken"])
+
+            for change in data.get("changes", []):
+                file_data = change.get("file")
+                if not file_data:
+                    continue
+                mime = file_data.get("mimeType", "")
+                if mime in _SUPPORTED_MIMETYPES or mime in _EXPORTABLE_MIMETYPES:
+                    changed_files.append(file_data)
+
+            next_page = data.get("nextPageToken")
+            if not next_page:
+                break
+            page_token = next_page
+
+        return new_start_page_token, changed_files
+
+    def get_sync_metadata(self) -> dict | None:
+        """Return updated sync metadata for persistence after sync completes."""
+        return self._sync_metadata_out
 
     async def _sync_file(
         self, client: httpx.AsyncClient, file_meta: dict

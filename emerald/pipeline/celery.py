@@ -45,23 +45,27 @@ celery_app.conf.beat_schedule = {
         "task": "emerald.pipeline.tasks.decay_episodic",
         "schedule": 86400.0,  # Daily (4 AM)
     },
+    "renew-webhooks": {
+        "task": "emerald.connectors.tasks.renew_webhooks_task",
+        "schedule": 86400.0,  # Daily
+    },
     "sync-google-drive": {
-        "task": "emerald.connectors.tasks.sync_all",
+        "task": "emerald.connectors.tasks.sync_all_task",
         "schedule": 14400.0,  # Every 4 hours
         "kwargs": {"provider": "google_drive"},
     },
     "sync-gmail": {
-        "task": "emerald.connectors.tasks.sync_all",
+        "task": "emerald.connectors.tasks.sync_all_task",
         "schedule": 14400.0,
         "kwargs": {"provider": "gmail"},
     },
     "sync-notion": {
-        "task": "emerald.connectors.tasks.sync_all",
+        "task": "emerald.connectors.tasks.sync_all_task",
         "schedule": 14400.0,
         "kwargs": {"provider": "notion"},
     },
     "sync-github": {
-        "task": "emerald.connectors.tasks.sync_all",
+        "task": "emerald.connectors.tasks.sync_all_task",
         "schedule": 14400.0,
         "kwargs": {"provider": "github"},
     },
