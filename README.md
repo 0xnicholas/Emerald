@@ -294,11 +294,27 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**Beta** — 核心管线、混合搜索、用户画像、API 层、Python SDK、MCP Server 和 Pandaria 集成已实现并通过测试。可处理文本、URL、PDF、图片、音频、视频、代码和 Markdown 的提取与索引。
+**v0.3.0** — 核心功能全部实现并通过测试（484 tests passing）。
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| 文本管线 | ✅ 完整 | 提取→分块→嵌入→索引，端到端可工作 |
+| 全内容类型 | ✅ 完整 | 7 种 extractor + 5 种 chunker，含优雅降级 |
+| 关系推断引擎 | ✅ 完整 | UPDATES / EXTENDS / DERIVES_FROM 自动分类并写入图谱 |
+| 用户画像 | ✅ 完整 | 静态+动态事实，Redis 缓存，< 50ms 冷启动 |
+| 混合搜索 | ✅ 完整 | Memory + RAG 合并，支持重排序和查询改写 |
+| 遗忘引擎 | ✅ 完整 | 时间过期、噪音过滤、情节衰减（Celery Beat） |
+| REST API | ✅ 完整 | P0/P1/P2 端点全部实现 |
+| Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status |
+| 连接器 | ✅ 完整 | GitHub、Google Drive、Gmail、Notion（OAuth + 增量同步） |
+| MCP Server | ✅ 完整 | stdio + SSE 双模式 |
+| 基准测试 | ✅ 完整 | LongMemEval / LoCoMo / ConvoMem 风格评估脚本 |
+| 可观测性 | ✅ 部分 | Prometheus 指标 (`/v1/metrics`)、结构化 JSON 日志 |
 
 规划中：
+- Docker Compose 端到端验证（配置已就绪）
+- K8s 生产部署模板
 - 框架集成（LangChain、OpenAI Agents SDK 等）
-- 面向个人的记忆管理应用
 - 开源记忆基准测试框架
 
 ## OpenAI API Key

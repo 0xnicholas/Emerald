@@ -25,7 +25,7 @@ uvicorn emerald.api.app:app --host 0.0.0.0 --port 8000
 
 ```bash
 curl http://localhost:8000/v1/health
-# {"status":"ok","version":"0.1.0","checks":{...}}
+# {"status":"ok","version":"0.3.0","checks":{...}}
 ```
 
 ---

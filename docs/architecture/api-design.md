@@ -542,7 +542,7 @@ GET /v1/health
 ```json
 {
     "status": "ok",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "checks": {
         "database": "ok",
         "neo4j": "ok",
