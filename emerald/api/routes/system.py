@@ -67,7 +67,7 @@ async def health_check() -> dict:
 
     return {
         "status": overall,
-        "version": "0.1.0",
+        "version": "0.3.0",
         "checks": checks,
         "meta": {
             "took_ms": int((time.perf_counter() - start) * 1000),
