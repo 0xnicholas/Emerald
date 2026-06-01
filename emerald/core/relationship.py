@@ -78,6 +78,16 @@ class RelationshipEngine:
                     )
                     created += 1
 
+            # Check for DERIVES_FROM: new memory combines information from 2+ old memories
+            derives_sources = self._find_derives_sources(
+                new_memory, existing,
+            )
+            if derives_sources:
+                await self.create_derives_relation(
+                    new_id, derives_sources, reasoning="combined inference",
+                )
+                created += 1
+
         logger.info(
             "relationship.infer.complete",
             entity_id=entity_id,
@@ -173,6 +183,12 @@ class RelationshipEngine:
 
         Both memories stay is_latest=True.
         """
+        await self.graph.create_relationship(
+            from_id=new_memory_id,
+            to_id=existing_memory_id,
+            rel_type="EXTENDS",
+            properties={"aspect": aspect, "confidence": 0.7},
+        )
         logger.info(
             "relationship.extends",
             new=new_memory_id,
@@ -187,12 +203,47 @@ class RelationshipEngine:
         reasoning: str = "",
     ) -> None:
         """Create DERIVES_FROM relationships linking derived memory to sources."""
+        for source_id in source_ids:
+            await self.graph.create_relationship(
+                from_id=derived_id,
+                to_id=source_id,
+                rel_type="DERIVES_FROM",
+                properties={"reasoning": reasoning, "confidence": 0.6},
+            )
         logger.info(
             "relationship.derives",
             derived=derived_id,
             sources=source_ids,
             reasoning=reasoning,
         )
+
+    @staticmethod
+    def _find_derives_sources(
+        new_memory: dict,
+        existing_memories: list[dict],
+    ) -> list[str]:
+        """Find 2+ source memories that collectively imply the new memory.
+
+        Heuristic: new memory shares bigrams with 2+ existing memories,
+        and no single existing memory covers all of the new memory's bigrams.
+        """
+        new_bigrams = RelationshipEngine._extract_bigrams(new_memory.get("content", ""))
+        if not new_bigrams:
+            return []
+
+        sources = []
+        covered = set()
+        for old in existing_memories:
+            old_bigrams = RelationshipEngine._extract_bigrams(old.get("content", ""))
+            overlap = new_bigrams & old_bigrams
+            if overlap:
+                sources.append(old["id"])
+                covered.update(overlap)
+
+        # Need at least 2 sources AND combined coverage < full new memory
+        if len(sources) >= 2 and covered != new_bigrams:
+            return sources[:3]  # Cap at 3 sources
+        return []
 
     # ---- Classification heuristics ----
 

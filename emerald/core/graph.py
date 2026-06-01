@@ -225,3 +225,54 @@ class GraphStore:
                     if replaced_by is not None:
                         m["replaced_by"] = replaced_by
                     return
+
+    async def create_relationship(
+        self,
+        from_id: str,
+        to_id: str,
+        rel_type: str,
+        properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Create a directed relationship between two memories.
+
+        Args:
+            from_id: Source memory ID.
+            to_id: Target memory ID.
+            rel_type: Relationship type (UPDATES, EXTENDS, DERIVES_FROM).
+            properties: Optional relationship properties.
+        """
+        self._init_driver()
+        props = properties or {}
+        now = datetime.now(UTC)
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (from:Memory {id: $from_id})
+                    MATCH (to:Memory {id: $to_id})
+                    CREATE (from)-[r:%s {
+                        created_at: datetime(),
+                        confidence: $confidence,
+                        reason: $reason
+                    }]->(to)
+                    """ % rel_type.upper(),
+                    from_id=from_id,
+                    to_id=to_id,
+                    confidence=props.get("confidence", 0.8),
+                    reason=props.get("reason", ""),
+                )
+            return
+
+        # In-memory: store relationships on the target memory
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == to_id:
+                    rels = m.setdefault("relationships", [])
+                    rels.append({
+                        "from_id": from_id,
+                        "type": rel_type,
+                        "created_at": now,
+                        **props,
+                    })
+                    return
