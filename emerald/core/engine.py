@@ -10,9 +10,9 @@ from uuid import uuid4
 
 import structlog
 
-from emerald.core.chunker import Chunk, ChunkerRegistry
+from emerald.core.chunker import Chunk, ChunkerRegistry, get_default_registry as get_default_chunker_registry
 from emerald.core.embedder import EmbeddingProvider, get_embedding_provider
-from emerald.core.extractor import ExtractedContent, ExtractorRegistry
+from emerald.core.extractor import ExtractedContent, ExtractorRegistry, get_default_registry as get_default_extractor_registry
 from emerald.core.graph import GraphStore
 from emerald.core.profile import ProfileManager
 from emerald.core.relationship import RelationshipEngine
@@ -54,8 +54,8 @@ class MemoryEngine:
         profile_manager: ProfileManager | None = None,
         use_db: bool = False,
     ) -> None:
-        self.extractors = extractor_registry or ExtractorRegistry()
-        self.chunkers = chunker_registry or ChunkerRegistry()
+        self.extractors = extractor_registry or get_default_extractor_registry()
+        self.chunkers = chunker_registry or get_default_chunker_registry()
         self.embedder = embedder or get_embedding_provider()
         self.graph = graph or GraphStore(use_db=use_db)
         self.vector = vector or VectorStore(use_db=use_db)

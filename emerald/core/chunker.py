@@ -5,10 +5,12 @@ The single source of truth for chunkers lives in emerald.pipeline.chunking.
 
 from emerald.pipeline.chunking.base import BaseChunker, Chunk
 from emerald.pipeline.chunking.registry import ChunkerRegistry, UnsupportedContentType
+from emerald.pipeline.chunking import get_default_registry
 
 __all__ = [
     "BaseChunker",
     "Chunk",
     "ChunkerRegistry",
     "UnsupportedContentType",
+    "get_default_registry",
 ]

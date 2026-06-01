@@ -50,9 +50,10 @@ def extract_task(self, pipeline_id: str, content: str | bytes, content_type: str
 
 async def _run_extract(pipeline_id, content, content_type):
     await _update_status(pipeline_id, "extracting")
-    from emerald.pipeline.extraction.registry import ExtractorRegistry
+    from emerald.pipeline.extraction import get_default_registry
 
-    extractor = ExtractorRegistry().get(content_type)
+    registry = get_default_registry()
+    extractor = registry.get(content_type)
     result = await extractor.extract(content)
 
     from emerald.db.redis import get_redis_client
@@ -80,9 +81,10 @@ async def _run_chunk(prev_result: dict) -> dict:
     redis = get_redis_client()
     text = await redis.get(f"pipeline:{pipeline_id}:text")
 
-    from emerald.pipeline.chunking.registry import ChunkerRegistry
+    from emerald.pipeline.chunking import get_default_registry
 
-    chunker = ChunkerRegistry().get(prev_result.get("content_type", "text"))
+    registry = get_default_registry()
+    chunker = registry.get(prev_result.get("content_type", "text"))
     chunks = chunker.chunk(text or "")
 
     data = [

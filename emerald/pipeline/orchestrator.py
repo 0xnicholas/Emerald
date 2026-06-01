@@ -47,9 +47,11 @@ class PipelineOrchestrator:
         # Lazy import to avoid circular dependency:
         # pipeline.orchestrator -> core.engine -> core.chunker -> pipeline.chunking.base
         from emerald.core.engine import MemoryEngine
+        from emerald.pipeline.extraction import get_default_registry as get_default_extractors
+        from emerald.pipeline.chunking import get_default_registry as get_default_chunkers
 
-        self.extractors = extractor_registry or ExtractorRegistry()
-        self.chunkers = chunker_registry or ChunkerRegistry()
+        self.extractors = extractor_registry or get_default_extractors()
+        self.chunkers = chunker_registry or get_default_chunkers()
         self._engine = MemoryEngine(
             extractor_registry=self.extractors,
             chunker_registry=self.chunkers,
