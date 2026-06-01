@@ -165,6 +165,11 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
         # Auto-initialize engine with built-in extractors/chunkers
         app.state.engine = _init_engine()
 
+    # ---- Prometheus metrics ----
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator().instrument(app).expose(app, endpoint="/v1/metrics", include_in_schema=False)
+
     # ---- Middleware: request ID + response wrapping ----
 
     @app.middleware("http")
