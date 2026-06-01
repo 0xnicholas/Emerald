@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: emerald-config
+  namespace: emerald
+data:
+  EMERALD_ENV: "production"
+  EMERALD_LOG_LEVEL: "INFO"
+  POSTGRES_HOST: "emerald-postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "emerald"
+  NEO4J_URI: "bolt://emerald-neo4j:7687"
+  REDIS_HOST: "emerald-redis"
+  REDIS_PORT: "6379"
+  MINIO_ENDPOINT: "emerald-minio:9000"
+  MINIO_BUCKET: "emerald-documents"
+  CELERY_BROKER_URL: "redis://emerald-redis:6379/0"
+  CELERY_RESULT_BACKEND: "redis://emerald-redis:6379/0"

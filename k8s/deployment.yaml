@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emerald-api
+  namespace: emerald
+  labels:
+    app: emerald-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: emerald-api
+  template:
+    metadata:
+      labels:
+        app: emerald-api
+    spec:
+      containers:
+        - name: api
+          image: emerald:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: emerald-config
+            - secretRef:
+                name: emerald-secrets
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emerald-worker
+  namespace: emerald
+  labels:
+    app: emerald-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: emerald-worker
+  template:
+    metadata:
+      labels:
+        app: emerald-worker
+    spec:
+      containers:
+        - name: worker
+          image: emerald:latest
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "emerald.pipeline.tasks", "worker", "--loglevel=info", "--concurrency=4"]
+          envFrom:
+            - configMapRef:
+                name: emerald-config
+            - secretRef:
+                name: emerald-secrets
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emerald-beat
+  namespace: emerald
+  labels:
+    app: emerald-beat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: emerald-beat
+  template:
+    metadata:
+      labels:
+        app: emerald-beat
+    spec:
+      containers:
+        - name: beat
+          image: emerald:latest
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "emerald.pipeline.tasks", "beat", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: emerald-config
+            - secretRef:
+                name: emerald-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
