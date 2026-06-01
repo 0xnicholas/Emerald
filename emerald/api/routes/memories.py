@@ -69,3 +69,22 @@ async def get_memory(memory_id: str, request: Request) -> dict:
             "took_ms": int((time.perf_counter() - start) * 1000),
         },
     }
+
+
+@router.delete("/memories/{memory_id}", dependencies=[Depends(api_key_auth)])
+async def delete_memory(memory_id: str, request: Request) -> dict:
+    """Delete a memory by ID (soft delete — mark as not latest)."""
+    start = time.perf_counter()
+    engine = _get_engine(request)
+    memory = await engine.graph.get_memory(memory_id)
+    if not memory:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    await engine.graph.update_is_latest(memory_id, False)
+    return {
+        "data": {"deleted": True, "memory_id": memory_id},
+        "meta": {
+            "request_id": getattr(request.state, "request_id", ""),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
+    }

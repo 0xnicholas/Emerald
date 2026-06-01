@@ -182,3 +182,30 @@ def test_search_get_supports_rewrite_query(client):
 def test_404_unknown_route(client):
     response = client.get("/v1/nonexistent")
     assert response.status_code == 404
+
+
+# ---- Delete memory ----
+
+def test_delete_memory(client):
+    # Add a memory first
+    add_resp = client.post(
+        "/v1/memories",
+        json={"content": "to be deleted", "entity_id": "user_123"},
+    )
+    memory_id = add_resp.json()["data"]["memory_ids"][0]
+
+    # Delete it
+    response = client.delete(f"/v1/memories/{memory_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"]["deleted"] is True
+    assert data["data"]["memory_id"] == memory_id
+
+    # Verify it's no longer latest
+    get_resp = client.get(f"/v1/memories/{memory_id}")
+    assert get_resp.json()["data"]["is_latest"] is False
+
+
+def test_delete_unknown_memory_returns_404(client):
+    response = client.delete("/v1/memories/nonexistent")
+    assert response.status_code == 404
