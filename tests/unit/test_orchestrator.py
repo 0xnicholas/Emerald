@@ -6,6 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from emerald.pipeline.orchestrator import PipelineOrchestrator
 
 
+class _MockEmbedder:
+    """Deterministic mock embedder that avoids OpenAI API calls."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1] * 128 for _ in texts]
+
+
 @pytest.fixture
 def orchestrator():
     from emerald.pipeline.extraction.registry import ExtractorRegistry
@@ -18,11 +25,12 @@ def orchestrator():
     chunkers = ChunkerRegistry()
     chunkers.register("text", TextChunker())
 
-    return PipelineOrchestrator(
-        extractor_registry=extractors,
-        chunker_registry=chunkers,
-        use_db=False,
-    )
+    with patch("emerald.core.engine.get_embedding_provider", return_value=_MockEmbedder()):
+        return PipelineOrchestrator(
+            extractor_registry=extractors,
+            chunker_registry=chunkers,
+            use_db=False,
+        )
 
 
 @pytest.mark.asyncio
