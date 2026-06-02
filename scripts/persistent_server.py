@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
-from emerald.api.routes import memories, profiles, search, system
+from emerald.api.routes.v1 import memories, profiles, search, system
 from emerald.config import Settings
 from emerald.core.chunker import ChunkerRegistry
 from emerald.core.embedder import MockEmbeddingProvider

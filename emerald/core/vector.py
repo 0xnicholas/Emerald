@@ -150,6 +150,68 @@ class VectorStore:
         results.sort(key=lambda x: x[2], reverse=True)
         return results[:top_k]
 
+    async def keyword_search(
+        self,
+        query: str,
+        *,
+        entity_id: str,
+        top_k: int = 10,
+    ) -> list[tuple[str, str, float]]:
+        """Database-level keyword search using PostgreSQL FTS + pg_trgm.
+
+        Returns list of (chunk_id, text, score) sorted by descending relevance.
+        Falls back to in-memory brute-force search when DB is unavailable.
+        """
+        if self._use_db and self._session_factory:
+            from sqlalchemy import text as sql_text
+            async with self._session_factory.session() as session:
+                result = await session.execute(
+                    sql_text("""
+                        SELECT chunk_id, text,
+                            COALESCE(ts_rank_cd(text_tsv, plainto_tsquery('simple', :q)), 0) * 0.6 +
+                            COALESCE(similarity(text, :q), 0) * 0.4 AS score
+                        FROM embeddings
+                        WHERE entity_id = :entity_id
+                          AND (
+                              text_tsv @@ plainto_tsquery('simple', :q)
+                              OR text % :q
+                          )
+                        ORDER BY score DESC
+                        LIMIT :top_k
+                    """),
+                    {"q": query, "entity_id": entity_id, "top_k": top_k},
+                )
+                rows = result.fetchall()
+                return [(row.chunk_id, row.text, float(row.score)) for row in rows]
+        else:
+            return self._memory_keyword_search(query, entity_id, top_k)
+
+    def _memory_keyword_search(
+        self,
+        query: str,
+        entity_id: str,
+        top_k: int,
+    ) -> list[tuple[str, str, float]]:
+        """In-memory keyword overlap search (fallback)."""
+        import re
+
+        query_terms = re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]", query.lower())
+        if not query_terms:
+            return []
+
+        results = []
+        for chunk_id, text in self._memory_texts.items():
+            if self._memory_entities.get(chunk_id) != entity_id:
+                continue
+            text_lower = text.lower()
+            matches = sum(1 for term in query_terms if term in text_lower)
+            if matches:
+                score = matches / len(query_terms)
+                results.append((chunk_id, text, score))
+
+        results.sort(key=lambda x: x[2], reverse=True)
+        return results[:top_k]
+
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors."""

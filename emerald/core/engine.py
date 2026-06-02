@@ -12,8 +12,11 @@ import structlog
 
 from emerald.core.chunker import Chunk, ChunkerRegistry, get_default_registry as get_default_chunker_registry
 from emerald.core.embedder import EmbeddingProvider, get_embedding_provider
+from emerald.core.exceptions import IndexingError
 from emerald.core.extractor import ExtractedContent, ExtractorRegistry, get_default_registry as get_default_extractor_registry
 from emerald.core.graph import GraphStore
+from emerald.core.metrics import memory_add_latency_seconds, memory_add_total, timed
+from emerald.core.tracing import get_tracer
 from emerald.core.profile import ProfileManager
 from emerald.core.relationship import RelationshipEngine
 from emerald.core.vector import VectorStore
@@ -69,49 +72,114 @@ class MemoryEngine:
         entity_id: str,
         content_type: str = "text",
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> AddResult:
         """Add content to the memory graph (synchronous path).
 
         Returns AddResult with memory IDs.
         """
-        logger.info(
-            "memory.add.start",
-            entity_id=entity_id,
-            content_type=content_type,
-            content_length=len(content),
-        )
+        tracer = get_tracer()
+        with tracer.start_as_current_span("memory.add") as span:
+            span.set_attribute("entity_id", entity_id)
+            span.set_attribute("content_type", content_type)
+            with timed(memory_add_latency_seconds):
+                # Idempotency check
+                if idempotency_key:
+                    cached = await self._check_idempotency(entity_id, idempotency_key)
+                    if cached:
+                        logger.info("memory.add.idempotent", entity_id=entity_id, key=idempotency_key)
+                        return cached
 
-        # 1. Extract
-        extracted = await self._extract(content, content_type)
+                logger.info(
+                    "memory.add.start",
+                    entity_id=entity_id,
+                    content_type=content_type,
+                    content_length=len(content),
+                )
 
-        # 2. Chunk
-        chunks = self._chunk(extracted, content_type)
+                # 1. Extract
+                extracted = await self._extract(content, content_type)
 
-        # 3. Embed
-        embeddings = await self._embed(chunks)
+                # 2. Chunk
+                chunks = self._chunk(extracted, content_type)
 
-        # 4. Index — store in graph + vector
-        memory_ids = await self._index(
-            chunks, embeddings, entity_id, content_type, metadata
-        )
+                # 3. Embed
+                embeddings = await self._embed(chunks)
 
-        # 5. Infer relationships
-        await self.relationships.infer(memory_ids, entity_id)
+                # 4. Index — store in graph + vector
+                memory_ids = await self._index(
+                    chunks, embeddings, entity_id, content_type, metadata
+                )
 
-        # 6. Invalidate profile cache
-        await self.profile_manager.invalidate(entity_id)
+                # 5. Infer relationships
+                await self.relationships.infer(memory_ids, entity_id)
 
-        logger.info(
-            "memory.add.complete",
-            entity_id=entity_id,
-            memory_count=len(memory_ids),
-        )
+                # 6. Invalidate profile cache
+                await self.profile_manager.invalidate(entity_id)
 
-        return AddResult(
-            memory_ids=memory_ids,
-            pipeline_status="done",
-            extracted_count=len(chunks),
-        )
+                result = AddResult(
+                    memory_ids=memory_ids,
+                    pipeline_status="done",
+                    extracted_count=len(chunks),
+                )
+
+                # Cache result for idempotency
+                if idempotency_key:
+                    await self._cache_idempotency(entity_id, idempotency_key, result)
+
+                memory_add_total.labels(memory_type="fact").inc(len(memory_ids))
+
+                logger.info(
+                    "memory.add.complete",
+                    entity_id=entity_id,
+                    memory_count=len(memory_ids),
+                )
+
+                return result
+
+    async def _check_idempotency(
+        self, entity_id: str, key: str
+    ) -> AddResult | None:
+        """Check Redis for a cached idempotent result."""
+        try:
+            from emerald.db.redis import get_redis_client
+
+            redis = get_redis_client()
+            cached = await redis.get(f"idempotency:{entity_id}:{key}")
+            if cached:
+                import json
+
+                data = json.loads(cached)
+                return AddResult(
+                    memory_ids=data["memory_ids"],
+                    pipeline_status=data["pipeline_status"],
+                    extracted_count=data["extracted_count"],
+                )
+        except Exception:
+            pass
+        return None
+
+    async def _cache_idempotency(
+        self, entity_id: str, key: str, result: AddResult
+    ) -> None:
+        """Cache add result in Redis for 1 hour."""
+        try:
+            from emerald.db.redis import get_redis_client
+
+            redis = get_redis_client()
+            import json
+
+            await redis.setex(
+                f"idempotency:{entity_id}:{key}",
+                3600,
+                json.dumps({
+                    "memory_ids": result.memory_ids,
+                    "pipeline_status": result.pipeline_status,
+                    "extracted_count": result.extracted_count,
+                }),
+            )
+        except Exception:
+            pass
 
     async def _extract(self, content: str, content_type: str) -> ExtractedContent:
         """Extract clean text from raw content."""
@@ -179,11 +247,19 @@ class MemoryEngine:
         content_type: str,
         metadata: dict[str, Any] | None,
     ) -> list[str]:
-        """Store chunks in Neo4j and pgvector, return memory IDs."""
+        """Store chunks in Neo4j and pgvector, return memory IDs.
+
+        Uses a per-chunk compensation pattern: if the vector store write fails
+        after the graph node has been created, the graph node is marked as
+        is_latest=False so it never surfaces in search results.  This keeps
+        the two stores loosely consistent without a distributed transaction.
+        """
         memory_ids = []
+        failed_chunks: list[tuple[str, str]] = []  # (memory_id, reason)
+        model_name = getattr(self.embedder, "_model", "unknown")
 
         for chunk, embedding in zip(chunks, embeddings):
-            # Store in Neo4j graph — memory_id becomes the canonical ID
+            # 1. Store in Neo4j graph — memory_id becomes the canonical ID
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,
@@ -192,21 +268,50 @@ class MemoryEngine:
                 source_type="conversation" if content_type == "conversation" else "document",
                 metadata=metadata,
             )
-            # Unify IDs: vector-store row uses the same ID as the graph node.
-            # This lets SearchOrchestrator resolve vector hits directly via
-            # GraphStore.get_memory() without a translation table.
             chunk.id = memory_id
-            memory_ids.append(memory_id)
 
-            # Store embedding in vector store
-            model_name = getattr(self.embedder, "_model", "unknown")
-            await self.vector.store(
-                chunk_id=memory_id,
-                text=chunk.text,
-                embedding=embedding,
+            # 2. Store embedding in vector store
+            try:
+                await self.vector.store(
+                    chunk_id=memory_id,
+                    text=chunk.text,
+                    embedding=embedding,
+                    entity_id=entity_id,
+                    model_name=model_name,
+                )
+                memory_ids.append(memory_id)
+            except Exception as exc:
+                # Compensation: mark graph node as failed so it doesn't leak into search
+                logger.warning(
+                    "index.vector_store_failed",
+                    memory_id=memory_id,
+                    entity_id=entity_id,
+                    error=str(exc),
+                )
+                try:
+                    await self.graph.update_is_latest(
+                        memory_id, False, replaced_by="indexing_failed"
+                    )
+                except Exception as comp_exc:
+                    logger.error(
+                        "index.compensation_failed",
+                        memory_id=memory_id,
+                        error=str(comp_exc),
+                    )
+                failed_chunks.append((memory_id, str(exc)))
+
+        if failed_chunks:
+            logger.error(
+                "index.partial_failure",
                 entity_id=entity_id,
-                model_name=model_name,
+                success=len(memory_ids),
+                failed=len(failed_chunks),
             )
+            if not memory_ids:
+                raise IndexingError(
+                    f"All {len(failed_chunks)} chunk indexings failed. "
+                    f"First error: {failed_chunks[0][1]}"
+                )
 
         return memory_ids
 

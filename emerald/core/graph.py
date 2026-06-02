@@ -197,6 +197,46 @@ class GraphStore:
         latest.sort(key=lambda m: m["created_at"], reverse=True)
         return latest[:limit]
 
+    async def list_forget_candidates(
+        self,
+        entity_id: str,
+        *,
+        limit: int = 1000,
+        memory_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all is_latest=True memories for an entity (including expired).
+
+        Used by ForgetEngine to scan for memories that need archiving.
+        Unlike list_latest_memories, this does NOT filter out expired memories.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (e:Entity {id: $entity_id})-[:HAS_MEMORY]->(m:Memory)
+                    WHERE m.is_latest = true
+                    RETURN m
+                    ORDER BY m.created_at DESC
+                    LIMIT $limit
+                    """,
+                    entity_id=entity_id,
+                    limit=limit,
+                )
+                memories = []
+                async for record in result:
+                    memories.append(dict(record["m"]))
+                if memory_type:
+                    memories = [m for m in memories if m.get("memory_type") == memory_type]
+                return memories
+
+        memories = self._memories.get(entity_id, [])
+        latest = [m for m in memories if m["is_latest"]]
+        if memory_type:
+            latest = [m for m in latest if m["memory_type"] == memory_type]
+        latest.sort(key=lambda m: m["created_at"], reverse=True)
+        return latest[:limit]
+
     async def update_is_latest(
         self, memory_id: str, is_latest: bool, replaced_by: str | None = None
     ) -> None:
@@ -224,6 +264,37 @@ class GraphStore:
                     m["updated_at"] = datetime.now(UTC)
                     if replaced_by is not None:
                         m["replaced_by"] = replaced_by
+                    return
+
+    async def mark_expired(self, memory_id: str, reason: str = "expired") -> None:
+        """Mark a memory as expired: is_latest=False + expired_at=now.
+
+        This is a convenience wrapper used by ForgetEngine.
+        """
+        self._init_driver()
+        now = datetime.now(UTC)
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (m:Memory {id: $id})
+                    SET m.is_latest = false,
+                        m.expired_at = datetime(),
+                        m.replaced_by = $reason,
+                        m.updated_at = datetime()
+                    """,
+                    id=memory_id,
+                    reason=reason,
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == memory_id:
+                    m["is_latest"] = False
+                    m["expired_at"] = now
+                    m["replaced_by"] = reason
+                    m["updated_at"] = now
                     return
 
     async def create_relationship(
@@ -276,3 +347,101 @@ class GraphStore:
                         **props,
                     })
                     return
+
+    async def get_relationships_to(
+        self, memory_ids: list[str]
+    ) -> dict[str, list[str]]:
+        """Find memories that have an UPDATES relationship TO the given memory IDs.
+
+        Returns a dict mapping ``target_memory_id → [source_memory_ids]``.
+        """
+        self._init_driver()
+        result: dict[str, list[str]] = {}
+        if not memory_ids:
+            return result
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                res = await session.run(
+                    """
+                    MATCH (m:Memory)-[r:UPDATES]->(target:Memory)
+                    WHERE target.id IN $ids
+                    RETURN target.id AS target_id, m.id AS source_id
+                    """,
+                    ids=memory_ids,
+                )
+                async for record in res:
+                    tid = record["target_id"]
+                    sid = record["source_id"]
+                    result.setdefault(tid, []).append(sid)
+            return result
+
+        # In-memory fallback
+        for entity_memories in self._memories.values():
+            for m in entity_memories:
+                if m["id"] not in memory_ids:
+                    continue
+                for rel in m.get("relationships", []):
+                    if rel["type"] == "UPDATES":
+                        tid = m["id"]
+                        sid = rel["from_id"]
+                        result.setdefault(tid, []).append(sid)
+        return result
+
+    async def keyword_search_memories(
+        self,
+        entity_id: str,
+        query: str,
+        top_k: int = 10,
+    ) -> list[tuple[str, str, float]]:
+        """Search memory content using Neo4j full-text index.
+
+        Returns list of (memory_id, content, score).
+        Falls back to in-memory scan if DB or index is unavailable.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            try:
+                async with self._driver.session() as session:
+                    result = await session.run(
+                        """
+                        CALL db.index.fulltext.queryNodes('memory_content', $query)
+                        YIELD node, score
+                        WHERE (node)-[:HAS_MEMORY]-(:Entity {id: $entity_id})
+                        RETURN node.id AS id, node.content AS content, score
+                        LIMIT $top_k
+                        """,
+                        query=query,
+                        entity_id=entity_id,
+                        top_k=top_k,
+                    )
+                    rows = []
+                    async for record in result:
+                        rows.append((
+                            record["id"],
+                            record["content"],
+                            float(record["score"]),
+                        ))
+                    return rows
+            except Exception:
+                # Index may not exist or query failed — fall through
+                pass
+
+        # In-memory fallback: brute-force keyword match
+        import re
+
+        query_terms = re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]", query.lower())
+        memories = self._memories.get(entity_id, [])
+        results = []
+        for m in memories:
+            if not m.get("is_latest", True):
+                continue
+            content = m.get("content", "")
+            if not query_terms:
+                continue
+            matches = sum(1 for term in query_terms if term in content.lower())
+            if matches:
+                score = matches / len(query_terms)
+                results.append((m["id"], content, score))
+        results.sort(key=lambda x: x[2], reverse=True)
+        return results[:top_k]

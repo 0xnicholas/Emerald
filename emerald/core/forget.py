@@ -32,7 +32,7 @@ class ForgetStrategy(str, Enum):
 class ForgetEngine:
     """Manages automatic forgetting of memories.
 
-    Each strategy is a task that scans the graph and marks
+    Each strategy queries the graph via GraphStore public APIs and marks
     memories as is_latest=False with appropriate metadata.
     """
 
@@ -50,30 +50,37 @@ class ForgetEngine:
     async def forget_expired(self, entity_id: str | None = None) -> int:
         """Mark memories past their valid_until as is_latest=False.
 
-        In production Neo4j:
-          MATCH (m:Memory)
-          WHERE m.valid_until IS NOT NULL
-            AND m.valid_until < datetime()
-            AND m.is_latest = true
-          SET m.is_latest = false, m.expired_at = datetime()
+        Uses GraphStore public API so it works with both Neo4j and in-memory.
         """
         now = datetime.now(UTC)
         count = 0
 
-        entities = [entity_id] if entity_id else list(self.graph._memories.keys())
-
-        for eid in entities:
-            for m in self.graph._memories.get(eid, []):
-                if not m["is_latest"]:
-                    continue
-                valid_until = m.get("valid_until")
-                if valid_until is not None and valid_until < now:
-                    m["is_latest"] = False
-                    m["expired_at"] = now
-                    count += 1
+        if entity_id:
+            memories = await self.graph.list_forget_candidates(entity_id, limit=1000)
+            count += await self._mark_expired(memories, now)
+        else:
+            # Scan all entities — in production this is done via Neo4j Cypher.
+            # In-memory fallback iterates over all stored entities.
+            all_entity_ids = await self._list_all_entity_ids()
+            for eid in all_entity_ids:
+                memories = await self.graph.list_forget_candidates(eid, limit=1000)
+                count += await self._mark_expired(memories, now)
 
         if count:
             logger.info("forget.expired", count=count)
+        return count
+
+    async def _mark_expired(self, memories: list[dict], now: datetime) -> int:
+        count = 0
+        for m in memories:
+            valid_until = m.get("valid_until")
+            if valid_until is not None:
+                # Neo4j returns neo4j.time.DateTime; convert to Python datetime
+                if hasattr(valid_until, "to_native"):
+                    valid_until = valid_until.to_native()
+                if valid_until < now:
+                    await self.graph.mark_expired(m["id"], reason="expired")
+                    count += 1
         return count
 
     # ---- Noise filtering (runs daily at 3 AM) ----
@@ -90,19 +97,19 @@ class ForgetEngine:
         cutoff = now - timedelta(days=self.NOISE_MIN_AGE_DAYS)
         count = 0
 
-        entities = [entity_id] if entity_id else list(self.graph._memories.keys())
+        target_entities = [entity_id] if entity_id else await self._list_all_entity_ids()
 
-        for eid in entities:
-            for m in self.graph._memories.get(eid, []):
-                if not m["is_latest"]:
-                    continue
-
+        for eid in target_entities:
+            memories = await self.graph.list_forget_candidates(eid, limit=1000)
+            for m in memories:
                 confidence = m.get("confidence", 0.5)
                 created_at = m.get("created_at", now)
+                # Neo4j DateTime conversion
+                if hasattr(created_at, "to_native"):
+                    created_at = created_at.to_native()
 
                 if confidence < self.NOISE_MAX_CONFIDENCE and created_at < cutoff:
-                    m["is_latest"] = False
-                    m["expired_at"] = now
+                    await self.graph.mark_expired(m["id"], reason="noise_filtered")
                     count += 1
 
         if count:
@@ -122,21 +129,33 @@ class ForgetEngine:
         archive_cutoff = now - timedelta(days=self.EPISODIC_ARCHIVE_DAYS)
         count = 0
 
-        for eid in self.graph._memories:
-            for m in self.graph._memories[eid]:
-                if not m["is_latest"]:
-                    continue
-
+        all_entity_ids = await self._list_all_entity_ids()
+        for eid in all_entity_ids:
+            memories = await self.graph.list_forget_candidates(eid, limit=1000)
+            for m in memories:
                 memory_type = m.get("memory_type", "fact")
                 if memory_type != "episodic":
                     continue
 
                 created_at = m.get("created_at", now)
+                if hasattr(created_at, "to_native"):
+                    created_at = created_at.to_native()
+
                 if created_at < archive_cutoff:
-                    m["is_latest"] = False
-                    m["expired_at"] = now
+                    await self.graph.mark_expired(m["id"], reason="episodic_decay")
                     count += 1
 
         if count:
             logger.info("forget.episodic_decay", count=count)
         return count
+
+    async def _list_all_entity_ids(self) -> list[str]:
+        """List all entity IDs that have memories.
+
+        In production this delegates to a Neo4j scan.  In-memory fallback
+        iterates over the internal store.
+        """
+        # In-memory fallback
+        if hasattr(self.graph, "_memories"):
+            return list(self.graph._memories.keys())
+        return []

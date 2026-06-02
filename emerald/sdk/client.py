@@ -42,9 +42,11 @@ class EmeraldClient:
         self,
         api_key: str | None = None,
         base_url: str | None = None,
+        api_version: str = "v1",
     ) -> None:
         self.api_key = api_key or os.environ.get("EMERALD_API_KEY", "")
         self.base_url = (base_url or os.environ.get("EMERALD_BASE_URL", "http://localhost:8000")).rstrip("/")
+        self.api_version = api_version
         self._headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -99,7 +101,7 @@ class EmeraldClient:
         if metadata:
             body["metadata"] = metadata
 
-        response = await client.post("/v1/memories", json=body)
+        response = await client.post(f"/{self.api_version}/memories", json=body)
         response.raise_for_status()
         data = response.json()["data"]
         return AddResult(
@@ -146,7 +148,7 @@ class EmeraldClient:
         if filters:
             body["filters"] = filters
 
-        response = await client.post("/v1/search", json=body)
+        response = await client.post(f"/{self.api_version}/search", json=body)
         response.raise_for_status()
         data = response.json()["data"]
 
@@ -181,7 +183,7 @@ class EmeraldClient:
             Profile with static facts (always relevant) and dynamic facts (recent, episodic).
         """
         client = await self._get_client()
-        response = await client.get(f"/v1/profiles/{entity_id}")
+        response = await client.get(f"/{self.api_version}/profiles/{entity_id}")
         response.raise_for_status()
         data = response.json()["data"]
 
@@ -257,7 +259,7 @@ class EmeraldClient:
         )
 
         try:
-            response = await upload_client.post("/v1/upload", files=files, data=data)
+            response = await upload_client.post(f"/{self.api_version}/upload", files=files, data=data)
             response.raise_for_status()
             resp_data = response.json()["data"]
             return AddResult(
@@ -273,7 +275,7 @@ class EmeraldClient:
     async def health(self) -> HealthStatus:
         """Check API health."""
         client = await self._get_client()
-        response = await client.get("/v1/health")
+        response = await client.get(f"/{self.api_version}/health")
         response.raise_for_status()
         data = response.json()
         return HealthStatus(
@@ -285,7 +287,7 @@ class EmeraldClient:
     async def pipeline_status(self, pipeline_id: str) -> PipelineStatus:
         """Check async pipeline processing status."""
         client = await self._get_client()
-        response = await client.get(f"/v1/pipelines/{pipeline_id}")
+        response = await client.get(f"/{self.api_version}/pipelines/{pipeline_id}")
         response.raise_for_status()
         data = response.json()["data"]
         return PipelineStatus(
@@ -301,6 +303,6 @@ class EmeraldClient:
     async def get_memory(self, memory_id: str) -> dict:
         """Get a single memory by ID."""
         client = await self._get_client()
-        response = await client.get(f"/v1/memories/{memory_id}")
+        response = await client.get(f"/{self.api_version}/memories/{memory_id}")
         response.raise_for_status()
         return response.json()["data"]

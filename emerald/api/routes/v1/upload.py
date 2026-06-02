@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import time
 from uuid import uuid4
@@ -43,10 +44,11 @@ async def upload_file(
     # 2. Detect content type
     detected = content_type or _detect_mime(file.filename)
 
-    # 3. Store in MinIO
+    # 3. Store in MinIO (offload sync call to thread pool to avoid blocking event loop)
     storage_key = f"{entity_id}/{uuid4().hex}/{file.filename or 'untitled'}"
     minio_client = _get_minio_client()
-    minio_client.put_object(
+    await asyncio.to_thread(
+        minio_client.put_object,
         settings.minio_bucket,
         storage_key,
         io.BytesIO(contents),
@@ -119,10 +121,64 @@ async def list_files(
 ) -> dict:
     """List uploaded files for an entity."""
     start = time.perf_counter()
+
+    from emerald.db.session import session_factory
+    from emerald.models.document import Document
+    from emerald.models.entity import Entity
+    from sqlalchemy import func, select
+
+    async with session_factory.session() as session:
+        # Resolve external entity_id → internal UUID
+        entity_result = await session.execute(
+            select(Entity).where(Entity.external_id == entity_id)
+        )
+        entity = entity_result.scalar_one_or_none()
+        if not entity:
+            return {
+                "data": {"items": [], "total": 0, "page": page, "page_size": page_size},
+                "meta": {"request_id": str(uuid4())[:8], "took_ms": 0},
+            }
+
+        # Count total
+        count_result = await session.execute(
+            select(func.count()).where(
+                Document.entity_id == entity.id,
+                Document.status == status_filter,
+            )
+        )
+        total = count_result.scalar() or 0
+
+        # Paginated query
+        offset = (page - 1) * page_size
+        docs_result = await session.execute(
+            select(Document)
+            .where(
+                Document.entity_id == entity.id,
+                Document.status == status_filter,
+            )
+            .order_by(Document.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        docs = docs_result.scalars().all()
+
+        items = [
+            {
+                "id": str(doc.id),
+                "title": doc.title,
+                "content_type": doc.content_type,
+                "status": doc.status,
+                "file_size_bytes": doc.file_size_bytes,
+                "chunk_count": doc.chunk_count,
+                "created_at": doc.created_at.isoformat() if doc.created_at else None,
+            }
+            for doc in docs
+        ]
+
     return {
         "data": {
-            "items": [],
-            "total": 0,
+            "items": items,
+            "total": total,
             "page": page,
             "page_size": page_size,
         },

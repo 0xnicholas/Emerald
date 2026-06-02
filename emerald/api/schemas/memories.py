@@ -14,6 +14,10 @@ class AddMemoryRequest(BaseModel):
     title: str | None = None
     metadata: dict | None = None
     async_mode: bool = False
+    idempotency_key: str | None = Field(
+        default=None,
+        description="Client-provided idempotency key. Same key + entity yields same result for 1 hour.",
+    )
 
 
 class AddMemoryResponse(BaseModel):

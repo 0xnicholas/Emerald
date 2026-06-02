@@ -57,7 +57,7 @@ def main():
     async def not_found_handler(request: Request, exc):
         return JSONResponse(status_code=404, content={"error": {"code": "NOT_FOUND", "message": f"{request.url.path}"}})
 
-    from emerald.api.routes import memories, search, profiles, system
+    from emerald.api.routes.v1 import memories, search, profiles, system
     app.include_router(memories.router, prefix="/v1")
     app.include_router(search.router, prefix="/v1")
     app.include_router(profiles.router, prefix="/v1")

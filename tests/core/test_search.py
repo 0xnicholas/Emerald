@@ -201,27 +201,29 @@ async def test_rewrite_query_noop_for_long_query(populated):
     assert results.query_rewritten == long_query
 
 
-# ---- Rerank stub ----
+# ---- Rerank ----
 
-def test_rerank_boosts_keyword_matches():
+@pytest.mark.asyncio
+async def test_rerank_boosts_keyword_matches():
     """_rerank_results boosts results with direct keyword overlap."""
     orchestrator = SearchOrchestrator()
     results = [
         SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
         SearchResult(id="2", content="Alice 喜欢 TypeScript 和函数式编程", score=0.8, source="memory"),
     ]
-    reranked = orchestrator._rerank_results(results, "TypeScript")
+    reranked = await orchestrator._rerank_results(results, "TypeScript")
     # The TypeScript result should move ahead despite lower initial score
     assert reranked[0].id == "2"
 
 
-def test_rerank_no_overlap_unchanged():
+@pytest.mark.asyncio
+async def test_rerank_no_overlap_unchanged():
     """_rerank_results preserves order when no keyword overlap."""
     orchestrator = SearchOrchestrator()
     results = [
         SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
         SearchResult(id="2", content="Bob 喜欢 Rust", score=0.8, source="memory"),
     ]
-    reranked = orchestrator._rerank_results(results, "量子计算")
+    reranked = await orchestrator._rerank_results(results, "量子计算")
     assert reranked[0].id == "1"
     assert reranked[1].id == "2"

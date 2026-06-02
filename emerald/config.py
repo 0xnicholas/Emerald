@@ -82,11 +82,20 @@ class Settings(BaseSettings):
     github_client_secret: str = ""
     github_webhook_secret: str = ""
 
+    # ---- CORS ----
+    cors_allowed_origins: str = "*"
+
     # ---- Rate Limiting ----
     rate_limit_memories: int = 60
     rate_limit_search: int = 120
     rate_limit_profiles: int = 300
     rate_limit_upload: int = 10
+
+    # ---- OpenTelemetry ----
+    otel_exporter_otlp_endpoint: str = ""
+    otel_service_name: str = "emerald"
+    otel_traces_sampler: str = "parentbased_traceidratio"
+    otel_traces_sampler_arg: float = 1.0
 
 
 @lru_cache

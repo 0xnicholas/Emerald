@@ -21,3 +21,6 @@ CREATE INDEX memory_expired IF NOT EXISTS FOR (m:Memory) ON (m.expired_at);
 
 -- Entity indexes
 CREATE INDEX entity_external_id IF NOT EXISTS FOR (e:Entity) ON (e.external_id);
+
+-- Full-text search index for memory content (Community 5.x supported)
+CREATE FULLTEXT INDEX memory_content IF NOT EXISTS FOR (m:Memory) ON EACH [m.content];

@@ -39,6 +39,7 @@ async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
         entity_id=body.entity_id,
         content_type=body.content_type or "text",
         metadata=body.metadata,
+        idempotency_key=body.idempotency_key,
     )
 
     return {

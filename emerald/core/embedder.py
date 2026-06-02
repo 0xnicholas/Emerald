@@ -152,21 +152,76 @@ class OpenAIProvider(EmbeddingProvider):
         await self._client.aclose()
 
 
-class LocalProvider(EmbeddingProvider):
-    """Placeholder for local embedding (BGE, text2vec).
+class SentenceTransformersProvider(EmbeddingProvider):
+    """Local embedding via sentence-transformers (all-MiniLM-L6-v2 by default).
 
-    In production, loads FlagEmbedding or similar locally.
+    Falls back gracefully if sentence-transformers is not installed.
     """
+
+    DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    DEFAULT_DIMENSION = 384
+
+    def __init__(self, model_name: str | None = None) -> None:
+        self._model_name = model_name or self.DEFAULT_MODEL
+        self._model = None
+        self._dimension = self.DEFAULT_DIMENSION
+        # Pre-check that sentence-transformers is installed so callers can
+        # catch ImportError early and fall back to MockEmbeddingProvider.
+        try:
+            import sentence_transformers  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "sentence-transformers is required for local embeddings. "
+                "Install it with: pip install sentence-transformers>=2.0"
+            ) from exc
+
+    def _load_model(self):
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                self._model = SentenceTransformer(self._model_name)
+                self._dimension = self._model.get_sentence_embedding_dimension()
+            except ImportError as exc:
+                raise ImportError(
+                    "sentence-transformers is required for local embeddings. "
+                    "Install it with: pip install sentence-transformers>=2.0"
+                ) from exc
+        return self._model
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        model = self._load_model()
+        # sentence-transformers encode() is CPU-bound; offload to thread pool
+        import asyncio
+
+        embeddings = await asyncio.to_thread(model.encode, texts, convert_to_numpy=True)
+        return embeddings.tolist()
+
+    def dimension(self) -> int:
+        if self._model is not None:
+            return self._dimension
+        # Lazy-load to determine dimension
+        return self._load_model().get_sentence_embedding_dimension()
+
+
+class LocalProvider(EmbeddingProvider):
+    """Deprecated alias — use SentenceTransformersProvider directly."""
 
     def __init__(self, model_path: str, dimension: int = 1024) -> None:
         self._model_path = model_path
         self._dimension = dimension
+        self._provider: SentenceTransformersProvider | None = None
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        # TODO: actual local model inference
-        raise NotImplementedError("Local embedding not yet implemented")
+        if self._provider is None:
+            self._provider = SentenceTransformersProvider(model_name=self._model_path)
+        return await self._provider.embed(texts)
 
     def dimension(self) -> int:
+        if self._provider is not None:
+            return self._provider.dimension()
         return self._dimension
 
 
@@ -212,18 +267,28 @@ def get_embedding_provider() -> EmbeddingProvider:
                 model=settings.openai_embedding_model,
             )
         logger.warning(
-            "OpenAI API key missing; falling back to MockEmbeddingProvider"
+            "OpenAI API key missing; attempting local embedding fallback"
         )
-        return MockEmbeddingProvider(dimension=1536)
+        try:
+            return SentenceTransformersProvider()
+        except ImportError:
+            logger.warning(
+                "sentence-transformers not installed; falling back to MockEmbeddingProvider "
+                "(deterministic but NOT semantic). Install with: pip install sentence-transformers>=2.0"
+            )
+            return MockEmbeddingProvider(dimension=1536)
 
     if settings.embedding_provider in (
         EmbeddingProviderEnum.bge,
         EmbeddingProviderEnum.text2vec,
         EmbeddingProviderEnum.local,
     ):
-        return LocalProvider(
-            model_path=settings.bge_model_path,
-            dimension=1024,
-        )
+        try:
+            return SentenceTransformersProvider(model_name=settings.bge_model_path)
+        except ImportError:
+            logger.warning(
+                "sentence-transformers not installed; falling back to MockEmbeddingProvider"
+            )
+            return MockEmbeddingProvider(dimension=1024)
 
     raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")

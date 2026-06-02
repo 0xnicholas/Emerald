@@ -14,6 +14,7 @@ from enum import Enum
 import structlog
 
 from emerald.core.graph import GraphStore
+from emerald.core.metrics import relationship_infer_total
 from emerald.core.vector import VectorStore
 
 logger = structlog.get_logger(__name__)
@@ -29,17 +30,23 @@ class RelationType(str, Enum):
 class RelationshipEngine:
     """Inspects new memories and infers relationships to existing memories.
 
-    Classification is rule-based (keyword + structure heuristics).
-    LLM-based classification can be plugged in later.
+    Uses a hybrid approach:
+    1. Fast rule-based heuristics for obvious patterns (contradiction, extension)
+    2. LLM-based semantic classification when rules are inconclusive
+       and an OpenAI API key is available.
     """
+
+    LLM_CONFIDENCE_THRESHOLD = 0.7
 
     def __init__(
         self,
         graph: GraphStore | None = None,
         vector: VectorStore | None = None,
+        use_llm: bool = True,
     ) -> None:
         self.graph = graph or GraphStore(use_db=False)
         self.vector = vector or VectorStore(use_db=False)
+        self.use_llm = use_llm
 
     async def infer(self, memory_ids: list[str], entity_id: str) -> int:
         """For each new memory, find related existing memories and create relationships.
@@ -71,11 +78,13 @@ class RelationshipEngine:
                     await self.create_update_relation(
                         new_id, old_memory["id"], reason="contradiction",
                     )
+                    relationship_infer_total.labels(rel_type="updates").inc()
                     created += 1
                 elif rel_type == RelationType.EXTENDS:
                     await self.create_extends_relation(
                         new_id, old_memory["id"], aspect="detail",
                     )
+                    relationship_infer_total.labels(rel_type="extends").inc()
                     created += 1
 
             # Check for DERIVES_FROM: new memory combines information from 2+ old memories
@@ -86,6 +95,7 @@ class RelationshipEngine:
                 await self.create_derives_relation(
                     new_id, derives_sources, reasoning="combined inference",
                 )
+                relationship_infer_total.labels(rel_type="derives_from").inc()
                 created += 1
 
         logger.info(
@@ -106,19 +116,29 @@ class RelationshipEngine:
     ) -> RelationType:
         """Classify the relationship type between two memories.
 
-        Uses structural and keyword heuristics:
-
-        - Identical content → NONE (no relationship needed)
-        - Same sentence structure, different key entity → UPDATES
-          (e.g., "works at Google" → "works at Stripe")
-        - Different aspect, same domain → EXTENDS
-          (e.g., "works at Stripe" → "leads payment team")
-        - Otherwise → NONE
+        Two-phase classification:
+        1. Fast rule-based heuristics for obvious patterns
+        2. LLM semantic classification when rules are inconclusive
         """
         # Identical content
         if new_content.strip() == old_content.strip():
             return RelationType.NONE
 
+        # Phase 1: Rule-based fast path
+        rule_result = self._rule_classify(new_content, old_content)
+        if rule_result != RelationType.NONE:
+            return rule_result
+
+        # Phase 2: LLM semantic classification (if enabled and key available)
+        if self.use_llm:
+            llm_result = await self._llm_classify(new_content, old_content)
+            if llm_result != RelationType.NONE:
+                return llm_result
+
+        return RelationType.NONE
+
+    def _rule_classify(self, new_content: str, old_content: str) -> RelationType:
+        """Fast rule-based classification."""
         # Extract structure patterns
         new_struct = self._extract_structure(new_content)
         old_struct = self._extract_structure(old_content)
@@ -137,6 +157,64 @@ class RelationshipEngine:
         # Check for extension patterns (complementary information)
         if self._is_complementary(new_content, old_content):
             return RelationType.EXTENDS
+
+        return RelationType.NONE
+
+    async def _llm_classify(self, new_content: str, old_content: str) -> RelationType:
+        """LLM-based semantic relationship classification.
+
+        Uses OpenAI API when available.  Falls back to NONE on any error.
+        """
+        try:
+            from emerald.config import get_settings
+            settings = get_settings()
+            if not settings.openai_api_key:
+                return RelationType.NONE
+
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openai_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-3.5-turbo",
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You classify the relationship between two memory facts. "
+                                    "Respond with exactly one word: UPDATES, EXTENDS, or NONE.\n"
+                                    "UPDATES = new fact replaces old (contradiction or update)\n"
+                                    "EXTENDS = new fact adds detail to old (both valid)\n"
+                                    "NONE = no meaningful relationship"
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": f"Old fact: {old_content}\nNew fact: {new_content}",
+                            },
+                        ],
+                        "temperature": 0.0,
+                        "max_tokens": 10,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                result = data["choices"][0]["message"]["content"].strip().upper()
+
+                if result == "UPDATES":
+                    logger.debug("relationship.llm_classified", result="UPDATES")
+                    return RelationType.UPDATES
+                if result == "EXTENDS":
+                    logger.debug("relationship.llm_classified", result="EXTENDS")
+                    return RelationType.EXTENDS
+        except Exception:
+            # Any failure in LLM classification is non-fatal
+            pass
 
         return RelationType.NONE
 

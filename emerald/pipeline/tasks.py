@@ -6,6 +6,9 @@ import json
 import structlog
 from celery import shared_task
 
+from emerald.core.metrics import pipeline_jobs_total
+from emerald.core.tracing import attach_traceparent, detach, get_traceparent, get_tracer
+
 from emerald.async_utils import run_async
 
 logger = structlog.get_logger(__name__)
@@ -25,6 +28,7 @@ async def _update_status(pipeline_id: str, status: str) -> None:
 
 
 async def _update_error(pipeline_id: str, stage: str, error: str) -> None:
+    pipeline_jobs_total.labels(status="failed").inc()
     from emerald.db.session import session_factory
     from sqlalchemy import text
 
@@ -61,7 +65,8 @@ async def _run_extract(pipeline_id, content, content_type):
     redis = get_redis_client()
     await redis.setex(f"pipeline:{pipeline_id}:text", 86400, result.text)
 
-    return {"pipeline_id": pipeline_id, "content_type": content_type}
+    traceparent = get_traceparent()
+    return {"pipeline_id": pipeline_id, "content_type": content_type, "__traceparent": traceparent}
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
@@ -92,7 +97,8 @@ async def _run_chunk(prev_result: dict) -> dict:
         for c in chunks
     ]
     await redis.setex(f"pipeline:{pipeline_id}:chunks", 86400, json.dumps(data))
-    return {"pipeline_id": pipeline_id, "chunk_count": len(chunks)}
+    prev_result["chunk_count"] = len(chunks)
+    return prev_result
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -122,12 +128,22 @@ async def _run_embed(prev_result: dict) -> dict:
     await redis.setex(
         f"pipeline:{pipeline_id}:embeddings", 86400, json.dumps(embeddings)
     )
-    return {"pipeline_id": pipeline_id}
+    prev_result["__traceparent"] = get_traceparent()
+    return prev_result
 
 
 @shared_task(bind=True)
 def index_task(self, prev_result: dict, entity_id: str) -> dict:
-    return run_async(_run_index)(self, prev_result, entity_id)
+    traceparent = prev_result.get("__traceparent")
+    token = attach_traceparent(traceparent)
+    try:
+        tracer = get_tracer()
+        with tracer.start_as_current_span("pipeline.index") as span:
+            span.set_attribute("entity_id", entity_id)
+            span.set_attribute("pipeline_id", prev_result.get("pipeline_id", ""))
+            return run_async(_run_index)(self, prev_result, entity_id)
+    finally:
+        detach(token)
 
 
 async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
@@ -179,7 +195,16 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
 
 @shared_task
 def postprocess_task(prev_result: dict, entity_id: str) -> None:
-    return run_async(_run_postprocess)(prev_result, entity_id)
+    traceparent = prev_result.get("__traceparent")
+    token = attach_traceparent(traceparent)
+    try:
+        tracer = get_tracer()
+        with tracer.start_as_current_span("pipeline.postprocess") as span:
+            span.set_attribute("entity_id", entity_id)
+            span.set_attribute("pipeline_id", prev_result.get("pipeline_id", ""))
+            return run_async(_run_postprocess)(prev_result, entity_id)
+    finally:
+        detach(token)
 
 
 async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
@@ -195,7 +220,7 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
     from emerald.core.profile import ProfileManager
 
     profile_mgr = ProfileManager(graph=GraphStore(use_db=True))
-    await profile_mgr.invalidate(entity_id)
+    await profile_mgr.refresh(entity_id, memory_ids)
 
     from emerald.db.redis import get_redis_client
 
@@ -204,6 +229,7 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
         await redis.delete(f"pipeline:{pipeline_id}:{key}")
 
     await _update_status(pipeline_id, "done")
+    pipeline_jobs_total.labels(status="done").inc()
 
 
 # ---- Scheduled tasks (Celery Beat) ----

@@ -116,6 +116,9 @@ async def lifespan(app: FastAPI):
     from emerald.db.redis import init_redis
     from emerald.db.session import session_factory
 
+    from emerald.core.tracing import init_tracing
+
+    init_tracing()
     await init_neo4j()
     await init_redis()
     async with session_factory.session() as s:
@@ -123,8 +126,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    from emerald.core.tracing import shutdown_tracing
     from emerald.db.neo4j import close_neo4j
     from emerald.db.redis import close_redis
+    shutdown_tracing()
     await close_neo4j()
     await close_redis()
     await session_factory.close()
@@ -149,10 +154,12 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
+    # CORS — production should restrict origins via CORS_ALLOWED_ORIGINS env var
+    _cors_origins = settings.cors_allowed_origins
+    cors_origins = [o.strip() for o in _cors_origins.split(",")] if "," in _cors_origins else [_cors_origins]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -169,6 +176,17 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     from prometheus_fastapi_instrumentator import Instrumentator
 
     Instrumentator().instrument(app).expose(app, endpoint="/v1/metrics", include_in_schema=False)
+
+    # ---- OpenTelemetry middleware ----
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(app)
+    except Exception as exc:
+        # OTel is optional — graceful degradation if dependencies are missing
+        import logging
+
+        logging.getLogger(__name__).warning("otel_instrumentation_failed", error=str(exc))
 
     # ---- Middleware: request ID + response wrapping ----
 
@@ -209,24 +227,43 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
             },
         )
 
-    # Register routes
-    from emerald.api.routes import (
-        connectors,
-        memories,
-        pipelines,
-        profiles,
-        search,
-        system,
-        upload,
+    # Register V1 routes
+    from emerald.api.routes.v1 import (
+        connectors as v1_connectors,
+        memories as v1_memories,
+        pipelines as v1_pipelines,
+        profiles as v1_profiles,
+        search as v1_search,
+        system as v1_system,
+        upload as v1_upload,
     )
 
-    app.include_router(memories.router, prefix="/v1")
-    app.include_router(search.router, prefix="/v1")
-    app.include_router(profiles.router, prefix="/v1")
-    app.include_router(upload.router, prefix="/v1")
-    app.include_router(pipelines.router, prefix="/v1")
-    app.include_router(connectors.router, prefix="/v1")
-    app.include_router(system.router, prefix="/v1")
+    app.include_router(v1_memories.router, prefix="/v1")
+    app.include_router(v1_search.router, prefix="/v1")
+    app.include_router(v1_profiles.router, prefix="/v1")
+    app.include_router(v1_upload.router, prefix="/v1")
+    app.include_router(v1_pipelines.router, prefix="/v1")
+    app.include_router(v1_connectors.router, prefix="/v1")
+    app.include_router(v1_system.router, prefix="/v1")
+
+    # Register V2 routes (currently re-export V1)
+    from emerald.api.routes.v2 import (
+        connectors as v2_connectors,
+        memories as v2_memories,
+        pipelines as v2_pipelines,
+        profiles as v2_profiles,
+        search as v2_search,
+        system as v2_system,
+        upload as v2_upload,
+    )
+
+    app.include_router(v2_memories.router, prefix="/v2")
+    app.include_router(v2_search.router, prefix="/v2")
+    app.include_router(v2_profiles.router, prefix="/v2")
+    app.include_router(v2_upload.router, prefix="/v2")
+    app.include_router(v2_pipelines.router, prefix="/v2")
+    app.include_router(v2_connectors.router, prefix="/v2")
+    app.include_router(v2_system.router, prefix="/v2")
 
     return app
 

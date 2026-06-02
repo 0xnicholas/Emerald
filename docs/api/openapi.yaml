@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: Emerald
-  version: 0.1.0
+  version: 0.3.0
   description: |
     Memory and context infrastructure for AI agents.
 
@@ -179,10 +179,6 @@ components:
               type: string
               description: Pipeline ID for status tracking (async mode only)
               example: "pipe_xyz789"
-            estimated_duration_seconds:
-              type: integer
-              description: Estimated processing time (async mode only)
-              example: 45
         meta:
           $ref: "#/components/schemas/Meta"
 
@@ -256,6 +252,8 @@ components:
             updated_at:
               type: string
               format: date-time
+        meta:
+          $ref: "#/components/schemas/Meta"
 
     # Search
     SearchRequest:
@@ -494,9 +492,10 @@ components:
               type: string
               enum: [queued, extracting, chunking, embedding, indexing, done, failed]
               example: "embedding"
-            stage:
+            entity_id:
               type: string
-              example: "embedding"
+              description: Entity that owns this pipeline job
+              example: "user_123"
             document_id:
               type: string
               nullable: true
@@ -510,6 +509,18 @@ components:
             error_message:
               type: string
               nullable: true
+            retry_count:
+              type: integer
+              example: 0
+            created_at:
+              type: string
+              format: date-time
+            started_at:
+              type: string
+              format: date-time
+            completed_at:
+              type: string
+              format: date-time
         meta:
           $ref: "#/components/schemas/Meta"
 
@@ -552,6 +563,8 @@ components:
               type: integer
             page_size:
               type: integer
+        meta:
+          $ref: "#/components/schemas/Meta"
 
     # Connectors
     ConnectorConnectResponse:
@@ -573,6 +586,8 @@ components:
               type: integer
               description: Seconds until the auth URL expires
               example: 600
+        meta:
+          $ref: "#/components/schemas/Meta"
 
     ConnectorStatusResponse:
       type: object
@@ -584,7 +599,7 @@ components:
               type: string
             sync_status:
               type: string
-              enum: [active, paused, revoked, error]
+              enum: [active, paused, revoked, error, inactive]
             last_synced_at:
               type: string
               format: date-time
@@ -596,6 +611,8 @@ components:
               type: string
               format: date-time
               nullable: true
+        meta:
+          $ref: "#/components/schemas/Meta"
 
     # Health
     HealthResponse:
@@ -606,7 +623,7 @@ components:
           example: "ok"
         version:
           type: string
-          example: "0.1.0"
+          example: "0.3.0"
         checks:
           type: object
           properties:
@@ -622,9 +639,8 @@ components:
             minio:
               type: string
               example: "ok"
-            celery:
-              type: string
-              example: "ok"
+        meta:
+          $ref: "#/components/schemas/Meta"
 
   # ---- Parameters ----
 
@@ -706,10 +722,15 @@ paths:
                 $ref: "#/components/schemas/MemoryResponse"
         "404":
           description: Memory not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
     delete:
       tags: [Memories]
       summary: Delete a memory
+      description: Soft delete — marks the memory as `is_latest=false`.
       operationId: deleteMemory
       parameters:
         - name: memory_id
@@ -718,10 +739,29 @@ paths:
           schema:
             type: string
       responses:
-        "204":
-          description: Memory deleted
+        "200":
+          description: Memory marked as deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deleted:
+                        type: boolean
+                        example: true
+                      memory_id:
+                        type: string
+                  meta:
+                    $ref: "#/components/schemas/Meta"
         "404":
           description: Memory not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ---- Search ----
 
@@ -762,7 +802,7 @@ paths:
     get:
       tags: [Search]
       summary: Quick search (GET)
-      description: Simplified GET variant for debugging
+      description: Simplified GET variant for debugging and simple queries.
       operationId: searchGet
       parameters:
         - name: q
@@ -776,6 +816,7 @@ paths:
           required: true
           schema:
             type: string
+          description: Entity scope
         - name: search_mode
           in: query
           schema:
@@ -787,6 +828,11 @@ paths:
           schema:
             type: integer
             default: 10
+        - name: rewrite_query
+          in: query
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Search results
@@ -825,28 +871,10 @@ paths:
                 $ref: "#/components/schemas/ProfileResponse"
         "404":
           description: Entity not found
-
-  /profiles/{entity_id}/config:
-    put:
-      tags: [Profiles]
-      summary: Update profile configuration
-      description: Customize profile computation parameters per entity
-      operationId: updateProfileConfig
-      parameters:
-        - name: entity_id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProfileConfig"
-      responses:
-        "200":
-          description: Config updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ---- Upload ----
 
@@ -892,6 +920,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UploadResponse"
+        "401":
+          description: Missing or invalid API key
         "413":
           description: File too large (max 50MB)
 
@@ -915,11 +945,18 @@ paths:
                 $ref: "#/components/schemas/PipelineStatusResponse"
         "404":
           description: Pipeline not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /files:
     get:
       tags: [Upload]
       summary: List uploaded files
+      description: |
+        List uploaded files for an entity. Currently returns an empty
+        list (stub — full implementation pending).
       operationId: listFiles
       parameters:
         - name: entity_id
@@ -969,6 +1006,11 @@ paths:
           schema:
             type: string
             enum: [google_drive, gmail, notion, github]
+        - name: redirect_uri
+          in: query
+          schema:
+            type: string
+          description: Optional custom OAuth redirect URI
       responses:
         "200":
           description: OAuth URL generated
@@ -978,6 +1020,59 @@ paths:
                 $ref: "#/components/schemas/ConnectorConnectResponse"
         "400":
           description: Unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /connectors/{provider}/callback:
+    get:
+      tags: [Connectors]
+      summary: OAuth callback
+      description: Exchange authorization code for access token.
+      operationId: oauthCallback
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Connection established
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      provider:
+                        type: string
+                      status:
+                        type: string
+                        example: "connected"
+                      entity_id:
+                        type: string
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: Invalid or expired state token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /connectors/{provider}/webhook:
     post:
@@ -994,9 +1089,30 @@ paths:
           schema:
             type: string
             enum: [google_drive, gmail, notion, github]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
       responses:
         "200":
           description: Webhook accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: "accepted"
+                      sync_triggered:
+                        type: boolean
+                  meta:
+                    $ref: "#/components/schemas/Meta"
         "401":
           description: Invalid signature
 

@@ -35,6 +35,10 @@ dependencies = [
     "structlog>=24.0",
     "cryptography>=42.0",
     "prometheus-fastapi-instrumentator>=7.0",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
+    "opentelemetry-instrumentation-fastapi>=0.45",
+    "opentelemetry-exporter-otlp>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +65,10 @@ extraction = [
     "pytesseract>=0.3",
     "trafilatura>=1.12",
     "tree-sitter>=0.22",
+]
+
+local-embeddings = [
+    "sentence-transformers>=2.0",
 ]
 
 [build-system]

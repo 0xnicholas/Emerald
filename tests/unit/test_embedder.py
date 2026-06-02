@@ -162,8 +162,8 @@ async def test_openai_cache_hit_skips_api_call(openai_provider):
     assert r1 == r2
 
 
-def test_mock_fallback_when_key_missing(monkeypatch):
-    """OPENAI_API_KEY empty → MockEmbeddingProvider."""
+def test_fallback_when_key_missing(monkeypatch):
+    """OPENAI_API_KEY empty → try SentenceTransformersProvider, then MockEmbeddingProvider."""
     monkeypatch.setenv("EMBEDDING_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "")
 
@@ -172,8 +172,15 @@ def test_mock_fallback_when_key_missing(monkeypatch):
     get_settings.cache_clear()
 
     p = get_embedding_provider()
-    assert isinstance(p, MockEmbeddingProvider)
-    assert p.dimension() == 1536
+    # If sentence-transformers is installed, use it; otherwise fall back to Mock
+    try:
+        import sentence_transformers  # noqa: F401
+        from emerald.core.embedder import SentenceTransformersProvider
+        assert isinstance(p, SentenceTransformersProvider)
+    except ImportError:
+        from emerald.core.embedder import MockEmbeddingProvider
+        assert isinstance(p, MockEmbeddingProvider)
+        assert p.dimension() == 1536
 
     # Restore settings for other tests
     get_settings.cache_clear()
