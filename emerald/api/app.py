@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import asynccontextmanager
 
@@ -184,9 +185,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
         FastAPIInstrumentor.instrument_app(app)
     except Exception as exc:
         # OTel is optional — graceful degradation if dependencies are missing
-        import logging
-
-        logging.getLogger(__name__).warning("otel_instrumentation_failed", error=str(exc))
+        logging.getLogger(__name__).warning("otel_instrumentation_failed: %s", exc)
 
     # ---- Middleware: request ID + response wrapping ----
 
