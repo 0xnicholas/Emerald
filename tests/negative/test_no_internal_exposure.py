@@ -68,14 +68,19 @@ def test_api_has_no_internal_routes():
             )
 
 
-def test_api_only_has_v1_prefix_routes():
-    """All API routes are under /v1/ or are system routes (openapi, docs)."""
+def test_api_routes_under_version_prefix():
+    """All API routes are under /v1/ or /v2/ (or are system routes: openapi, docs).
+
+    Verifies no internal paths like /admin, /neo4j, /graph leak into the API.
+    """
     app = create_app()
     for route in app.routes:
         path = route.path
-        # Allow root, openapi, docs, and /v1/*
+        # Allow root, openapi, docs, and versioned API paths
         if path in ("/", "/openapi.json"):
             continue
         if path.startswith("/docs") or path.startswith("/redoc"):
             continue
-        assert path.startswith("/v1/"), f"Unexpected route outside /v1/: {path}"
+        if path.startswith("/v1/") or path.startswith("/v2/"):
+            continue
+        raise AssertionError(f"Unexpected route outside /v1/ and /v2/: {path}")
