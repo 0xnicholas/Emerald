@@ -321,8 +321,8 @@ Emerald 在可观测性设计上非常完善（符合 AGENTS.md 要求），Supe
 | 维度 | Emerald | Supermemory |
 |---|---|---|
 | **版本** | v0.3.0 | 生产级（未公开版本号） |
-| **测试覆盖** | 484 tests passing | 未公开 |
-| **API 版本** | v1（单一版本） | v3→v4（持续演进） |
+| **测试覆盖** | 542 tests passing | 未公开 |
+| **API 版本** | v1 + v2（共存） | v3→v4（持续演进） |
 | **文档完整度** | ✅ README + AGENTS.md + 架构文档 + 集成指南 | ✅ 完整文档站 + API 参考 + SDK 指南 + 用例 |
 | **社区** | 早期开源项目 | Discord + Twitter + 活跃社区 |
 | **SLA** | 自托管，无 SLA | SaaS，有服务保障 |
