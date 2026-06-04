@@ -20,9 +20,17 @@ PG_TEST_URL = os.environ.get(
 def pg_available():
     """Skip module if local PostgreSQL is not reachable."""
     import shutil
+    import socket
 
     if shutil.which("psql") is None:
         pytest.skip("psql not found in PATH", allow_module_level=True)
+
+    # Also verify PostgreSQL is actually running on the expected port
+    try:
+        sock = socket.create_connection(("127.0.0.1", 5432), timeout=2)
+        sock.close()
+    except OSError:
+        pytest.skip("PostgreSQL not reachable on 127.0.0.1:5432", allow_module_level=True)
 
 
 @pytest.fixture

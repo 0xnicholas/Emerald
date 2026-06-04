@@ -9,8 +9,8 @@ from emerald.core.embedder import OpenAIProvider
 @pytest.fixture
 async def real_provider():
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        pytest.skip("OPENAI_API_KEY not set")
+    if not api_key or api_key in ("sk-...", "sk-your-key", ""):
+        pytest.skip("OPENAI_API_KEY not set or is a placeholder")
     return OpenAIProvider(api_key=api_key)
 
 
