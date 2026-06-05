@@ -1,10 +1,18 @@
-# Standalone Docker Compose for testing — no host port bindings
+# Standalone Docker Compose for testing — exposes ports on alternate numbers
+# to avoid conflicts with production services.
+#
+#   PG:   5434  (prod: 5433)
+#   Neo4j: 7688 (prod: 7687)
+#   Redis: 6381 (prod: 6380)
+#   MinIO: 9003 (prod: 9002)
 version: "3.8"
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: emerald-postgres-test
+    ports:
+      - "5434:5432"
     environment:
       POSTGRES_DB: emerald
       POSTGRES_USER: emerald
@@ -20,6 +28,8 @@ services:
   neo4j:
     image: neo4j:5-community
     container_name: emerald-neo4j-test
+    ports:
+      - "7688:7687"
     environment:
       NEO4J_AUTH: neo4j/emerald_dev
       NEO4J_PLUGINS: '["apoc"]'
@@ -34,6 +44,8 @@ services:
   redis:
     image: redis:8.0
     container_name: emerald-redis-test
+    ports:
+      - "6381:6379"
     command: redis-server --appendonly yes --requirepass emerald_dev
     healthcheck:
       test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
@@ -46,6 +58,9 @@ services:
   minio:
     image: minio/minio:latest
     container_name: emerald-minio-test
+    ports:
+      - "9003:9000"
+      - "9004:9001"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: emerald_admin

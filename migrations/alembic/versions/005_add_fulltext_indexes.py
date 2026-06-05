@@ -18,7 +18,15 @@ def upgrade() -> None:
     # pg_trgm for fuzzy similarity (works across languages)
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
-    # tsvector column for full-text search
+    # Add text column if not present (needed for keyword search)
+    op.execute(
+        """
+        ALTER TABLE embeddings
+        ADD COLUMN IF NOT EXISTS text TEXT
+        """
+    )
+
+    # tsvector column for full-text search (generated from text)
     op.execute(
         """
         ALTER TABLE embeddings
