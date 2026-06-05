@@ -294,7 +294,7 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**v0.3.0** — 核心功能全部实现并通过测试（542 tests passing）。
+**v0.3.0** — 核心功能全部实现并通过测试（548 tests passing）。
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -310,9 +310,9 @@ docker compose up -d mcp
 | MCP Server | ✅ 完整 | stdio + SSE 双模式 |
 | 基准测试 | ✅ 完整 | LongMemEval / LoCoMo / ConvoMem 风格评估脚本 |
 | 可观测性 | ✅ 部分 | Prometheus 指标 (`/v1/metrics`)、结构化 JSON 日志 |
+| Docker E2E | ✅ 完整 | `docker-compose.test.yml` + `.env.test`，全栈集成测试通过 |
 
 规划中：
-- Docker Compose 端到端验证（配置已就绪）
 - K8s 生产部署模板
 - 框架集成（LangChain、OpenAI Agents SDK 等）
 - 开源记忆基准测试框架
@@ -341,7 +341,13 @@ python scripts/seed_dev_api_key.py
 
 # 4. Run tests
 pytest tests/unit/ -x
-pytest tests/integration/ -x  # requires running services
+
+# 5. (可选) 启动测试基础设施，运行集成测试
+docker compose -f docker-compose.test.yml up -d
+cp .env.test .env.test.local  # 按需修改
+set -a && source .env.test && set +a
+alembic upgrade head
+pytest  # 548 passed, 9 skipped
 ```
 
 ---

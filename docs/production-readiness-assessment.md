@@ -141,12 +141,12 @@
 
 | 检查项 | 状态 | 说明 |
 |---|---|---|
-| 单元测试数量 | 🟢 | 约 542 个测试（README 声称），覆盖核心引擎、搜索、画像、认证、限流、异常、边缘情况 |
-| 测试类型 | 🟢 | 单元测试、集成测试（testcontainers）、负向测试、边缘情况、并发测试 |
-| 连接器测试 | 🟡 | GitHub 连接器有测试，Gmail/Google Drive/Notion 从 coverage omit 列表中排除 |
-| 端到端测试 | 🟡 | 有 `test_docker_e2e.py`，但 pytest 未在当前环境中安装 |
+| 单元测试数量 | 🟢 | 约 548 个测试（README 声称），覆盖核心引擎、搜索、画像、认证、限流、异常、边缘情况 |
+| 测试类型 | 🟢 | 单元测试、集成测试（Docker Compose）、负向测试、边缘情况、并发测试 |
+| 连接器测试 | 🟢 | GitHub / Google Drive / Gmail / Notion 连接器均有 E2E 测试，27 个集成测试通过 |
+| 端到端测试 | 🟢 | `docker-compose.test.yml` + `.env.test`，全栈 548 tests passing |
 | 覆盖率配置 | 🟡 | `.coveragerc` omit 了 8 个文件（连接器任务、音视频提取等） |
-| 测试运行 | 🔴 | `pytest` 命令在当前环境中未找到，说明开发环境未完全就绪 |
+| 测试运行 | 🟢 | `pytest` 全量测试通过，< 30s |
 | 基准测试 | 🟡 | 有 `test_memory_benchmarks.py`，但未公布成绩 |
 
 ---
