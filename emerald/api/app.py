@@ -80,9 +80,14 @@ def _init_engine() -> MemoryEngine:
     except ImportError as e:
         logger.warning("CodeExtractor not available: %s", e)
 
+    from emerald.pipeline.chunking.fact_extractor import get_fact_extractor
+    from emerald.pipeline.chunking.text import SemanticTextChunker
+
+    fact_extractor = get_fact_extractor()
+
     chunkers = ChunkerRegistry()
-    chunkers.register("text", TextChunker())
-    chunkers.register("conversation", ConversationChunker())
+    chunkers.register("text", SemanticTextChunker(fact_extractor=fact_extractor))
+    chunkers.register("conversation", ConversationChunker(fact_extractor=fact_extractor))
     chunkers.register("markdown", MarkdownChunker())
 
     # --- Optional: PDF chunker (PyMuPDF) ---
