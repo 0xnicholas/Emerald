@@ -30,11 +30,11 @@ class ChunkerRegistry:
             )
         return self._chunkers[content_type]
 
-    def run(self, text: str, content_type: str = "text", **kwargs) -> list[Chunk]:
+    async def run(self, text: str, content_type: str = "text", **kwargs) -> list[Chunk]:
         """Split text using the appropriate chunking strategy."""
-        return self.chunk(text, content_type, **kwargs)
+        return await self.chunk(text, content_type, **kwargs)
 
-    def chunk(self, text: str, content_type: str = "text", **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, content_type: str = "text", **kwargs) -> list[Chunk]:
         """Split text (primary interface)."""
         chunker = self.get(content_type)
         logger.info(
@@ -42,7 +42,7 @@ class ChunkerRegistry:
             content_type=content_type,
             text_length=len(text),
         )
-        chunks = chunker.chunk(text, **kwargs)
+        chunks = await chunker.chunk(text, **kwargs)
         logger.info("chunking.done", chunk_count=len(chunks))
         return chunks
 
