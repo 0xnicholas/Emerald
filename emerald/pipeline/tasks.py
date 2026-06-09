@@ -90,10 +90,16 @@ async def _run_chunk(prev_result: dict) -> dict:
 
     registry = get_default_registry()
     chunker = registry.get(prev_result.get("content_type", "text"))
-    chunks = chunker.chunk(text or "")
+    chunks = await chunker.chunk(text or "")
 
     data = [
-        {"id": c.id, "text": c.text, "index": c.index, "token_count": c.token_count}
+        {
+            "id": c.id, "text": c.text, "index": c.index,
+            "token_count": c.token_count,
+            "memory_type": c.memory_type,
+            "confidence": c.confidence,
+            "summary": c.summary,
+        }
         for c in chunks
     ]
     await redis.setex(f"pipeline:{pipeline_id}:chunks", 86400, json.dumps(data))
@@ -173,8 +179,9 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
             mid = await graph.create_memory(
                 content=chunk_data["text"],
                 entity_id=entity_id,
-                memory_type="fact",
-                confidence=0.8,
+                memory_type=chunk_data.get("memory_type", "fact"),
+                confidence=chunk_data.get("confidence", 0.8),
+                summary=chunk_data.get("summary") or None,
                 source_type="document",
             )
             memory_ids.append(mid)
