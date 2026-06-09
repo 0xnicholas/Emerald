@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     otel_traces_sampler: str = "parentbased_traceidratio"
     otel_traces_sampler_arg: float = 1.0
 
+    # ---- DeepSeek / Fact Extraction ----
+    deepseek_api_key: str = ""
+
+    fact_extraction_model: str = "deepseek-v4-flash"
+    fact_extraction_base_url: str = "https://api.deepseek.com"
+    fact_extraction_max_facts: int = 20
+    fact_extraction_timeout: float = 15.0
+    fact_extraction_temperature: float = 0.1
+    fact_extraction_max_tokens: int = 2000
+
 
 @lru_cache
 def get_settings() -> Settings:
