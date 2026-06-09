@@ -16,7 +16,7 @@ class PDFChunker(BaseChunker):
     overlap_size = 128
     _chars_per_token = 4
 
-    def chunk(self, text: str, **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         structure = kwargs.get("structure")
 
         if not text.strip():
