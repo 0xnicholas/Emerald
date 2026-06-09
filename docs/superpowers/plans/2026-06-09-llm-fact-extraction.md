@@ -1,12 +1,14 @@
 # LLM Fact Extraction Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Review status:** v1.1 — passed plan review (2 blockers fixed: SYSTEM_PROMPT braces, _parse_code_fence)
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
 **Goal:** Add LLM-driven fact extraction (DeepSeek V4-Flash) to the conversation/text chunker, decomposing raw text into structured facts with proper memory_type/confidence/summary metadata.
 
 **Architecture:** New `FactExtractor` (DeepSeek-backed) injected into `ConversationChunker` and new `SemanticTextChunker` (inherits `TextChunker`). Chunk dataclass extended with `memory_type`/`confidence`/`summary` fields. `chunk()` methods become async. Both sync (engine.py) and async (tasks.py) index paths read fields from Chunk instead of hardcoding. Fallback: LLM failure → original paragraph/turn chunking.
 
-**Tech Stack:** Python 3.12, httpx, DeepSeek V4-Flash API (OpenAI-compatible), pytest-asyncio
+**Tech Stack:** Python 3.12, httpx, DeepSeek V4-Flash API (OpenAI-compatible), pytest-asyncio (already in dev deps)
 
 **Spec:** `docs/superpowers/specs/2026-06-09-llm-fact-extraction-design.md`
 
@@ -15,7 +17,7 @@
 ### Task 1: Extend Chunk dataclass with fact metadata fields
 
 **Files:**
-- Modify: `emerald/pipeline/chunking/base.py:11-22`
+- Modify: `emerald/pipeline/chunking/base.py` (Chunk dataclass, lines ~11-22)
 
 - [ ] **Step 1: Add memory_type, confidence, summary fields to Chunk**
 
@@ -50,7 +52,7 @@ git commit -m "feat(chunk): extend Chunk dataclass with memory_type, confidence,
 ### Task 2: Change BaseChunker.chunk() to async
 
 **Files:**
-- Modify: `emerald/pipeline/chunking/base.py:33-35`
+- Modify: `emerald/pipeline/chunking/base.py` (BaseChunker class, ~line 33)
 
 - [ ] **Step 1: Change abstract method signature**
 
@@ -80,7 +82,7 @@ git commit -m "feat(chunk): make BaseChunker.chunk() async"
 ### Task 3: Update ChunkerRegistry for async
 
 **Files:**
-- Modify: `emerald/pipeline/chunking/registry.py:33-40`
+- Modify: `emerald/pipeline/chunking/registry.py` (lines ~33-40)
 
 - [ ] **Step 1: Change chunk() and run() to async**
 
@@ -120,25 +122,25 @@ git commit -m "feat(chunk): make ChunkerRegistry chunk() and run() async"
 ### Task 4: Convert all existing chunkers to async def
 
 **Files:**
-- Modify: `emerald/pipeline/chunking/text.py:30` — `def chunk` → `async def chunk`
-- Modify: `emerald/pipeline/chunking/conversation.py:31` — `def chunk` → `async def chunk`
-- Modify: `emerald/pipeline/chunking/code.py:70` — `def chunk` → `async def chunk`
-- Modify: `emerald/pipeline/chunking/markdown.py` — `def chunk` → `async def chunk`
-- Modify: `emerald/pipeline/chunking/pdf.py` — `def chunk` → `async def chunk`
+- Modify: `emerald/pipeline/chunking/text.py` (line ~30)
+- Modify: `emerald/pipeline/chunking/conversation.py` (line ~31)
+- Modify: `emerald/pipeline/chunking/code.py` (line ~70)
+- Modify: `emerald/pipeline/chunking/markdown.py` (chunk method)
+- Modify: `emerald/pipeline/chunking/pdf.py` (chunk method)
 
 - [ ] **Step 1: Convert text.py — TextChunker.chunk()**
 
-Change `def chunk(self, text: str, **kwargs) -> list[Chunk]:` to `async def chunk(self, text: str, **kwargs) -> list[Chunk]:` at line 30.
+Change `def chunk(self, text: str, **kwargs) -> list[Chunk]:` to `async def chunk(self, text: str, **kwargs) -> list[Chunk]:`
 
 - [ ] **Step 2: Convert conversation.py — ConversationChunker.chunk()**
 
-Change `def chunk(self, text: str, **kwargs) -> list[Chunk]:` to `async def chunk(self, text: str, **kwargs) -> list[Chunk]:` at line 31.
+Change `def chunk(self, text: str, **kwargs) -> list[Chunk]:` to `async def chunk(self, text: str, **kwargs) -> list[Chunk]:`
 
 - [ ] **Step 3: Convert code.py — CodeChunker.chunk()**
 
-Change `def chunk(self, text: str, **kwargs) -> list[Chunk]:` to `async def chunk(self, text: str, **kwargs) -> list[Chunk]:` at line 70.
+Change `def chunk(self, text: str, **kwargs) -> list[Chunk]:` to `async def chunk(self, text: str, **kwargs) -> list[Chunk]:`
 
-- [ ] **Step 4: Convert markdown.py (MarkdownChunker) and pdf.py (PDFChunker)**
+- [ ] **Step 4: Convert markdown.py and pdf.py**
 
 Same mechanical change on their `chunk()` lines.
 
@@ -183,7 +185,9 @@ from emerald.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
-SYSTEM_PROMPT = """你是事实提取引擎。从对话/文本中提取细粒度、独立的事实。
+# Template prompt — format with max_facts before sending.
+# NOTE: the braces {{ and }} are literal JSON braces; .format() handles them.
+_SYSTEM_PROMPT_TEMPLATE = """你是事实提取引擎。从对话/文本中提取细粒度、独立的事实。
 每条事实归入以下类型之一：
 
 - fact：实体属性（工作、地点、技能、关系等）
@@ -245,11 +249,10 @@ class DeepSeekFactExtractor(FactExtractor):
         if not text.strip():
             return []
 
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(max_facts=self._max_facts)
+
         messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT.format(max_facts=self._max_facts),
-            },
+            {"role": "system", "content": system_prompt},
         ]
 
         user_content = text
@@ -257,14 +260,22 @@ class DeepSeekFactExtractor(FactExtractor):
             user_content = f"上下文提示：{entity_context}\n\n文本：{text}"
         messages.append({"role": "user", "content": user_content})
 
-        raw = await self._call_api(messages)
+        raw_content: str | None = None
+        raw = await self._call_api(messages, raw_content_ref=[raw_content])
         if raw is None:
             return []
 
         return self._parse_and_validate(raw)
 
-    async def _call_api(self, messages: list[dict[str, str]]) -> dict[str, Any] | None:
-        """Call DeepSeek API. Returns parsed JSON dict, or None on failure."""
+    async def _call_api(
+        self, messages: list[dict[str, str]], raw_content_ref: list[str | None]
+    ) -> dict[str, Any] | None:
+        """Call DeepSeek API. Returns parsed JSON dict, or None on failure.
+
+        First attempts response_format: json_object. On JSON parse failure,
+        strips markdown code fences from the raw content string and re-parses.
+        """
+        raw_content: str = ""
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
@@ -283,23 +294,27 @@ class DeepSeekFactExtractor(FactExtractor):
                 )
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
-                return json.loads(content)
-        except (json.JSONDecodeError, KeyError):
-            # Try stripping code fences if response_format wasn't honored
-            logger.warning("fact_extraction.json_parse_failed")
-            return self._parse_code_fence(messages)
+                raw_content = data["choices"][0]["message"]["content"]
+                raw_content_ref[0] = raw_content
+                return json.loads(raw_content)
+        except json.JSONDecodeError:
+            logger.warning("fact_extraction.json_parse_failed, trying code fences")
+            return self._strip_code_fences(raw_content)
+        except KeyError as e:
+            logger.warning("fact_extraction.unexpected_api_response", error=str(e))
+            return None
         except Exception:
             logger.warning("fact_extraction.api_failed", exc_info=True)
             return None
 
-    def _parse_code_fence(self, messages: list[dict[str, str]]) -> dict[str, Any] | None:
-        """Retry without response_format, parse JSON from code-fenced string."""
+    @staticmethod
+    def _strip_code_fences(raw_content: str) -> dict[str, Any] | None:
+        """Strip markdown code fences from raw LLM output, then parse as JSON."""
+        stripped = re.sub(r"^```(?:json)?\s*", "", raw_content.strip())
+        stripped = re.sub(r"\s*```$", "", stripped)
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = client.post(...)  # same call without response_format
-            # Fallback not implemented inline — this path triggers outer except
-        except Exception:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
             return None
 
     def _parse_and_validate(self, raw: dict[str, Any]) -> list[Fact]:
@@ -355,6 +370,7 @@ def get_fact_extractor() -> FactExtractor | None:
     """Create a DeepSeekFactExtractor if API key is configured, else None."""
     settings = get_settings()
     if not settings.deepseek_api_key:
+        logger.info("fact_extraction.disabled", reason="no_api_key")
         return None
     return DeepSeekFactExtractor(
         api_key=settings.deepseek_api_key,
@@ -366,8 +382,6 @@ def get_fact_extractor() -> FactExtractor | None:
         max_tokens=settings.fact_extraction_max_tokens,
     )
 ```
-
-Actually, the code-fence fallback requires httpx. Let me fix the `_parse_code_fence` method properly. See the actual file for the corrected implementation.
 
 - [ ] **Step 2: Verify module imports**
 
@@ -385,9 +399,11 @@ git commit -m "feat(chunk): add FactExtractor + DeepSeekFactExtractor"
 ### Task 6: Add DeepSeek config fields
 
 **Files:**
-- Modify: `emerald/config.py` — after line ~97 (before `get_settings()`)
+- Modify: `emerald/config.py` — inside Settings class, before closing brace and `@lru_cache`
 
 - [ ] **Step 1: Add DeepSeek + fact extraction settings**
+
+Insert inside the `Settings` class (before the closing lines with `@lru_cache`):
 
 ```python
     # ---- DeepSeek / Fact Extraction ----
@@ -400,8 +416,6 @@ git commit -m "feat(chunk): add FactExtractor + DeepSeekFactExtractor"
     fact_extraction_temperature: float = 0.1
     fact_extraction_max_tokens: int = 2000
 ```
-
-Insert before the `@lru_cache` line (current line ~100).
 
 - [ ] **Step 2: Verify**
 
@@ -421,13 +435,18 @@ git commit -m "feat(config): add DeepSeek and fact extraction settings"
 **Files:**
 - Modify: `emerald/pipeline/chunking/conversation.py`
 
-- [ ] **Step 1: Add constructor and LLM extraction phase**
+- [ ] **Step 0: Add imports** at the top of conversation.py:
 
 ```python
-# Add import at top
+import structlog
 from emerald.pipeline.chunking.fact_extractor import FactExtractor
 
-# Change class definition
+logger = structlog.get_logger(__name__)
+```
+
+- [ ] **Step 1: Add constructor to ConversationChunker**
+
+```python
 class ConversationChunker(BaseChunker):
     target_size = 512
     overlap_size = 0
@@ -468,15 +487,15 @@ class ConversationChunker(BaseChunker):
                     exc_info=True,
                 )
 
-        # Phase 2: Fallback — existing turn-based chunking
-        # ... (existing _split_turns + _chunk_by_size logic unchanged)
+        # Phase 2: Fallback — existing turn-based chunking (unchanged)
+        # ... (existing _split_turns + _chunk_by_size logic remains as-is)
 ```
 
-Note: Add `import structlog; logger = structlog.get_logger(__name__)` at the top if not already present.
+Note: The fallback code (existing `_split_turns` + `_chunk_by_size`) remains completely unchanged. Just prepend the LLM extraction phase above it.
 
-- [ ] **Step 2: Verify existing chunker tests still work (after async migration)**
+- [ ] **Step 2: Verify existing chunker tests pass (after async migration)**
 
-Run: `pytest tests/pipeline/test_conversation_chunker.py -v`
+Run: `pytest tests/pipeline/test_conversation_chunker.py -v` (will fail until Task 12 migration, expected)
 
 - [ ] **Step 3: Commit**
 
@@ -492,15 +511,18 @@ git commit -m "feat(chunk): wire FactExtractor into ConversationChunker"
 **Files:**
 - Modify: `emerald/pipeline/chunking/text.py` — add class at end of file
 
-- [ ] **Step 1: Add SemanticTextChunker class**
+- [ ] **Step 0: Add imports** at the top of text.py:
 
 ```python
-# Add import at top
 from emerald.pipeline.chunking.fact_extractor import FactExtractor
 import structlog
+
 logger = structlog.get_logger(__name__)
+```
 
+- [ ] **Step 1: Add SemanticTextChunker class at end of text.py**
 
+```python
 class SemanticTextChunker(TextChunker):
     """Text chunker with LLM fact extraction. Inherits TextChunker for fallback."""
 
@@ -564,8 +586,15 @@ git commit -m "feat(chunk): add SemanticTextChunker with LLM fact extraction"
 
 - [ ] **Step 1: Build FactExtractor and inject into chunkers**
 
-In `_init_engine()`, replace the chunker registration section:
+In `_init_engine()`, change the chunker registration section. Replace:
+```python
+    chunkers = ChunkerRegistry()
+    chunkers.register("text", TextChunker())
+    chunkers.register("conversation", ConversationChunker())
+    chunkers.register("markdown", MarkdownChunker())
+```
 
+With:
 ```python
     from emerald.pipeline.chunking.fact_extractor import get_fact_extractor
     from emerald.pipeline.chunking.text import SemanticTextChunker
@@ -577,6 +606,8 @@ In `_init_engine()`, replace the chunker registration section:
     chunkers.register("conversation", ConversationChunker(fact_extractor=fact_extractor))
     chunkers.register("markdown", MarkdownChunker())
 ```
+
+The PDF and Code chunker registrations (in try/except blocks) remain unchanged.
 
 - [ ] **Step 2: Verify app imports**
 
@@ -594,14 +625,11 @@ git commit -m "feat(app): inject FactExtractor into ConversationChunker and Sema
 ### Task 10: Update engine.py sync index path to read chunk fields
 
 **Files:**
-- Modify: `emerald/core/engine.py:112` — `_chunk()` call
-- Modify: `emerald/core/engine.py:186` — `_chunk()` definition
-- Modify: `emerald/core/engine.py:264-268` — `create_memory` call
-- Modify: `emerald/core/engine.py:130` — metric label
+- Modify: `emerald/core/engine.py` — `_chunk()` call (~line 105), `_chunk()` def (~line 186), `_index()` call (~line 264-268), metric (~line 130)
 
-- [ ] **Step 1: Make _chunk() async and awaited**
+- [ ] **Step 1: Await _chunk() call**
 
-Line 104-112 area:
+At ~line 105:
 ```python
 # Before
 chunks = self._chunk(extracted, content_type)
@@ -610,7 +638,9 @@ chunks = self._chunk(extracted, content_type)
 chunks = await self._chunk(extracted, content_type)
 ```
 
-Line 186 area:
+- [ ] **Step 2: Make _chunk() async**
+
+At ~line 186:
 ```python
 # Before
 def _chunk(self, extracted, content_type) -> list[Chunk]:
@@ -621,9 +651,9 @@ async def _chunk(self, extracted, content_type) -> list[Chunk]:
     return await self.chunkers.chunk(extracted.text, content_type, metadata=extracted.metadata)
 ```
 
-- [ ] **Step 2: Read memory_type/confidence/summary from chunk in _index()**
+- [ ] **Step 3: Read memory_type/confidence/summary from chunk in _index()**
 
-Line 264-268:
+At ~line 264-268:
 ```python
 # Before
 memory_id = await self.graph.create_memory(
@@ -647,28 +677,25 @@ memory_id = await self.graph.create_memory(
 )
 ```
 
-- [ ] **Step 3: Fix metric label to use actual memory_type**
+- [ ] **Step 4: Fix metric label to count by actual memory_type**
 
-Line 130:
+At ~line 130:
 ```python
 # Before
 memory_add_total.labels(memory_type="fact").inc(len(memory_ids))
 
 # After
-# Count per memory type
-type_counts: dict[str, int] = {}
-for c in chunks:
-    mt = c.memory_type
-    type_counts[mt] = type_counts.get(mt, 0) + 1
+from collections import Counter
+type_counts = Counter(chunk.memory_type for chunk in chunks)
 for mt, count in type_counts.items():
     memory_add_total.labels(memory_type=mt).inc(count)
 ```
 
-- [ ] **Step 4: Verify existing engine tests**
+- [ ] **Step 5: Verify existing engine tests**
 
-Run: `pytest tests/core/test_memory_engine.py -v`
+Run: `pytest tests/core/test_memory_engine.py -v` (may fail until test migration, expected)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add emerald/core/engine.py
@@ -680,13 +707,11 @@ git commit -m "feat(engine): read memory_type/confidence/summary from Chunk; fix
 ### Task 11: Update tasks.py async pipeline
 
 **Files:**
-- Modify: `emerald/pipeline/tasks.py:93` — chunk call
-- Modify: `emerald/pipeline/tasks.py:95-98` — chunk serialization
-- Modify: `emerald/pipeline/tasks.py:176-180` — index create_memory call
+- Modify: `emerald/pipeline/tasks.py` — chunk call (~line 93), chunk serialization (~lines 95-98), index create_memory (~lines 176-180)
 
 - [ ] **Step 1: Await chunker.chunk() call**
 
-Line 93:
+At ~line 93:
 ```python
 # Before
 chunks = chunker.chunk(text or "")
@@ -697,7 +722,7 @@ chunks = await chunker.chunk(text or "")
 
 - [ ] **Step 2: Add new fields to chunk serialization**
 
-Lines 95-98:
+At ~lines 95-98:
 ```python
 # Before
 data = [
@@ -720,7 +745,7 @@ data = [
 
 - [ ] **Step 3: Read fields in _run_index()**
 
-Lines 176-180:
+At ~lines 176-180:
 ```python
 # Before
 mid = await graph.create_memory(
@@ -737,7 +762,7 @@ mid = await graph.create_memory(
     entity_id=entity_id,
     memory_type=chunk_data.get("memory_type", "fact"),
     confidence=chunk_data.get("confidence", 0.8),
-    summary=chunk_data.get("summary"),
+    summary=chunk_data.get("summary") or None,  # empty string → None
     source_type="document",
 )
 ```
@@ -758,52 +783,24 @@ git commit -m "feat(tasks): async chunk call, serialize new fields, read in inde
 ### Task 12: Migrate all chunker tests to async
 
 **Files (53 call sites across 8 files):**
-- Modify: `tests/unit/test_chunker_registry.py`
-- Modify: `tests/pipeline/test_conversation_chunker.py`
-- Modify: `tests/pipeline/test_text_chunker.py`
-- Modify: `tests/pipeline/test_markdown_chunker.py`
-- Modify: `tests/pipeline/test_code_chunker.py`
-- Modify: `tests/pipeline/test_pdf_chunker.py`
-- Modify: `tests/pipeline/test_default_registry.py`
-- Modify: `tests/unit/test_conversation_chunking_markdown_bold.py`
+- Modify: `tests/unit/test_chunker_registry.py` (1 call)
+- Modify: `tests/pipeline/test_conversation_chunker.py` (6 calls)
+- Modify: `tests/pipeline/test_text_chunker.py` (7 calls)
+- Modify: `tests/pipeline/test_markdown_chunker.py` (5 calls)
+- Modify: `tests/pipeline/test_code_chunker.py` (12 calls)
+- Modify: `tests/pipeline/test_pdf_chunker.py` (4 calls)
+- Modify: `tests/pipeline/test_default_registry.py` (1 call)
+- Modify: `tests/unit/test_conversation_chunking_markdown_bold.py` (17 calls)
 
-- [ ] **Step 1: Migrate test_chunker_registry.py**
+- [ ] **Step 1-8: For each file, change `def test_` → `async def test_` and `chunker.chunk(` → `await chunker.chunk(`**
 
-Every `assert chunker_registry.chunk(...)` → `assert await chunker_registry.chunk(...)` and test functions → `async def`. Each test function approx. 2-3 call sites.
-
-- [ ] **Step 2: Migrate test_conversation_chunker.py**
-
-~7 calls, same pattern.
-
-- [ ] **Step 3: Migrate test_text_chunker.py**
-
-~9 calls, same pattern.
-
-- [ ] **Step 4: Migrate test_markdown_chunker.py**
-
-~5 calls, same pattern.
-
-- [ ] **Step 5: Migrate test_code_chunker.py**
-
-~13 calls, same pattern.
-
-- [ ] **Step 6: Migrate test_pdf_chunker.py**
-
-~4 calls, same pattern.
-
-- [ ] **Step 7: Migrate test_default_registry.py**
-
-~2 calls, same pattern.
-
-- [ ] **Step 8: Migrate test_conversation_chunking_markdown_bold.py**
-
-~15 calls, same pattern.
+Mechanical change: every `.chunk(...)` call gets `await` prepended, every test function gets `async`. Files are already using `pytest-asyncio` (configured in pyproject.toml with `asyncio_mode = "auto"`).
 
 - [ ] **Step 9: Run all chunker tests to verify**
 
 Run: `pytest tests/pipeline/ tests/unit/test_chunker_registry.py tests/unit/test_conversation_chunking_markdown_bold.py -v`
 
-Expected: all pass.
+Expected: all pass (no async-related failures).
 
 - [ ] **Step 10: Commit**
 
@@ -819,156 +816,19 @@ git commit -m "test: migrate all chunker tests to async def + await"
 **Files:**
 - Create: `tests/pipeline/test_fact_extractor.py`
 
-- [ ] **Step 1: Write test file**
+- [ ] **Step 1: Write test file covering all validation rules**
 
-```python
-"""Tests for DeepSeekFactExtractor."""
+Tests for:
+- Valid JSON response → facts extracted correctly
+- Empty text → returns []
+- API failure → returns []
+- Invalid memory_type → coerced to "fact"
+- Confidence out of range → clamped
+- Empty text in fact → skipped
+- Duplicate facts → deduped
+- Max facts cap → truncated
 
-import json
-import pytest
-from unittest.mock import AsyncMock, patch
-
-from emerald.pipeline.chunking.fact_extractor import (
-    DeepSeekFactExtractor,
-    Fact,
-    FactExtractor,
-)
-
-
-class TestDeepSeekFactExtractor:
-    @pytest.fixture
-    def extractor(self):
-        return DeepSeekFactExtractor(api_key="test-key")
-
-    @pytest.mark.asyncio
-    async def test_extracts_facts_from_valid_response(self, extractor):
-        mock_response = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "facts": [
-                            {"text": "Alex works at Stripe", "type": "fact", "confidence": 0.9, "summary": "Job at Stripe"},
-                            {"text": "Alex prefers morning meetings", "type": "preference", "confidence": 0.85, "summary": "Meeting preference"},
-                        ]
-                    })
-                }
-            }]
-        }
-
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value.json.return_value = mock_response
-            mock_post.return_value.raise_for_status = lambda: None
-
-            facts = await extractor.extract("Alex works at Stripe. He prefers morning meetings.")
-            assert len(facts) == 2
-            assert facts[0].text == "Alex works at Stripe"
-            assert facts[0].memory_type == "fact"
-            assert facts[0].confidence == 0.9
-            assert facts[1].memory_type == "preference"
-
-    @pytest.mark.asyncio
-    async def test_empty_text_returns_empty(self, extractor):
-        facts = await extractor.extract("")
-        assert facts == []
-
-    @pytest.mark.asyncio
-    async def test_api_failure_returns_empty(self, extractor):
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_post.side_effect = Exception("API error")
-            facts = await extractor.extract("Some text")
-            assert facts == []
-
-    @pytest.mark.asyncio
-    async def test_invalid_type_coerces_to_fact(self, extractor):
-        mock_response = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "facts": [
-                            {"text": "test", "type": "opinion", "confidence": 0.5, "summary": "s"},
-                        ]
-                    })
-                }
-            }]
-        }
-
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value.json.return_value = mock_response
-            mock_post.return_value.raise_for_status = lambda: None
-
-            facts = await extractor.extract("test")
-            assert len(facts) == 1
-            assert facts[0].memory_type == "fact"  # coerced
-
-    @pytest.mark.asyncio
-    async def test_confidence_clamped(self, extractor):
-        mock_response = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "facts": [
-                            {"text": "test", "type": "fact", "confidence": 1.5, "summary": "s"},
-                            {"text": "test2", "type": "fact", "confidence": -0.5, "summary": "s2"},
-                        ]
-                    })
-                }
-            }]
-        }
-
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value.json.return_value = mock_response
-            mock_post.return_value.raise_for_status = lambda: None
-
-            facts = await extractor.extract("test")
-            assert len(facts) == 2
-            assert facts[0].confidence == 1.0  # clamped
-            assert facts[1].confidence == 0.0  # clamped
-
-    @pytest.mark.asyncio
-    async def test_empty_text_in_fact_skipped(self, extractor):
-        mock_response = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "facts": [
-                            {"text": "", "type": "fact", "confidence": 0.5, "summary": "s"},
-                            {"text": "valid", "type": "fact", "confidence": 0.5, "summary": "s"},
-                        ]
-                    })
-                }
-            }]
-        }
-
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value.json.return_value = mock_response
-            mock_post.return_value.raise_for_status = lambda: None
-
-            facts = await extractor.extract("test")
-            assert len(facts) == 1
-            assert facts[0].text == "valid"
-
-    @pytest.mark.asyncio
-    async def test_duplicate_facts_deduped(self, extractor):
-        mock_response = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "facts": [
-                            {"text": "same fact", "type": "fact", "confidence": 0.5, "summary": "s"},
-                            {"text": "same fact", "type": "fact", "confidence": 0.5, "summary": "s2"},
-                        ]
-                    })
-                }
-            }]
-        }
-
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value.json.return_value = mock_response
-            mock_post.return_value.raise_for_status = lambda: None
-
-            facts = await extractor.extract("test")
-            assert len(facts) == 1
-```
+(Refer to the plan v1.0 for the full test code in Git history, or write fresh using the Fact dataclass.)
 
 - [ ] **Step 2: Run tests**
 
@@ -988,12 +848,13 @@ git commit -m "test: add DeepSeekFactExtractor unit tests"
 **Files:**
 - Create: `tests/pipeline/test_semantic_text_chunker.py`
 
-- [ ] **Step 1: Write tests for LLM extraction path and fallback**
+- [ ] **Step 1: Write tests for LLM path and fallback**
 
-Tests should cover:
-- With FactExtractor → LLM facts converted to Chunks
-- With FactExtractor failing → falls back to parent TextChunker
+Tests for:
+- With mock FactExtractor → facts converted to Chunks with correct fields
+- With FactExtractor returning [] → falls back to parent TextChunker
 - Without FactExtractor → directly delegates to parent
+- FactExtractor raises exception → falls back gracefully
 
 - [ ] **Step 2: Run tests**
 
@@ -1018,7 +879,7 @@ Expected: all previously passing tests still pass, plus new tests pass. Any regr
 
 - [ ] **Step 2: Fix any remaining test failures**
 
-- [ ] **Step 3: Run with coverage to verify new code is tested**
+- [ ] **Step 3: Run with coverage**
 
 Run: `pytest --cov=emerald/pipeline/chunking/fact_extractor --cov=emerald/pipeline/chunking/text --cov-report=term-missing`
 
@@ -1028,4 +889,3 @@ Run: `pytest --cov=emerald/pipeline/chunking/fact_extractor --cov=emerald/pipeli
 git add -A
 git commit -m "test: fix remaining async migration issues; full test suite green"
 ```
-
