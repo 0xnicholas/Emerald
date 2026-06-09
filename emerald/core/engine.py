@@ -101,7 +101,7 @@ class MemoryEngine:
                 extracted = await self._extract(content, content_type)
 
                 # 2. Chunk
-                chunks = self._chunk(extracted, content_type)
+                chunks = await self._chunk(extracted, content_type)
 
                 # 3. Embed
                 embeddings = await self._embed(chunks)
@@ -127,7 +127,10 @@ class MemoryEngine:
                 if idempotency_key:
                     await self._cache_idempotency(entity_id, idempotency_key, result)
 
-                memory_add_total.labels(memory_type="fact").inc(len(memory_ids))
+                from collections import Counter
+                type_counts = Counter(chunk.memory_type for chunk in chunks)
+                for mt, count in type_counts.items():
+                    memory_add_total.labels(memory_type=mt).inc(count)
 
                 logger.info(
                     "memory.add.complete",
@@ -185,9 +188,9 @@ class MemoryEngine:
         """Extract clean text from raw content."""
         return await self.extractors.extract(content, content_type)
 
-    def _chunk(self, extracted: ExtractedContent, content_type: str) -> list[Chunk]:
+    async def _chunk(self, extracted: ExtractedContent, content_type: str) -> list[Chunk]:
         """Split extracted text into semantic chunks."""
-        return self.chunkers.chunk(
+        return await self.chunkers.chunk(
             extracted.text,
             content_type,
             metadata=extracted.metadata,
@@ -263,8 +266,9 @@ class MemoryEngine:
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,
-                memory_type="fact",
-                confidence=0.8,
+                memory_type=chunk.memory_type,
+                confidence=chunk.confidence,
+                summary=chunk.summary or None,
                 source_type="conversation" if content_type == "conversation" else "document",
                 metadata=metadata,
             )

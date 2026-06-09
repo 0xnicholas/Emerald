@@ -21,7 +21,7 @@ def chunker():
 # ── Markdown bold format: basic recognition ──────────────────────────────
 
 
-def test_chunk_splits_by_markdown_bold_speaker(chunker):
+async def test_chunk_splits_by_markdown_bold_speaker(chunker):
     """**User**: and **Assistant**: turn markers are recognized and split correctly."""
     text = (
         "**User**: 你好，我想了解一下 TypeScript\n"
@@ -29,29 +29,29 @@ def test_chunk_splits_by_markdown_bold_speaker(chunker):
         "**User**: 它和 JavaScript 有什么区别？\n"
         "**Assistant**: TypeScript 是 JavaScript 的超集"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 4
 
 
-def test_markdown_bold_preserves_speaker_identity(chunker):
+async def test_markdown_bold_preserves_speaker_identity(chunker):
     """Speaker extracted from **Speaker**: format is correct (no asterisks in name)."""
     text = "**User**: 我叫张三\n**Assistant**: 你好张三"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 2
     assert chunks[0].metadata["speaker"] == "User"
     assert chunks[1].metadata["speaker"] == "Assistant"
 
 
-def test_markdown_bold_system_speaker(chunker):
+async def test_markdown_bold_system_speaker(chunker):
     """**System**: turn marker is recognized."""
     text = "**System**: 初始化上下文\n**User**: 开始对话"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 2
     assert chunks[0].metadata["speaker"] == "System"
     assert chunks[1].metadata["speaker"] == "User"
 
 
-def test_markdown_bold_ai_human_bot_speakers(chunker):
+async def test_markdown_bold_ai_human_bot_speakers(chunker):
     """**AI**:, **Human**:, **Bot**: variants are all recognized."""
     text = (
         "**Human**: Hello\n"
@@ -59,16 +59,16 @@ def test_markdown_bold_ai_human_bot_speakers(chunker):
         "**Bot**: How can I help?\n"
         "**Human**: I need assistance"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 4
     speakers = [c.metadata["speaker"] for c in chunks]
     assert speakers == ["Human", "AI", "Bot", "Human"]
 
 
-def test_markdown_bold_single_turn(chunker):
+async def test_markdown_bold_single_turn(chunker):
     """A single **User**: turn creates exactly one chunk."""
     text = "**User**: 这是唯一的消息"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 1
     assert chunks[0].metadata["speaker"] == "User"
 
@@ -76,7 +76,7 @@ def test_markdown_bold_single_turn(chunker):
 # ── Mixed plain and bold speakers ────────────────────────────────────────
 
 
-def test_mixed_plain_and_bold_speakers(chunker):
+async def test_mixed_plain_and_bold_speakers(chunker):
     """Transcripts mixing plain Speaker: and **Speaker**: are handled correctly."""
     text = (
         "User: 你好\n"
@@ -84,14 +84,14 @@ def test_mixed_plain_and_bold_speakers(chunker):
         "User: 今天天气怎么样？\n"
         "**Assistant**: 抱歉，我没有天气信息"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 4
     # All speakers should be extracted correctly (no ** in the name)
     for c in chunks:
         assert "**" not in c.metadata["speaker"]
 
 
-def test_mixed_all_variants(chunker):
+async def test_mixed_all_variants(chunker):
     """All bold/plain combinations across all speaker labels."""
     text = (
         "Human: 问题一\n"
@@ -101,7 +101,7 @@ def test_mixed_all_variants(chunker):
         "Bot: 系统消息\n"
         "**System**: 内部提示"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 6
     expected_speakers = ["Human", "AI", "User", "Assistant", "Bot", "System"]
     assert [c.metadata["speaker"] for c in chunks] == expected_speakers
@@ -110,31 +110,31 @@ def test_mixed_all_variants(chunker):
 # ── Content integrity ────────────────────────────────────────────────────
 
 
-def test_markdown_bold_content_not_mangled(chunker):
+async def test_markdown_bold_content_not_mangled(chunker):
     """The turn content after **Speaker**: is not mangled or truncated."""
     text = (
         "**User**: 我想了解关于 TypeScript 泛型的用法，特别是在函数重载场景下。\n"
         "**Assistant**: TypeScript 泛型允许你创建可复用的组件，这些组件可以支持多种类型。"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 2
     assert "泛型的用法" in chunks[0].text
     assert "可复用的组件" in chunks[1].text
 
 
-def test_markdown_bold_content_preserves_markdown(chunker):
+async def test_markdown_bold_content_preserves_markdown(chunker):
     """Content after **Speaker**: that also contains markdown is preserved as-is."""
     text = (
         "**User**: 请解释 `const x: number = 42;` 的含义\n"
         "**Assistant**: 这是 TypeScript 的类型注解语法。`const` 声明一个常量，`number` 是类型。"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 2
     assert "`const x: number = 42;`" in chunks[0].text
     assert "`const`" in chunks[1].text
 
 
-def test_markdown_bold_multiline_content(chunker):
+async def test_markdown_bold_multiline_content(chunker):
     """Multi-line content within a bold turn is preserved."""
     text = (
         "**User**: 我有三个问题：\n"
@@ -143,7 +143,7 @@ def test_markdown_bold_multiline_content(chunker):
         "3. 函数式编程的核心是什么？\n"
         "**Assistant**: 很好的问题，让我逐一回答。"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 2
     user_chunk = chunks[0]
     assert "闭包" in user_chunk.text
@@ -154,7 +154,7 @@ def test_markdown_bold_multiline_content(chunker):
 # ── Metadata correctness ─────────────────────────────────────────────────
 
 
-def test_markdown_bold_turn_index_in_order(chunker):
+async def test_markdown_bold_turn_index_in_order(chunker):
     """Turn index metadata is sequential for bold-formatted turns."""
     text = (
         "**User**: A\n"
@@ -163,24 +163,24 @@ def test_markdown_bold_turn_index_in_order(chunker):
         "**Assistant**: D\n"
         "**User**: E"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 5
     for i, c in enumerate(chunks):
         assert c.metadata["turn_index"] == i
 
 
-def test_markdown_bold_content_type_conversation(chunker):
+async def test_markdown_bold_content_type_conversation(chunker):
     """Content type is always 'conversation' for bold-format transcripts."""
     text = "**User**: Hello\n**Assistant**: Hi"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     for c in chunks:
         assert c.content_type == "conversation"
 
 
-def test_markdown_bold_offset_metadata(chunker):
+async def test_markdown_bold_offset_metadata(chunker):
     """char_offset_start and char_offset_end are set correctly for bold turns."""
     text = "**User**: Hello\n**Assistant**: Hi there"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     for c in chunks:
         assert "char_offset_start" in c.metadata
         assert "char_offset_end" in c.metadata
@@ -190,19 +190,19 @@ def test_markdown_bold_offset_metadata(chunker):
 # ── Edge cases ───────────────────────────────────────────────────────────
 
 
-def test_bold_empty_turn_content(chunker):
+async def test_bold_empty_turn_content(chunker):
     """A **Speaker**: with no content after it produces a chunk with empty content."""
     text = "**User**: \n**Assistant**: 你好"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 2
     # First turn has empty content (only whitespace after ": ")
     assert chunks[0].text.strip() == "User:"
 
 
-def test_bold_only_asterisks_not_speaker(chunker):
+async def test_bold_only_asterisks_not_speaker(chunker):
     """Text with ** but not matching the speaker pattern is not treated as a turn."""
     text = "这是一段包含 **加粗** 文字但不是对话的内容"
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     # No speaker labels detected → falls back to size-based chunking
     assert len(chunks) > 0
     # The original text should be preserved in the chunks (not split on **)
@@ -214,12 +214,12 @@ def test_bold_only_asterisks_not_speaker(chunker):
         assert c.metadata.get("speaker", "unknown") == "unknown"
 
 
-def test_bold_no_overlap(chunker):
+async def test_bold_no_overlap(chunker):
     """Conversation chunks have no overlap (overlap_size=0), even for bold format."""
     assert chunker.overlap_size == 0
 
 
-def test_bold_case_insensitive(chunker):
+async def test_bold_case_insensitive(chunker):
     """**user**:, **USER**:, **User**: are all treated equivalently (case-insensitive)."""
     text = (
         "**user**: lowercase\n"
@@ -227,7 +227,7 @@ def test_bold_case_insensitive(chunker):
         "**User**: title case\n"
         "**Assistant**: normal"
     )
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     assert len(chunks) == 4
     assert chunks[0].metadata["speaker"] == "user"
     assert chunks[1].metadata["speaker"] == "USER"
@@ -237,7 +237,7 @@ def test_bold_case_insensitive(chunker):
 # ── Pandaria integration scenario ────────────────────────────────────────
 
 
-def test_pandaria_conversation_format(chunker):
+async def test_pandaria_conversation_format(chunker):
     """Full Pandaria-style Markdown transcript with bold speakers chunked correctly.
 
     This is the exact format Pandaria's agent outputs — a Markdown string with
@@ -261,7 +261,7 @@ def test_pandaria_conversation_format(chunker):
         "**Assistant**: 两者互补。图谱处理结构化关系和时序推理，向量数据库处理语义相似性搜索。\n"
         "我们可以在图谱节点上附加向量嵌入，实现混合搜索。"
     )
-    chunks = chunker.chunk(transcript)
+    chunks = await chunker.chunk(transcript)
 
     assert len(chunks) == 4
     assert chunks[0].metadata["speaker"] == "User"
