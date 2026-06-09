@@ -1,8 +1,11 @@
 """Tests for ConversationChunker."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from emerald.pipeline.chunking.conversation import ConversationChunker
+from emerald.pipeline.chunking.fact_extractor import Fact, FactExtractor
 
 
 @pytest.fixture
@@ -63,3 +66,49 @@ async def test_chunk_turn_index_metadata(chunker):
     chunks = await chunker.chunk(text)
     for i, c in enumerate(chunks):
         assert c.metadata.get("turn_index") == i
+
+
+async def test_fact_extraction_produces_typed_chunks():
+    """With FactExtractor, facts become chunks with correct types."""
+    mock_extractor = AsyncMock(spec=FactExtractor)
+    mock_extractor.extract.return_value = [
+        Fact(text="Alex works at Stripe", memory_type="fact", confidence=0.9, summary="Job"),
+        Fact(text="Alex prefers mornings", memory_type="preference", confidence=0.85, summary="Preference"),
+    ]
+    chunker = ConversationChunker(fact_extractor=mock_extractor)
+    chunks = await chunker.chunk("Alex works at Stripe and prefers mornings.")
+    assert len(chunks) == 2
+    assert chunks[0].content_type == "conversation"
+    assert chunks[0].memory_type == "fact"
+    assert chunks[0].confidence == 0.9
+    assert chunks[1].memory_type == "preference"
+    assert chunks[0].metadata["speaker"] == "unknown"
+
+
+async def test_fact_extraction_empty_falls_back_to_turns():
+    """When FactExtractor returns empty, fall back to turn-based chunking."""
+    mock_extractor = AsyncMock(spec=FactExtractor)
+    mock_extractor.extract.return_value = []
+    chunker = ConversationChunker(fact_extractor=mock_extractor)
+    text = "User: hello\nAssistant: hi"
+    chunks = await chunker.chunk(text)
+    assert len(chunks) == 2
+    assert chunks[0].metadata["speaker"] == "User"
+
+
+async def test_fact_extraction_exception_falls_back_to_turns():
+    """When FactExtractor raises, fall back to turn-based chunking."""
+    mock_extractor = AsyncMock(spec=FactExtractor)
+    mock_extractor.extract.side_effect = RuntimeError("API down")
+    chunker = ConversationChunker(fact_extractor=mock_extractor)
+    text = "User: hello\nAssistant: hi"
+    chunks = await chunker.chunk(text)
+    assert len(chunks) == 2
+
+
+async def test_no_fact_extractor_uses_turn_based():
+    """Without FactExtractor, standard turn-based chunking is used."""
+    chunker = ConversationChunker()
+    text = "User: hello\nAssistant: hi"
+    chunks = await chunker.chunk(text)
+    assert len(chunks) == 2

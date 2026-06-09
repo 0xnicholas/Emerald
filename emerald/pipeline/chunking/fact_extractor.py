@@ -99,8 +99,7 @@ class DeepSeekFactExtractor(FactExtractor):
             user_content = f"上下文提示：{entity_context}\n\n文本：{text}"
         messages.append({"role": "user", "content": user_content})
 
-        raw_content_ref: list[str] = [""]
-        raw = await self._call_api(messages, raw_content_ref)
+        raw = await self._call_api(messages)
         if raw is None:
             return []
 
@@ -109,14 +108,12 @@ class DeepSeekFactExtractor(FactExtractor):
     async def _call_api(
         self,
         messages: list[dict[str, str]],
-        raw_content_ref: list[str],
     ) -> dict[str, Any] | None:
         """Call DeepSeek API. Returns parsed JSON dict, or None on failure.
 
         First attempts response_format: json_object. On JSON parse failure,
         strips markdown code fences from the raw content string and re-parses.
         """
-        raw_content: str = ""
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
@@ -136,7 +133,6 @@ class DeepSeekFactExtractor(FactExtractor):
                 response.raise_for_status()
                 data = response.json()
                 raw_content = data["choices"][0]["message"]["content"]
-                raw_content_ref[0] = raw_content
                 return json.loads(raw_content)
         except json.JSONDecodeError:
             logger.warning("fact_extraction.json_parse_failed, trying code fences")
@@ -176,8 +172,8 @@ class DeepSeekFactExtractor(FactExtractor):
                 logger.warning("fact_extraction.empty_text_skipped")
                 continue
 
-            # Dedup by normalized text (collapse whitespace)
-            normalized = re.sub(r"\s+", "", text)
+            # Dedup by normalized text (collapse whitespace to single spaces, lowercase)
+            normalized = " ".join(text.split()).lower()
             if normalized in seen_texts:
                 continue
             seen_texts.add(normalized)
