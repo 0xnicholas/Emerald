@@ -22,13 +22,17 @@ class Chunk:
     content_type: str = "text"
     metadata: dict = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid4().hex)
+    # LLM fact extraction metadata
+    memory_type: str = "fact"
+    confidence: float = 0.8
+    summary: str = ""
 
 
 class BaseChunker(ABC):
     """Abstract base for content-type-aware chunking strategies."""
 
     @abstractmethod
-    def chunk(self, text: str, **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         """Split text into semantic chunks."""
 
     @property
