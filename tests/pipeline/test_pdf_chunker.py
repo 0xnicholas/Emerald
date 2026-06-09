@@ -35,7 +35,7 @@ async def test_chunk_content_type_pdf(chunker):
         assert c.content_type == "pdf"
 
 
-def test_chunk_overlap_greater_than_text(chunker):
+async def test_chunk_overlap_greater_than_text(chunker):
     """PDF chunker has larger overlap (128 tokens) for context preservation."""
     assert chunker.overlap_size == 128
     assert chunker.target_size == 512

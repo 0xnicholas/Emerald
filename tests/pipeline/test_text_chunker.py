@@ -81,7 +81,7 @@ async def test_chunk_content_type_set(chunker):
         assert c.content_type == "text"
 
 
-def test_target_and_overlap_properties(chunker):
+async def test_target_and_overlap_properties(chunker):
     """Target and overlap sizes are as documented."""
     assert chunker.target_size == 512
     assert chunker.overlap_size == 64

@@ -214,7 +214,7 @@ async def test_bold_only_asterisks_not_speaker(chunker):
         assert c.metadata.get("speaker", "unknown") == "unknown"
 
 
-def test_bold_no_overlap(chunker):
+async def test_bold_no_overlap(chunker):
     """Conversation chunks have no overlap (overlap_size=0), even for bold format."""
     assert chunker.overlap_size == 0
 

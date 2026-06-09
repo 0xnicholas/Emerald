@@ -128,7 +128,7 @@ class MemoryEngine:
                     await self._cache_idempotency(entity_id, idempotency_key, result)
 
                 from collections import Counter
-                type_counts = Counter(c.memory_type for c in chunks)
+                type_counts = Counter(chunk.memory_type for chunk in chunks)
                 for mt, count in type_counts.items():
                     memory_add_total.labels(memory_type=mt).inc(count)
 
