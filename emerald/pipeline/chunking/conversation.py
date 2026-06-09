@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import re
 
+import structlog
+
 from emerald.pipeline.chunking.base import BaseChunker, Chunk
+from emerald.pipeline.chunking.fact_extractor import FactExtractor
+
+logger = structlog.get_logger(__name__)
 
 # Matches speaker labels at the start of a line:
 # Plain text: "User:", "Assistant:", "System:"
@@ -26,10 +31,42 @@ class ConversationChunker(BaseChunker):
     overlap_size = 0
     _chars_per_token = 4
 
+    def __init__(self, fact_extractor: FactExtractor | None = None):
+        self.fact_extractor = fact_extractor
+
     async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         if not text.strip():
             return []
 
+        # Phase 1: LLM fact extraction
+        if self.fact_extractor:
+            try:
+                metadata = kwargs.get("metadata") or {}
+                entity_context = metadata.get("entity_context")
+                facts = await self.fact_extractor.extract(
+                    text, entity_context=entity_context
+                )
+                if facts:
+                    return [
+                        Chunk(
+                            text=f.text,
+                            index=i,
+                            content_type="conversation",
+                            memory_type=f.memory_type,
+                            confidence=f.confidence,
+                            summary=f.summary,
+                            metadata={"speaker": "unknown", "turn_index": i},
+                        )
+                        for i, f in enumerate(facts)
+                    ]
+            except Exception:
+                logger.warning(
+                    "fact_extraction_failed",
+                    content_type="conversation",
+                    exc_info=True,
+                )
+
+        # Phase 2: Fallback — existing turn-based chunking
         # Detect if text has speaker labels
         turns = self._split_turns(text)
 
