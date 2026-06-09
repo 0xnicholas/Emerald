@@ -67,7 +67,7 @@ class CodeChunker(BaseChunker):
     target_size = 0  # Structure-driven, not size-driven
     overlap_size = 0
 
-    def chunk(self, text: str, **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         language = kwargs.get("language", "auto")
 
         if not text.strip():

@@ -22,7 +22,7 @@ class TextChunker(BaseChunker):
     # Rough heuristic: ~4 chars per token for mixed-language text
     _chars_per_token = 4
 
-    def chunk(self, text: str, **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         if not text.strip():
             return []
 

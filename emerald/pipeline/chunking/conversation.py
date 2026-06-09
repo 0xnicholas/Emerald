@@ -26,7 +26,7 @@ class ConversationChunker(BaseChunker):
     overlap_size = 0
     _chars_per_token = 4
 
-    def chunk(self, text: str, **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         if not text.strip():
             return []
 
