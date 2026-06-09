@@ -9,6 +9,11 @@ from emerald.pipeline.chunking.base import BaseChunker, Chunk
 # Sentence boundary regex (handles . ! ? in multiple languages)
 _SENTENCE_RE = re.compile(r"(?<=[.!?。！？\n])\s+")
 
+from emerald.pipeline.chunking.fact_extractor import FactExtractor
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 class TextChunker(BaseChunker):
     """Splits text by paragraph and sentence boundaries with sliding window overlap.
@@ -22,7 +27,7 @@ class TextChunker(BaseChunker):
     # Rough heuristic: ~4 chars per token for mixed-language text
     _chars_per_token = 4
 
-    def chunk(self, text: str, **kwargs) -> list[Chunk]:
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         if not text.strip():
             return []
 
@@ -166,3 +171,46 @@ class TextChunker(BaseChunker):
                 )
             )
         return results
+
+
+class SemanticTextChunker(TextChunker):
+    """Text chunker with LLM fact extraction. Inherits TextChunker for fallback."""
+
+    def __init__(self, fact_extractor: FactExtractor | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.fact_extractor = fact_extractor
+
+    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
+        if not text.strip():
+            return []
+
+        # Phase 1: LLM fact extraction
+        if self.fact_extractor:
+            try:
+                metadata = kwargs.get("metadata") or {}
+                entity_context = metadata.get("entity_context")
+                facts = await self.fact_extractor.extract(
+                    text, entity_context=entity_context
+                )
+                if facts:
+                    return [
+                        Chunk(
+                            text=f.text,
+                            index=i,
+                            content_type="text",
+                            memory_type=f.memory_type,
+                            confidence=f.confidence,
+                            summary=f.summary,
+                            metadata=metadata,
+                        )
+                        for i, f in enumerate(facts)
+                    ]
+            except Exception:
+                logger.warning(
+                    "fact_extraction_failed",
+                    content_type="text",
+                    exc_info=True,
+                )
+
+        # Phase 2: Fallback — parent's paragraph/sentence chunking
+        return await super().chunk(text, **kwargs)
