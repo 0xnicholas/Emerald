@@ -10,7 +10,7 @@ def chunker():
     return MarkdownChunker()
 
 
-def test_chunk_splits_by_headings(chunker):
+async def test_chunk_splits_by_headings(chunker):
     """Markdown is split at ## heading boundaries."""
     text = """# Title
 
@@ -25,12 +25,12 @@ Content of section 2.
 ### Subsection 2.1
 Deeper content here.
 """
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     # Should have at least: intro + Section 1 + Section 2
     assert len(chunks) >= 2
 
 
-def test_chunk_heading_path_metadata(chunker):
+async def test_chunk_heading_path_metadata(chunker):
     """Each chunk records its heading path."""
     text = """# H1
 
@@ -40,12 +40,12 @@ Intro.
 
 Content here.
 """
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     for c in chunks:
         assert "heading_path" in c.metadata
 
 
-def test_chunk_code_blocks_independent(chunker):
+async def test_chunk_code_blocks_independent(chunker):
     """Code blocks in markdown are kept as separate chunks."""
     text = """# Guide
 
@@ -58,20 +58,20 @@ def hello():
 
 More text after code block.
 """
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     # Code block should be a separate chunk
     code_chunks = [c for c in chunks if "```" in c.text or "def hello" in c.text]
     assert len(code_chunks) >= 1
 
 
-def test_chunk_content_type_markdown(chunker):
+async def test_chunk_content_type_markdown(chunker):
     """Chunks carry content_type='markdown'."""
     text = "# Title\n\nContent."
-    chunks = chunker.chunk(text)
+    chunks = await chunker.chunk(text)
     for c in chunks:
         assert c.content_type == "markdown"
 
 
-def test_chunk_empty(chunker):
+async def test_chunk_empty(chunker):
     """Empty markdown produces no chunks."""
-    assert chunker.chunk("") == []
+    assert await chunker.chunk("") == []

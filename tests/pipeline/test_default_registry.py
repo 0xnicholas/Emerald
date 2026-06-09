@@ -35,4 +35,4 @@ async def test_orchestrator_default_registries_work():
     ext = orch.extractors.get("text")
     chk = orch.chunkers.get("text")
     assert ext.supports("text")
-    assert chk.chunk("") == []
+    assert await chk.chunk("") == []

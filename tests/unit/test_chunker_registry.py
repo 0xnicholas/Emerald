@@ -11,14 +11,14 @@ def registry():
     return ChunkerRegistry()
 
 
-def test_register_and_get(registry):
+async def test_register_and_get(registry):
     """After registering, get() returns the chunker."""
     chunker = TextChunker()
     registry.register("text", chunker)
     assert registry.get("text") is chunker
 
 
-def test_fallback_to_text_when_unsupported(registry):
+async def test_fallback_to_text_when_unsupported(registry):
     """When a text chunker is registered, unknown types fall back to it."""
     text_chunker = TextChunker()
     registry.register("text", text_chunker)
@@ -28,28 +28,28 @@ def test_fallback_to_text_when_unsupported(registry):
     assert chunker is text_chunker
 
 
-def test_get_raises_when_no_text_fallback(registry):
+async def test_get_raises_when_no_text_fallback(registry):
     """Without a text chunker, unknown types raise."""
     with pytest.raises(UnsupportedContentType):
         registry.get("unknown")
 
 
-def test_chunk_delegates(registry):
+async def test_chunk_delegates(registry):
     """chunk() calls the registered chunker."""
     registry.register("text", TextChunker())
-    chunks = registry.chunk("hello world", "text")
+    chunks = await registry.chunk("hello world", "text")
     assert len(chunks) == 1
     assert chunks[0].text == "hello world"
 
 
-def test_run_is_alias_for_chunk(registry):
+async def test_run_is_alias_for_chunk(registry):
     """run() is an alias for chunk()."""
     registry.register("text", TextChunker())
-    chunks = registry.run("hello", "text")
+    chunks = await registry.run("hello", "text")
     assert len(chunks) == 1
 
 
-def test_error_message_lists_available(registry):
+async def test_error_message_lists_available(registry):
     """Error message lists registered chunkers when no fallback."""
     # Register only non-text chunker to avoid fallback
     registry.register("code", TextChunker())  # Use as placeholder
