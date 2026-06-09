@@ -1,436 +1,254 @@
 # Emerald vs Supermemory 深度对比
 
-> **一句话总结：** Emerald 和 Supermemory 在核心概念、记忆本体论和 API 设计上高度同源——二者都基于「活的知识图谱」构建，区分记忆与 RAG，支持自动提取、时序追踪、矛盾解决和自动遗忘。差异主要体现在**商业模式**（开源自托管 vs SaaS）、**技术栈**（Python/Neo4j vs 闭源分布式后端）和**生态成熟度**（初版实现 vs 生产级服务）。
+> **更新日期：2026-06-09，基于 Emerald v0.3.0 与 Supermemory 公开文档/API**
 
 ---
 
-## 1. 产品定位与商业模式
+## 总览：同源不同路，差距显著
 
-| 维度 | Emerald | Supermemory |
-|---|---|---|
-| **定位** | 面向 AI Agent 的记忆与上下文基础设施 | State-of-the-art memory and context engine for AI |
-| **开源策略** | **完全开源**（Python 后端 + SDK + MCP），可自托管 | **SaaS 优先**：后端闭源，客户端/SDK/插件开源 |
-| **部署模式** | Docker Compose / K8s 私有化部署 | 托管云服务 `api.supermemory.ai`，也支持 self-hosted |
-| **目标用户** | 需要数据主权、私有化部署的开发者/企业 | 追求快速集成、不愿运维基础设施的开发者 |
-| **对标声明** | 明确对标 Supermemory，追求三项基准最优 | 本身就是标杆，LongMemEval/LoCoMo/ConvoMem 三项 #1 |
-| **消费者产品** | 暂无 | 有 `app.supermemory.ai` 消费者应用 + 浏览器插件 |
+Emerald 在**架构设计、概念模型和 API 命名上高度对标 Supermemory**，三者几乎完全一致的结构（知识图谱、三种关系类型、静态/动态画像、自动遗忘）。但在**实际实现深度**上存在巨大鸿沟——Supermemory 是生产级系统，Emerald 当前仍处于"架构完整但功能浅层"的原型阶段。
 
-**关键差异：**
-- Emerald 是**基础设施层**的完整开源实现——你可以 fork、修改、部署在自己的数据中心。Supermemory 是**服务层**——你通过 API 调用，无法看到或修改后端实现。
-- Supermemory 有完整的消费者产品线（App、浏览器插件、Nova Agent），Emerald 目前专注 B2B 开发者市场。
-
----
-
-## 2. 架构设计对比
-
-### 2.1 高层架构
-
-两者在架构理念上几乎一致：
-
-```
-客户端 → API 网关 → 核心服务（记忆引擎/画像/搜索/连接器）
-                              ↓
-                    处理管线（提取→分块→嵌入→索引）
-                              ↓
-                    数据层（图谱 + 向量 + 文件存储 + 缓存）
-```
-
-### 2.2 技术栈细节
-
-| 组件 | Emerald | Supermemory |
-|---|---|---|
-| **Web 框架** | FastAPI (Python) | 未公开（推测为 Node.js/TypeScript 或混合栈） |
-| **图数据库** | **Neo4j**（图原生，Cypher 查询） | 未公开（内部图存储 + 向量索引 HNSW） |
-| **向量存储** | **PostgreSQL + pgvector**（HNSW 索引） | 内部实现（HNSW，O(log n) 搜索） |
-| **文件存储** | **MinIO**（S3 兼容，私有化） | 未公开（云对象存储） |
-| **缓存/队列** | **Redis + Celery** | 未公开 |
-| **任务队列** | Celery + Celery Beat（定时遗忘任务） | 未公开 |
-| **嵌入模型** | 可插拔（默认 OpenAI，回退 MockEmbeddingProvider） | 未公开（state-of-the-art 嵌入模型） |
-| **部署** | Docker Compose（开发）+ K8s（生产模板已就绪） | 完全托管，无需部署 |
-
-### 2.3 部署复杂度
-
-| 场景 | Emerald | Supermemory |
-|---|---|---|
-| 开发环境 | `docker compose up -d` + `alembic upgrade head` | `npm install supermemory` / `pip install supermemory` |
-| 生产环境 | 需运维 Neo4j + PostgreSQL + Redis + MinIO + Emerald 服务 | 零运维，API Key 即用 |
-| 数据主权 | ✅ 数据完全私有 | ⚠️ 数据在 Supermemory 云端（企业版可能有私有化选项） |
-| 定制能力 | ✅ 可修改任何组件 | ❌ 仅能通过 SDK 配置参数 |
-
-**Emerald 的架构优势：** 技术选型完全透明，Neo4j 的图查询能力在复杂关系遍历（多跳推理、时序链追踪）上非常强大。pgvector 与 PostgreSQL 统一运维，降低复杂度。
-
-**Supermemory 的架构优势：** 无需关心基础设施，全球分布式部署，自动扩缩容，SLA 保障。
-
----
-
-## 3. 数据模型与记忆本体论
-
-这是两者最核心的相似点——它们在记忆哲学的定义上几乎完全一致。
-
-### 3.1 核心概念对照表
-
-| 概念 | Emerald 术语 | Supermemory 术语 | 说明 |
+| 维度 | Emerald | Supermemory | Emerald 差距 |
 |---|---|---|---|
-| 记忆归属单元 | **entity_id** | **containerTag** | 用户/项目/组织的隔离标识 |
-| 静态事实 | static facts (`is_static` 隐含) | static memories (`isStatic: true`) | 永久属性：姓名、职业、偏好 |
-| 动态事实 | dynamic facts | dynamic memories (`isStatic: false`) | 近期上下文、情节记忆 |
-| 关系：时序更新 | **UPDATES** | **Updates** | 新事实取代旧事实 |
-| 关系：上下文丰富 | **EXTENDS** | **Extends** | 补充信息，两者都有效 |
-| 关系：模式推导 | **DERIVES_FROM** | **Derives** | 从模式中推理出新事实 |
-| 版本追踪 | `is_latest` 标志位 | `isLatest` 标志位 | 查询时默认只返回最新版本 |
-| 自动遗忘 | ✅ 时间过期 + 矛盾解决 + 噪音过滤 + 情节衰减 | ✅ 临时事实过期 + 矛盾自动解决 + 噪音过滤 | 完全一致的理念 |
+| **版本** | v0.3.0 Beta | v4 生产级 | 距离 1.0 至少 2-3 个里程碑 |
+| **事实提取** | 无——仅做内容类型转换（PDF→text，图片→OCR） | LLM 驱动的事实提取——从对话中提取多条结构化事实 | 🔴 **致命差距** |
+| **关系推断** | 基于规则（关键词匹配 + bigram 重叠） | LLM 驱动语义理解 + 规则 | 🔴 质量差异极大 |
+| **图谱搜索** | 无图谱遍历——仅过滤 is_latest + valid_until | Relationship Expansion——搜索结果沿关系链扩展 | 🔴 关键功能缺失 |
+| **TypeScript SDK** | 无 | ✅ 完整 SDK | 🟡 限 Python |
+| **框架集成** | Pandaria（Rust）仅一个 | LangChain / Mastra / OpenAI SDK / Vercel AI / Agno / CrewAI / n8n ... | 🔴 生态空白 |
+| **消费者产品** | 无 | Web App / 浏览器插件 / Raycast 扩展 / Nova Agent | 🟢 定位不同（B2B vs B2C） |
+| **API 成熟度** | v1 = 实际；v2 = v1 的别名（无差异） | v3→v4 持续演进，v4 有实质性改进 | 🔴 v2 是虚假版本号 |
+| **内容管理** | 仅 `get_memory()` | documents.list / delete / get / update | 🟡 操作性不足 |
+| **图谱可视化** | 无 | `POST /v3/graph/viewport` | 🟡 |
+| **metadata 过滤** | 仅 `memory_type` + `min_confidence` | $and / $or / 数值比较 / 数组包含 / 字符串包含 | 🟡 |
+| **提取引导** | 无 | `entityContext` 参数引导提取方向 | 🟡 |
+| **基准成绩** | 无（仅有评估脚本框架） | LongMemEval #1 / LoCoMo #1 / ConvoMem #1 | 🔴 未验证 |
+| **首选项强化** | 无 | 重复提及则加强权重 | 🟡 |
+| **幂等写入** | Redis 缓存 idempotency_key（1h TTL） | `customId` 原生支持 | 🟡 |
+| **Docker 生产镜像** | 从 development 复制 site-packages | 生产级构建 | 🟡 |
+| **同步阻塞** | MinIO 同步调用阻塞 async 事件循环 | 异步全链路 | 🟡 |
 
-### 3.2 记忆 ≠ RAG
+---
 
-两者都强调这一根本区分：
+## 1. 事实提取 —— Emerald 最核心的功能缺失
 
-| | Emerald | Supermemory |
-|---|---|---|
-| **RAG 定义** | 无状态文档检索，所有人结果相同 | 无状态文档块检索，静态结果 |
-| **记忆定义** | 有状态事实追踪，理解时序演进和矛盾 | 有状态事实追踪，自动处理更新和矛盾 |
-| **典型示例** | Adidas→Puma 偏好转变 | React 17→React 18 版本更新 |
-| **默认行为** | **混合搜索**（RAG + 记忆同时返回） | **混合搜索**（hybrid mode） |
+这是 Emerald 与 Supermemory 最大的差距。Supermemory 的核心价值是**自动从自然语言中提取结构化事实**，而非简单的文件格式转换。
 
-### 3.3 知识图谱结构
-
-两者都采用「**事实建立在其他事实之上**」的图谱模型，而非传统的实体-关系-实体三元组。
+### Supermemory 的能力
 
 ```
-# Emerald
-「用户在 Google 工作」 --UPDATES--> 「用户在 Stripe 工作」
-「用户在 Stripe 工作」 --EXTENDS--> 「用户领导 5 人支付团队」
+输入：刚和 Alex 打了个很棒的沟通电话。他挺喜欢 Stripe 的 PM 新角色，
+      不过支付基础设施的工作强度很大。他为此搬去了西雅图，
+      在 Capitol Hill 租了房子。还说下次我来这边要一起吃个饭。
 
-# Supermemory
-「User prefers React 17」 --Updates--> 「User now uses React 18」
-「User likes TypeScript」 --Extends--> 「User completed TS tutorial」
+输出（多条自动提取的记忆）：
+├── Alex 在 Stripe 担任 PM              (fact, confidence: 0.9)
+├── Alex 负责支付基础设施                (extends 上一记忆)
+├── Alex 住在西雅图 Capitol Hill         (fact, confidence: 0.8)
+└── Alex 想约一顿饭                     (episodic, confidence: 0.7)
 ```
 
-**细微差异：**
-- Emerald 的关系命名使用全大写（`UPDATES`/`EXTENDS`/`DERIVES_FROM`），Supermemory 使用首字母大写（`Updates`/`Extends`/`Derives`）。
-- Emerald 的推导关系命名为 `DERIVES_FROM`，Supermemory 为 `Derives`。
+### Emerald 的实际行为
+
+```
+输入：同上文本
+输出：整段文本作为一个 chunk 存入 Neo4j，类型标记为 "fact"，content 为原文
+      → 没有事实提取，没有多条记忆，没有记忆类型区分
+```
+
+**根因分析：**
+
+Emerald 的提取层全部是内容类型转换器，**没有任何 LLM 调用**：
+
+| Emerald 提取器 | 实际行为 |
+|---|---|
+| `TextExtractor` | `content.strip()` ——去除空白后原样返回 |
+| `URLExtractor` | HTML → trafilatura 清洗 → 纯文本 |
+| `PDFExtractor` | PyMuPDF → 纯文本 |
+| `ImageExtractor` | Tesseract → OCR 文本 |
+| `AudioExtractor` | FasterWhisper → 转录文本 |
+| `VideoExtractor` | ffmpeg 抽取音频 → Whisper 转录 |
+| `CodeExtractor` | tree-sitter 解析后原样返回 |
+
+全部提取器都是："把 A 格式变成纯文本"，没有一个是"从文本中理解含义并提取事实"。`content_type` 参数（text/conversation/markdown）在提取阶段无实际差异——全部走 `TextExtractor` 的 `strip()`。
+
+**影响：**
+- 没有多事实提取 → 图谱中只有原始语料块，没有细粒度的记忆节点
+- 没有自动类型检测 → 所有记忆都是 "fact" 类型
+- 没有 NER/实体识别 → 无法知晓"Alex" 是个人、"Stripe" 是公司
+- 关系推断退化为文本相似度匹配 → 失去了图谱推理的全部优势
 
 ---
 
-## 4. API 设计对比
+## 2. 搜索 —— 缺乏图谱遍历
 
-### 4.1 核心方法对照
+Supermemory 的搜索流程包含关键步骤 **Relationship Expansion**：
 
-| 操作 | Emerald API | Supermemory API |
-|---|---|---|
-| 保存内容 | `client.add(content, entity_id=...)` | `client.add({ content, containerTag })` |
-| 搜索 | `client.search(q, entity_id=..., search_mode=...)` | `client.search.memories({ q, containerTag, searchMode })` |
-| 用户画像 | `client.profile(entity_id)` | `client.profile({ containerTag, q? })` |
-| 上传文件 | `client.upload(file, entity_id=...)` | `client.documents.uploadFile({ file, containerTag })` |
-| 列出文档 | — | `client.documents.list({ containerTag })` |
-| 删除文档 | — | `client.documents.delete({ docId })` |
-| 健康检查 | `client.health()` | — |
-| 管线状态 | `client.pipeline_status(pipeline_id)` | 通过 `documents.list(status=...)` 间接查询 |
+```
+用户查询 → 向量搜索找到命中记忆 → 沿 EXTENDS/DERIVES 关系扩展
+         → 获取关联记忆 → 合并排序 → 返回丰富上下文
+```
 
-### 4.2 命名风格
+Emerald 的搜索流程：
 
-| | Emerald | Supermemory |
-|---|---|---|
-| **参数风格** | Pythonic: `entity_id`, `content_type`, `search_mode` | TypeScript 风格: `containerTag`, `entityContext`, `searchMode` |
-| **标识符** | `em_xxx` (API Key), `mem_xxx` (记忆 ID) | `sm_xxx` (API Key), `doc_xxx`/`mem_xxx` (文档/记忆 ID) |
-| **搜索模式** | `hybrid` / `memory` / `rag` | `hybrid` / `semantic` / `memories` |
+```
+用户查询 → 向量搜索找到候选 → 检查 is_latest=True → 检查 valid_until 未过期
+         → 按置信度加权排序 → 返回结果
+```
 
-### 4.3 API 设计哲学
+**Emerald 完全没有利用它自己建立的图谱关系。** 虽然 `MemoryEngine.add()` 在摄入时会调用 `RelationshipEngine.infer()` 创建 UPDATES/EXTENDS/DERIVES 关系，但这些关系仅用于：
+1. 画像增量刷新（profile.py 驱逐被取代的事实）
+2. 遗忘（被 UPDATES 指向的旧事实不返回）
 
-**共同点（极其一致）：**
-- 都追求**最小接口面**：4 个核心方法覆盖 80% 用例
-- 都使用**实体隔离**：每个操作限定在 `entity_id`/`containerTag` 范围内
-- 都遵循**声明式**设计：开发者描述要什么，不配置怎么实现
-- 都提供**开箱即用默认值**：自动内容类型检测、默认混合搜索
-
-**差异点：**
-- Supermemory 的 API 更丰富：`documents.list/delete`、`settings.update`，以及更复杂的 metadata filtering（支持 `$and`/`$or` 逻辑、数值比较 `$gte` 等）。
-- Emerald 的 API 更精简：`add`/`search`/`profile`/`upload` + `health`/`pipeline_status`，符合 AGENTS.md 中「最小接口面」原则。
-- Supermemory 支持 `customId` 幂等性写入，Emerald 目前未提及此功能。
-- Supermemory 的 `profile()` 方法可以**同时返回画像和搜索结果**（如果传入 `q` 参数），Emerald 的 `profile()` 和 `search()` 是分开的两个调用。
-
-### 4.4 REST API 端点
-
-| 功能 | Emerald | Supermemory |
-|---|---|---|
-| 添加记忆 | `POST /v1/memories` | `POST /v3/documents` / `POST /v4/memories` |
-| 搜索 | `POST /v1/search` | `POST /v4/search` |
-| 获取画像 | `GET /v1/profiles/{id}` | `POST /v4/memories`（间接）+ `profile()` SDK 方法 |
-| 上传文件 | `POST /v1/upload` | `POST /v3/documents`（内容可以是文件路径） |
-| 管线状态 | `GET /v1/pipelines/{id}` | 通过文档列表查询 |
-| 指标 | `GET /v1/metrics`（Prometheus） | 未公开 |
-
-Supermemory 的 API 版本演进更成熟（v3→v4），Emerald 目前统一使用 v1。
+而搜索时从不沿关系链扩展结果。关系引擎建立的所有图谱连接在搜索路径上完全浪费。
 
 ---
 
-## 5. 功能特性矩阵
+## 3. 关系推断 —— 退化为文本匹配
 
-### 5.1 核心功能
+Emerald 的关系推断是**局部的、成对的文本相似度检查**，而非语义理解。
 
-| 功能 | Emerald | Supermemory |
+| 检查方式 | 实现 | 实际限制 |
 |---|---|---|
-| **自动事实提取** | ✅ 从对话/文本中自动提取结构化事实 | ✅ 自动提取记忆，支持 `entityContext` 引导 |
-| **时序追踪** | ✅ `created_at` + `is_latest` + Update 关系 | ✅ 完整版本历史，支持查看最新/全部/特定版本 |
-| **矛盾解决** | ✅ 自动检测矛盾，旧事实标记 `is_latest=false` | ✅ 自动处理，旧记忆保留历史但搜索中隐藏 |
-| **自动遗忘** | ✅ 时间过期 + 噪音过滤 + 情节衰减（Celery Beat） | ✅ 临时事实过期 + 矛盾解决 + 噪音过滤 |
-| **用户画像** | ✅ 静态 + 动态双层，<50ms，Redis 缓存 | ✅ 静态 + 动态双层，~50ms，缓存 |
-| **混合搜索** | ✅ `hybrid`/`memory`/`rag` 三种模式 | ✅ `hybrid`/`semantic` 模式，支持 metadata filtering |
-| **重排序** | ✅ 交叉编码器 | 未明确提及 |
-| **查询改写** | ✅ 短查询扩展 | 未明确提及 |
-| **关系推断** | ✅ 自动分类 UPDATES/EXTENDS/DERIVES_FROM | ✅ 自动建立 Updates/Extends/Derives 关系 |
+| 结构模板匹配 | 将"Google"→"*"、"北京"→"*"，同一模板不同填充词 → UPDATES | 仅匹配预定义的公司名、城市名、编程语言列表 |
+| 矛盾检测 | 搜索否定词列表 `{"不","没","别","换了","改用","搬到","跳槽","离职"}` | 仅中文否定词；无法检测英文矛盾或语义矛盾（如 "quit Stripe" 与 "works at Stripe"） |
+| 互补检测 | bigram 字符重叠计算 | 在中文上 bigram 粒度太细（"住在西雅图" → "在西","在西","西雅","雅图"），英文上又太粗糙 |
+| DERIVES_FROM | bigram 交叉覆盖：新记忆的 bigram 与 ≥2 条已有记忆重叠 | 几乎不会触发有意义的推导关系 |
 
-### 5.2 内容处理
-
-| 内容类型 | Emerald | Supermemory |
-|---|---|---|
-| **纯文本** | ✅ 自动检测 | ✅ |
-| **对话** | ✅ 多轮对话，说话人标注 | ✅ |
-| **URL** | ✅ 抓取 + 清洗 | ✅ |
-| **PDF** | ✅ 文本 + 表格 + OCR | ✅ |
-| **图片** | ✅ OCR + 视觉描述 | ✅ OCR + 图像理解 |
-| **音频** | ✅ Faster-Whisper 转录 | ✅ 语音转文字 |
-| **视频** | ✅ 音轨转录 + 关键帧 OCR | ✅ 转录 + 场景检测 |
-| **代码** | ✅ **AST 感知分块**（Python/TS/JS/Go/Rust） | ✅ 语义分块 |
-| **Markdown** | ✅ 按标题层级分块 | ✅ 语义分块 |
-| **结构化数据** | ✅ JSON、CSV 自动检测 | 未明确提及 |
-
-**细微差异：**
-- Emerald 对代码的分块策略更具体：AST 感知（函数、类保持完整）。Supermemory 文档中只提到「semantic chunking」，未细化到 AST 级别。
-- Emerald 明确支持结构化数据（JSON/CSV），Supermemory 文档未重点提及。
-- Supermemory 支持 `entityContext` 参数来引导提取（"这是关于前端框架偏好的对话"），Emerald 目前未提供类似功能。
-
-### 5.3 连接器（外部数据源同步）
-
-| 连接器 | Emerald | Supermemory |
-|---|---|---|
-| **GitHub** | ✅ OAuth + 增量同步 | ✅ |
-| **Google Drive** | ✅ OAuth + Webhook | ✅ |
-| **Gmail** | ✅ OAuth + 增量同步 | ✅ |
-| **Notion** | ✅ OAuth + 增量同步 | ✅ |
-| **OneDrive** | — | ✅ |
-| **Web Crawler** | — | ✅ |
-
-Supermemory 的连接器生态更丰富（多一个 OneDrive 和 Web Crawler）。
-
-### 5.4 搜索与过滤
-
-| 功能 | Emerald | Supermemory |
-|---|---|---|
-| **语义搜索** | ✅ 向量相似度 | ✅ HNSW，O(log n) |
-| **混合搜索（RAG+记忆）** | ✅ 默认模式 | ✅ hybrid 模式 |
-| **metadata 过滤** | 基础支持 | ✅ 高级：$and/$or、数值比较、数组包含、字符串包含 |
-| **阈值调节** | `top_k` + `rerank` | `chunkThreshold` (0-1) + `threshold` |
-| **关系扩展** | 搜索时沿关系图谱扩展 | ✅ Relationship Expansion（搜索结果沿关系链扩展） |
-| **按文档搜索** | — | ✅ `docId` 限定搜索范围 |
-
-Supermemory 在搜索过滤能力上明显更强，特别是 metadata filtering 的表达能力。
+**实际效果：** 在大多数真实场景中，关系推断会退化为 `RelationType.NONE`。LLM 路径（Phase 2）需要手动配置 OpenAI API key 才会生效，且仅用于 UPDATES/EXTENDS 二分类（不用于提取，不用于多事实分解）。
 
 ---
 
-## 6. 生态与框架集成
+## 4. 首选项强化 —— 完全缺失
 
-### 6.1 SDK 与语言支持
+Supermemory 文档明确提到：
 
-| | Emerald | Supermemory |
-|---|---|---|
-| **Python SDK** | ✅ `emerald.sdk.EmeraldClient` | ✅ `supermemory` (PyPI) |
-| **TypeScript SDK** | — | ✅ `supermemory` (npm) |
-| **异步支持** | ✅ `async/await` | ✅ `AsyncSupermemory` |
-| **同步支持** | — | ✅ 同步客户端 |
+> 偏好（Preferences）："Alex prefers morning meetings" — **Strengthens with repetition**
 
-Supermemory 的 SDK 覆盖更广（TypeScript + Python），Emerald 目前只有 Python SDK。
-
-### 6.2 框架集成
-
-| 框架 | Emerald | Supermemory |
-|---|---|---|
-| **Vercel AI SDK** | — | ✅ `@supermemory/ai-sdk` + Infinite Chat Provider |
-| **LangChain** | — | ✅ 官方集成 |
-| **LangGraph** | — | ✅ 官方集成 |
-| **OpenAI Agents SDK** | — | ✅ 官方集成 |
-| **Mastra** | — | ✅ 官方集成 |
-| **Agno** | — | ✅ 官方集成 |
-| **n8n** | — | ✅ 官方集成 |
-| **CrewAI** | — | ✅ 示例代码 |
-| **Pandaria (Rust)** | ✅ `EmeraldMemoryStore` HTTP 适配器 | — |
-
-Supermemory 的框架集成生态全面领先，几乎覆盖所有主流 AI 框架。Emerald 目前仅有 Pandaria（Rust Agent Runtime）的官方适配器。
-
-### 6.3 MCP (Model Context Protocol)
-
-| | Emerald | Supermemory |
-|---|---|---|
-| **MCP Server** | ✅ 内置 `emerald.mcp.server`（stdio + SSE） | ✅ `https://mcp.supermemory.ai/mcp` |
-| **暴露工具** | `emerald_add`, `emerald_search`, `emerald_profile` | `memory`, `recall`, `context` |
-| **安装方式** | `python -m emerald.mcp.server` | `npx install-mcp` |
-| **OAuth 支持** | — | ✅ 一键 OAuth 安装 |
-| **支持客户端** | Claude Desktop, Cursor 等 | Claude Desktop, Cursor, Windsurf, VS Code, Claude Code, OpenCode, OpenClaw, Hermes |
-
-Supermemory 的 MCP 集成更成熟，支持 OAuth 一键安装和更多客户端。Emerald 的 MCP Server 是自托管的，需要手动配置环境变量。
-
-### 6.4 消费者产品
-
-| | Emerald | Supermemory |
-|---|---|---|
-| **Web App** | — | ✅ `app.supermemory.ai` |
-| **浏览器插件** | — | ✅ 保存网页到记忆 |
-| **桌面端** | — | — |
-| **移动端** | — | — |
-| **内嵌 Agent** | — | ✅ Nova Agent |
-| **编辑器插件** | — | ✅ Raycast 扩展 |
-
-Supermemory 有完整的消费者产品矩阵，Emerald 目前纯面向开发者。
+Emerald 中，`preference` 类型虽在 profile.py 和 models 中定义，但：
+- 摄入时无法真正区分 fact vs preference——全部标记为 "fact"
+- 没有任何基于重复次数的置信度增强逻辑
+- `confidence` 字段硬编码为 0.8（index 阶段写死）
+- 在 profile 计算中与 fact 一视同仁
 
 ---
 
-## 7. 性能与基准
+## 5. API 成熟度 —— v2 是虚假版本号
 
-### 7.1 延迟指标
+| 检查项 | Emerald 实际状态 |
+|---|---|
+| v2 路由 | `emerald/api/routes/v2/` 中每个文件仅一行 `from emerald.api.routes.v1.xxx import router as v2_router` |
+| v1 和 v2 差异 | 无任何差异，完全相同的路由和逻辑 |
+| 错误码标准化 | 无——401/403/404/429 之外无业务错误码体系 |
+| 分页支持 | 无——search 只有 `top_k`，无法翻页 |
+| 批量操作 | 无——`add()` 一次一条内容 |
 
-| 指标 | Emerald | Supermemory |
-|---|---|---|
-| **用户画像获取** | < 50ms（冷启动），Redis 缓存 | ~50ms |
-| **搜索延迟** | 未公开基准 | < 50ms (p95) |
-| **文档处理** | 未公开 | 文本 10s / URL 30s / PDF 1-2min / 视频 5-10min |
-| **处理吞吐量** | 未公开 | 10,000 文档/小时 |
-
-### 7.2 基准测试成绩
-
-| 基准 | Emerald | Supermemory |
-|---|---|---|
-| **LongMemEval** | 未测试（有评估脚本） | **81.6% — #1** |
-| **LoCoMo** | 未测试（有评估脚本） | **#1** |
-| **ConvoMem** | 未测试（有评估脚本） | **#1** |
-
-Supermemory 是三项主要记忆基准的绝对领先者。Emerald 目前处于 v0.3.0，已有基准评估脚本但尚未公布测试成绩。
-
-### 7.3 可观测性
-
-| | Emerald | Supermemory |
-|---|---|---|
-| **日志** | ✅ 结构化 JSON 日志，每个管线阶段记录 entity_id/内容类型/耗时/分块数/关系数/错误状态 | 未公开 |
-| **指标** | ✅ Prometheus (`/v1/metrics`)：摄入吞吐量、提取延迟、画像延迟、搜索延迟、关系密度 | 未公开 |
-| **APM** | — | `status.supermemory.ai` |
-
-Emerald 在可观测性设计上非常完善（符合 AGENTS.md 要求），Supermemory 作为 SaaS 内部指标未对外公开。
+这意味着 README 中 "V1 + V2 双版本" 是一个**虚设的版本号**，并非真实的 API 演进。
 
 ---
 
-## 8. 成熟度与可用性
+## 6. 测试基准 —— 完全未验证
 
-| 维度 | Emerald | Supermemory |
-|---|---|---|
-| **版本** | v0.3.0 | 生产级（未公开版本号） |
-| **测试覆盖** | 548 tests passing | 未公开 |
-| **API 版本** | v1 + v2（共存） | v3→v4（持续演进） |
-| **文档完整度** | ✅ README + AGENTS.md + 架构文档 + 集成指南 | ✅ 完整文档站 + API 参考 + SDK 指南 + 用例 |
-| **社区** | 早期开源项目 | Discord + Twitter + 活跃社区 |
-| **SLA** | 自托管，无 SLA | SaaS，有服务保障 |
-| **安全认证** | API Key SHA-256 存储，AES-256-GCM OAuth 加密 | SOC 2, GDPR, AES-256 at rest, TLS 1.3 |
+README 列出"基准测试 ✅ 完整：LongMemEval / LoCoMo / ConvoMem 风格评估脚本"。实际情况：
 
----
+```bash
+$ ls tests/benchmarks/
+test_memory_benchmarks.py
+```
 
-## 9. 差异化总结与场景建议
+`test_memory_benchmarks.py` 是一个**空的评估框架**（定义了测试类骨架和 mock 数据生成器），没有对任何标准数据集运行的实际评测，没有任何分数报告，没有结果分析。它定义了一组测试函数但全部使用 mock 数据，且不计算基准分数。
 
-### 9.1 核心差异速览
-
-| 差异点 | Emerald | Supermemory |
-|---|---|---|
-| **数据控制权** | ✅ 完全私有 | ⚠️ 云端托管 |
-| **定制能力** | ✅ 可修改任何代码 | ❌ 仅 API 参数 |
-| **基础设施成本** | 需自运维 | 按量付费 |
-| **框架集成广度** | 初阶（Python + Pandaria） | 全面（所有主流框架） |
-| **消费者产品** | ❌ | ✅ 完整矩阵 |
-| **基准成绩** | 待验证 | ✅ 三项 #1 |
-| **metadata 过滤** | 基础 | ✅ 高级表达式 |
-| **API 成熟度** | v1，4 个核心方法 | v4，更丰富的方法集 |
-
-### 9.2 选择建议
-
-**选择 Emerald，如果你：**
-- 🔒 **数据隐私是硬要求**——金融、医疗、政府等敏感行业，数据不能出内网
-- 🔧 **需要深度定制**——需要修改提取逻辑、分块策略、关系推断算法，或集成内部系统
-- 💰 **长期基础设施成本敏感**——自有硬件上运行，避免 SaaS 按量付费的累积成本
-- 🐍 **Python 技术栈**——团队主要使用 Python，希望深度理解和调试记忆管线
-- 🧪 **在研究/实验阶段**——希望 fork 代码、修改图谱结构、探索新的记忆算法
-
-**选择 Supermemory，如果你：**
-- 🚀 **追求最快上线速度**——`npm install supermemory`，5 分钟集成，零运维
-- 🌐 **需要全球低延迟**——Supermemory 的分布式部署提供 <50ms p95 搜索延迟
-- 🔗 **使用多种 AI 框架**——LangChain、Mastra、Vercel AI SDK 等，需要官方 drop-in 集成
-- 👥 **有消费者用户**——需要浏览器插件、App 等消费级产品
-- 📊 **需要经过验证的基准性能**——三项记忆基准 #1，性能已验证
-- 🛠️ **不想维护基础设施**——无 Neo4j、PostgreSQL、Redis 运维经验或人力
-
-### 9.3 战略关系
-
-Emerald 和 Supermemory 不是零和竞争关系，而是**同源不同路**：
-
-- **Supermemory 是「标杆 SaaS」**——定义了记忆系统的最佳实践和行业标准，用托管服务降低使用门槛。
-- **Emerald 是「开源基础设施」**——为需要数据主权和深度定制的企业提供 Supermemory 理念的开源实现。
-
-二者共享同一套记忆本体论（记忆≠RAG、三种关系类型、静态/动态画像、自动遗忘），开发者从 Supermemory 入门理解概念，在需要私有化时迁移到 Emerald——这是理想的路径。
+对比 Supermemory：在标准数据集上运行并获得公开的定量分数（LongMemEval 85.2%/99%，LoCoMo #1，ConvoMem #1），结果是可复现、可验证的。
 
 ---
 
-## 附录：API 代码对照
+## 7. 代码质量问题
 
-### 添加记忆
+### 7.1 同步阻塞 async 事件循环
 
 ```python
-# Emerald
-from emerald.sdk import EmeraldClient
-client = EmeraldClient()
-await client.add(
-    "用户喜欢 TypeScript",
-    entity_id="user_123",
-    content_type="text"
-)
-
-# Supermemory
-from supermemory import Supermemory
-client = Supermemory()
-client.add(
-    content="用户喜欢 TypeScript",
-    container_tag="user_123"
-)
+# emerald/api/routes/v1/upload.py
+client.put_object(...)  # 同步 MinIO SDK 调用，阻塞整个 async 事件循环
 ```
 
-### 搜索
+必须在生产修复：使用 `asyncio.to_thread()` 包裹或 MinIO 的 async API。
+
+### 7.2 Docker 生产镜像未优化
+
+```dockerfile
+# Dockerfile — production stage
+COPY --from=development /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=development /usr/local/bin /usr/local/bin
+```
+
+生产镜像从 development 阶段拷贝整个 site-packages，而非在 production stage 独立执行 `pip install --no-cache-dir`，导致：
+- 镜像体积膨胀（包含 dev dependencies）
+- 无法控制生产依赖版本
+- 违反 Docker 最佳实践
+
+### 7.3 Neo4j 驱动无生产配置
 
 ```python
-# Emerald
-results = await client.search(
-    "TypeScript",
-    entity_id="user_123",
-    search_mode="hybrid",
-    top_k=10
-)
-
-# Supermemory
-results = client.search.memories(
-    q="TypeScript",
-    container_tag="user_123",
-    search_mode="hybrid",
-    limit=10
-)
+# emerald/db/neo4j.py
+_driver = AsyncGraphDatabase.driver(uri, auth=auth)  # 无连接池、超时、重试配置
 ```
 
-### 获取画像
+生产环境缺少 `max_connection_pool_size`、`connection_acquisition_timeout`、`max_transaction_retry_time`。
 
-```python
-# Emerald
-profile = await client.profile("user_123")
-print(profile.static)   # 静态事实列表
-print(profile.dynamic)  # 动态事实列表
+### 7.4 双写一致性问题
 
-# Supermemory
-result = client.profile(container_tag="user_123")
-print(result["profile"]["static"])   # 静态记忆列表
-print(result["profile"]["dynamic"])  # 动态记忆列表
-```
+`MemoryEngine._index()` 先写 Neo4j 再写 pgvector。后者失败时用补偿逻辑标记 `is_latest=False`，但如果补偿也失败（Neo4j 连接断开），图谱中有孤立节点。
 
 ---
 
-*文档生成时间：2026-06-01*
-*基于 Emerald v0.3.0 与 Supermemory 公开文档对比*
+## 8. Emerald 的真实优势
+
+上述差距并不意味着 Emerald 毫无价值。在以下方面 Emerald 有其独特优势：
+
+| 优势 | 说明 |
+|---|---|
+| **架构完整性** | 四层架构（客户端/网关/核心/数据）设计合理，管道编排（提取→分块→嵌入→索引→关系→画像）逻辑清晰，新增提取器/分块器只需注册 |
+| **图片/视频/音频支持** | 支持 9 种内容类型，均通过独立提取器处理（FasterWhisper、PyMuPDF、tree-sitter、Tesseract），代码结构清晰 |
+| **可观测性** | structlog 结构化日志 + Prometheus 指标 + OpenTelemetry 追踪 + 请求级 trace ID，比 99% 的早期项目更完善 |
+| **K8s 模板** | Deployment / HPA / Ingress / CronJob 备份 / Secret / ConfigMap / Namespace —— 生产部署模板完整 |
+| **连接器** | GitHub / Google Drive / Gmail / Notion 四个连接器，OAuth + Webhook + 增量同步实现完整 |
+| **MCP Server** | stdio + SSE 双模式，3 个工具暴露完整 |
+| **数据主权** | 完全自托管——金融、医疗等数据敏感行业可以私有化部署 |
+| **嵌入缓存** | SHA256 哈希缓存 + Redis 7 天 TTL，显著降低 API 调用成本 |
+
+---
+
+## 9. 填补差距的优先级路径
+
+按影响力排序，建议以下路线图：
+
+| 优先级 | 差距 | 工作量 | 影响 |
+|---|---|---|---|
+| **P0** | LLM 驱动的事实提取 | 高（2-3 周） | 这是记忆系统与文档存储的本质区别。不做这点，Emerald 只是一个带图谱的向量数据库 |
+| **P0** | 图谱搜索的关系扩展 | 中（1 周） | 让已建立的关系在搜索中产生价值，直接提升搜索结果质量 |
+| **P1** | 关系推断升级为语义理解 | 高（2 周） | 当前规则匹配的准确率不足以支撑可信的自动关系建立 |
+| **P1** | 首选项强化 + 记忆类型自动检测 | 中（1 周） | 让 fact/preference/episodic 分类真正发挥作用 |
+| **P1** | 修复 Docker 生产镜像 + async 阻塞 | 低（1-2 天） | 生产部署的基础要求 |
+| **P2** | API v2 真实改进（分页、批量、metadata 过滤增强） | 中（1 周） | 提升 API 成熟度 |
+| **P2** | 在标准数据集的基准测试 | 中（1 周） | 验证系统在实际基准上的性能 |
+| **P3** | TypeScript SDK | 中（1-2 周） | 拓宽开发者基础 |
+| **P3** | 框架集成（LangChain、Mastra 等） | 中（2-3 周） | 进入主流 AI 开发生态 |
+
+---
+
+## 10. 结论
+
+**Emerald 的架构设计是正确的**——四层分离、管道编排、图谱优先、画像双层、三种关系类型、四种遗忘策略。这些都是对的。
+
+**但 Emerald 的核心实现是浅层的。** 它在三个最关键的能力上存在差距：
+
+1. **不提取事实** — 它存储原始文本块，而非从文本中理解含义并分解为多条结构化事实
+2. **不遍历图谱** — 它建立关系但不利用关系进行搜索扩展
+3. **不语义理解** — 关系推断是字符级匹配而非含义级推理
+
+这三个能力正是 Supermemory 成为标杆的核心原因。没有它们，Emerald 的"记忆引擎"本质上是一个**带知识图谱元数据的向量数据库**——它存储、分块、嵌入、检索，但不理解。
+
+填补这些差距不涉及架构重构——现有的管道模式、引擎注入、提取器/分块器注册机制已经为 LLM 驱动的事实提取准备好了接口。需要的是在现有架构的**提取阶段**和**搜索阶段**加入真正的语义理解能力。
+
+---
+*本对比基于对 Emerald v0.3.0 源码的完整审查、Supermemory 的公开文档和 API 规范。*
