@@ -97,6 +97,12 @@ class SearchOrchestrator:
             # Memory search
             if search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
                 memory_results = await self._search_memory(rewritten_q, entity_id, top_k, filters)
+
+                # Expand via graph relationships (EXTENDS, DERIVES_FROM)
+                memory_results = await self._expand_relationships(
+                    memory_results, entity_id, top_k
+                )
+
                 results.extend(memory_results)
 
             # RAG search
@@ -255,13 +261,138 @@ class SearchOrchestrator:
         return results[:top_k]
 
     def _passes_filters(self, memory: dict, filters: dict) -> bool:
-        mtype = filters.get("memory_type")
-        min_conf = filters.get("min_confidence")
-        if mtype and memory.get("memory_type") != mtype:
-            return False
-        if min_conf is not None and memory.get("confidence", 0) < min_conf:
-            return False
+        """Check if a memory passes the given filters.
+
+        Supports:
+        - Flat filters: {"memory_type": "fact", "min_confidence": 0.5}
+        - $and: {"$and": [{"memory_type": "fact"}, {"confidence": {"$gte": 0.5}}]}
+        - $or:  {"$or": [{"memory_type": "preference"}, {"memory_type": "episodic"}]}
+        - Numeric operators: $gte, $gt, $lte, $lt, $eq, $ne
+        """
+        if not filters:
+            return True
+
+        # $and: all sub-filters must pass
+        if "$and" in filters:
+            return all(self._passes_filters(memory, f) for f in filters["$and"])
+
+        # $or: at least one sub-filter must pass
+        if "$or" in filters:
+            return any(self._passes_filters(memory, f) for f in filters["$or"])
+
+        # Flat filter: check each key-value pair
+        for key, value in filters.items():
+            if key in ("$and", "$or"):
+                continue
+
+            mem_val = memory.get(key)
+
+            # Numeric operators: {"confidence": {"$gte": 0.5}}
+            if isinstance(value, dict) and any(k.startswith("$") for k in value):
+                if not self._eval_numeric(mem_val, value):
+                    return False
+            # Shorthand: {"memory_type": "fact"}
+            elif mem_val != value:
+                return False
+
         return True
+
+    @staticmethod
+    def _eval_numeric(mem_value: float | int | None, ops: dict) -> bool:
+        """Evaluate numeric operators like $gte, $gt, $lte, $lt, $eq, $ne."""
+        if mem_value is None:
+            return False
+        for op, target in ops.items():
+            if op == "$gte" and not (mem_value >= target):
+                return False
+            if op == "$gt" and not (mem_value > target):
+                return False
+            if op == "$lte" and not (mem_value <= target):
+                return False
+            if op == "$lt" and not (mem_value < target):
+                return False
+            if op == "$eq" and not (mem_value == target):
+                return False
+            if op == "$ne" and not (mem_value != target):
+                return False
+        return True
+
+    # ---- Relationship expansion ----
+
+    async def _expand_relationships(
+        self,
+        results: list[SearchResult],
+        entity_id: str,
+        top_k: int,
+        expansion_factor: float = 0.85,
+    ) -> list[SearchResult]:
+        """Expand search results by traversing graph relationships.
+
+        For each result, navigates EXTENDS and DERIVES_FROM relationships
+        (both directions, depth=1) and adds related memories as expansion
+        candidates with slightly discounted scores (default 0.85×).
+
+        This turns a flat vector search into a graph-aware retrieval:
+        - EXTENDS: includes complementary facts that enrich context
+        - DERIVES_FROM: includes source facts showing the reasoning chain
+        - UPDATES: already handled by is_latest filtering (superseded excluded)
+        """
+        if not results:
+            return results
+
+        result_ids = [r.id for r in results]
+        related = await self.graph.get_related_memories(
+            result_ids, rel_types=["EXTENDS", "DERIVES_FROM"]
+        )
+
+        if not related:
+            return results
+
+        expanded: list[SearchResult] = list(results)
+        seen_ids = {r.id for r in results}
+        added = 0
+
+        for src_id, related_ids in related.items():
+            # Find the original score for this source result
+            src_score = 0.5
+            for r in results:
+                if r.id == src_id:
+                    src_score = r.score
+                    break
+
+            for rid in related_ids:
+                if rid in seen_ids:
+                    continue
+                memory = await self.graph.get_memory(rid)
+                if not memory:
+                    continue
+                if not memory.get("is_latest", True):
+                    continue
+
+                seen_ids.add(rid)
+                expanded.append(
+                    SearchResult(
+                        id=rid,
+                        content=memory["content"],
+                        summary=memory.get("summary", "")[:200],
+                        score=src_score * expansion_factor,
+                        source="memory_expanded",
+                        memory_type=memory.get("memory_type", "fact"),
+                    )
+                )
+                added += 1
+
+        if added:
+            logger.info(
+                "search.expanded_relationships",
+                entity_id=entity_id,
+                original=len(results),
+                added=added,
+            )
+
+        # Re-sort and trim to avoid result bloat (allow up to 2× expansion)
+        expanded.sort(key=lambda r: r.score, reverse=True)
+        return expanded[: max(top_k, top_k * 2)]
 
     # ---- RAG search (vector) ----
 
@@ -390,15 +521,17 @@ class SearchOrchestrator:
     async def _rewrite_query(self, q: str) -> str:
         """Rewrite query to improve recall.
 
-        If an OpenAI API key is configured, uses an LLM for semantic expansion.
-        Otherwise falls back to pattern-based expansions.
+        Uses DeepSeek or OpenAI for semantic expansion when available.
+        Falls back to pattern-based expansions.
         """
         q = q.strip()
         if not q:
             return q
 
         settings = get_settings()
-        if settings.openai_api_key:
+
+        # Try DeepSeek first, then OpenAI
+        if settings.deepseek_api_key or settings.openai_api_key:
             try:
                 return await self._llm_rewrite(q)
             except Exception:
@@ -416,18 +549,33 @@ class SearchOrchestrator:
         return q
 
     async def _llm_rewrite(self, q: str) -> str:
-        """Use OpenAI API to semantically expand the query."""
+        """Use DeepSeek or OpenAI API to semantically expand the query."""
         import httpx
+        from emerald.config import get_settings
+
+        settings = get_settings()
+
+        # Prefer DeepSeek, fall back to OpenAI
+        if settings.deepseek_api_key:
+            api_key = settings.deepseek_api_key
+            base_url = settings.fact_extraction_base_url.rstrip("/")
+            model = "deepseek-chat"
+        elif settings.openai_api_key:
+            api_key = settings.openai_api_key
+            base_url = "https://api.openai.com/v1"
+            model = "gpt-3.5-turbo"
+        else:
+            return q
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
+                f"{base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {get_settings().openai_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-3.5-turbo",
+                    "model": model,
                     "messages": [
                         {
                             "role": "system",

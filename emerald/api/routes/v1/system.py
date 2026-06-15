@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 
+from emerald.api.dependencies import api_key_auth
 from emerald.config import get_settings
 
 router = APIRouter(tags=["System"])
@@ -71,5 +72,61 @@ async def health_check() -> dict:
         "checks": checks,
         "meta": {
             "took_ms": int((time.perf_counter() - start) * 1000),
+        },
+    }
+
+
+@router.get("/graph/viewport", response_model=dict, dependencies=[Depends(api_key_auth)])
+async def graph_viewport(
+    entity_id: str,
+    limit: int = 100,
+    request: Request = None,
+) -> dict:
+    """Return graph data (nodes + edges) for visualization.
+
+    Suitable for D3.js / vis-network force-directed graph rendering.
+    Requires API key authentication.
+    """
+    engine = getattr(request.app.state, "engine", None) if request else None
+
+    graph = engine.graph if engine else None
+    if not graph:
+        return {"data": {"nodes": [], "edges": []}}
+
+    memories = await graph.list_latest_memories(entity_id, limit=limit)
+    nodes = []
+    edges = []
+    seen_ids = set()
+
+    for m in memories:
+        mid = m["id"]
+        if mid in seen_ids:
+            continue
+        seen_ids.add(mid)
+        nodes.append({
+            "id": mid,
+            "label": m.get("summary", "") or m["content"][:60],
+            "type": m.get("memory_type", "fact"),
+            "confidence": m.get("confidence", 0),
+            "is_latest": m.get("is_latest", True),
+        })
+
+        for rel in m.get("relationships", []):
+            target_id = rel.get("from_id") or rel.get("to_id", "")
+            edges.append({
+                "source": mid,
+                "target": target_id,
+                "type": rel.get("type", "EXTENDS"),
+                "aspect": rel.get("aspect", ""),
+            })
+
+    return {
+        "data": {
+            "nodes": nodes,
+            "edges": edges,
+        },
+        "meta": {
+            "entity_id": entity_id,
+            "node_count": len(nodes),
         },
     }

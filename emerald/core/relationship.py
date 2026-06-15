@@ -163,25 +163,36 @@ class RelationshipEngine:
     async def _llm_classify(self, new_content: str, old_content: str) -> RelationType:
         """LLM-based semantic relationship classification.
 
-        Uses OpenAI API when available.  Falls back to NONE on any error.
+        Uses OpenAI or DeepSeek API (auto-detect based on configured keys).
+        Falls back to NONE on any error.
         """
         try:
             from emerald.config import get_settings
             settings = get_settings()
-            if not settings.openai_api_key:
+
+            # Prefer DeepSeek, fall back to OpenAI
+            if settings.deepseek_api_key:
+                api_key = settings.deepseek_api_key
+                base_url = settings.fact_extraction_base_url.rstrip("/")
+                model = settings.fact_extraction_model or "deepseek-chat"
+            elif settings.openai_api_key:
+                api_key = settings.openai_api_key
+                base_url = "https://api.openai.com/v1"
+                model = "gpt-3.5-turbo"
+            else:
                 return RelationType.NONE
 
             import httpx
 
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
+                    f"{base_url}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {settings.openai_api_key}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": "gpt-3.5-turbo",
+                        "model": model,
                         "messages": [
                             {
                                 "role": "system",

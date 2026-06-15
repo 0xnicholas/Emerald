@@ -45,3 +45,16 @@ class MemoryResponse(BaseModel):
     relationships: list[RelationshipItem] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class BatchAddMemoryRequest(BaseModel):
+    memories: list[AddMemoryRequest] = Field(
+        max_length=50,
+        description="Up to 50 memories to add in a single batch.",
+    )
+
+
+class BatchAddMemoryResponse(BaseModel):
+    results: list[AddMemoryResponse]
+    succeeded: int = 0
+    failed: int = 0

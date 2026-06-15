@@ -183,12 +183,17 @@ class ProfileManager:
                     content = m.get("content", "")
                     mid = m.get("id", "")
 
+                    # Compute multi-factor importance score
+                    importance = ProfileManager._compute_importance(
+                        m, now=now, cutoff=cutoff
+                    )
+
                     # Static: fact or preference with high confidence
                     if memory_type in ("fact", "preference") and confidence >= self.STATIC_CONFIDENCE_MIN:
                         static_facts.append(
                             ProfileFact(
                                 content=content,
-                                importance=confidence,
+                                importance=importance,
                                 acquired_at=created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
                                 memory_id=mid,
                             )
@@ -202,7 +207,7 @@ class ProfileManager:
                                 dynamic_facts.append(
                                     ProfileFact(
                                         content=content,
-                                        relevance=confidence,
+                                        relevance=importance,
                                         source="最近对话",
                                         acquired_at=created_at.isoformat(),
                                         memory_id=mid,
@@ -210,11 +215,10 @@ class ProfileManager:
                                 )
                                 source_ids.append(mid)
                         else:
-                            # Timestamp parsing fallback
                             dynamic_facts.append(
                                 ProfileFact(
                                     content=content,
-                                    relevance=confidence,
+                                    relevance=importance,
                                     source="最近对话",
                                     memory_id=mid,
                                 )
@@ -252,6 +256,68 @@ class ProfileManager:
                     total_memories=len(all_memories),
                 )
                 return profile
+
+    # ------------------------------------------------------------------
+    # Importance scoring
+    # ------------------------------------------------------------------
+
+    # Weight factors for multi-factor importance scoring
+    WEIGHT_CONFIDENCE = 0.35
+    WEIGHT_RECENCY = 0.25
+    WEIGHT_TYPE = 0.20
+    WEIGHT_RELATIONSHIPS = 0.20
+
+    TYPE_WEIGHTS = {"preference": 1.0, "fact": 0.8, "episodic": 0.5, "noise": 0.2}
+
+    @classmethod
+    def _compute_importance(
+        cls,
+        memory: dict,
+        now: datetime | None = None,
+        cutoff: datetime | None = None,
+    ) -> float:
+        """Compute a multi-factor importance score for a memory.
+
+        Combines:
+        - Confidence (from chunker/LLM)              — 35%
+        - Recency (newer = higher, exponential decay) — 25%
+        - Memory type weight                          — 20%
+        - Relationship count (linked memories)        — 20%
+        """
+        if now is None:
+            now = datetime.now(UTC)
+
+        confidence = memory.get("confidence", 0.5)
+        mem_type = memory.get("memory_type", "fact")
+        created_at = memory.get("created_at", now)
+        rels = memory.get("relationships", [])
+
+        # Normalize created_at to Python datetime
+        if hasattr(created_at, "to_native"):
+            created_at = created_at.to_native()
+        elif isinstance(created_at, str):
+            from datetime import datetime as dt
+            created_at = dt.fromisoformat(created_at.replace("Z", "+00:00"))
+
+        # Recency: exponential decay, half-life = 30 days
+        days_ago = max(0, (now - created_at).total_seconds() / 86400)
+        recency = 2.0 ** (-days_ago / 30.0)
+
+        # Type weight
+        type_weight = cls.TYPE_WEIGHTS.get(mem_type, 0.5)
+
+        # Relationship count: normalize to [0, 1]
+        rel_count = len(rels) if isinstance(rels, list) else 0
+        rel_score = min(rel_count / 10.0, 1.0)
+
+        score = (
+            cls.WEIGHT_CONFIDENCE * confidence
+            + cls.WEIGHT_RECENCY * recency
+            + cls.WEIGHT_TYPE * type_weight
+            + cls.WEIGHT_RELATIONSHIPS * rel_score
+        )
+
+        return round(min(score, 1.0), 4)
 
     # ------------------------------------------------------------------
     # Incremental merge helpers

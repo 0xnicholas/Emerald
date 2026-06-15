@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
-from emerald.api.schemas import AddMemoryRequest
+from emerald.api.schemas import AddMemoryRequest, BatchAddMemoryRequest
 
 router = APIRouter(tags=["Memories"])
 
@@ -86,6 +86,55 @@ async def delete_memory(memory_id: str, request: Request) -> dict:
         "data": {"deleted": True, "memory_id": memory_id},
         "meta": {
             "request_id": getattr(request.state, "request_id", ""),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
+    }
+
+
+@router.post(
+    "/memories/batch",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(api_key_auth), Depends(require_write_permission), Depends(rate_limit)],
+)
+async def add_memories_batch(body: BatchAddMemoryRequest, request: Request) -> dict:
+    """Add multiple memories in a single request (up to 50)."""
+    start = time.perf_counter()
+    engine = _get_engine(request)
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
+
+    results = []
+    for mem in body.memories:
+        try:
+            result = await engine.add(
+                content=mem.content,
+                entity_id=mem.entity_id,
+                content_type=mem.content_type or "text",
+                metadata=mem.metadata,
+                idempotency_key=mem.idempotency_key,
+            )
+            results.append({
+                "memory_ids": result.memory_ids,
+                "pipeline_status": result.pipeline_status,
+                "extracted_count": result.extracted_count,
+            })
+        except Exception as exc:
+            results.append({
+                "memory_ids": [],
+                "pipeline_status": "error",
+                "extracted_count": 0,
+                "error": str(exc),
+            })
+
+    succeeded = sum(1 for r in results if r.get("pipeline_status") == "done")
+
+    return {
+        "data": {
+            "results": results,
+            "succeeded": succeeded,
+            "failed": len(results) - succeeded,
+        },
+        "meta": {
+            "request_id": request_id,
             "took_ms": int((time.perf_counter() - start) * 1000),
         },
     }

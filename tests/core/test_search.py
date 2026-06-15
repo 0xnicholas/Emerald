@@ -172,13 +172,14 @@ async def test_rewrite_query_false_returns_original(populated):
 
 @pytest.mark.asyncio
 async def test_rewrite_query_expands_short_query(populated):
-    """When rewrite_query=True, short queries are expanded."""
+    """When rewrite_query=True, short queries are expanded (pattern or LLM)."""
     results = await populated.search(
         "Python", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
     )
     assert results.query_rewritten is not None
     assert "Python" in results.query_rewritten
-    assert "相关信息" in results.query_rewritten
+    # Either pattern-based expansion or LLM semantic expansion
+    assert len(results.query_rewritten) > len("Python")
 
 
 @pytest.mark.asyncio
@@ -227,3 +228,191 @@ async def test_rerank_no_overlap_unchanged():
     reranked = await orchestrator._rerank_results(results, "量子计算")
     assert reranked[0].id == "1"
     assert reranked[1].id == "2"
+
+
+# ---- Relationship expansion ----
+
+
+@pytest.mark.asyncio
+async def test_expand_extends_relationship():
+    """Search result expanded via EXTENDS to include extended memory."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "expand_test"
+
+    # Create two related memories: B EXTENDS A
+    mid_a = await graph.create_memory(
+        "Alice 是一名工程师", entity_id=entity, memory_type="fact"
+    )
+    mid_b = await graph.create_memory(
+        "Alice 是前端工程师，主攻 React", entity_id=entity, memory_type="fact"
+    )
+    # Also create relationship: B EXTENDS A
+    await graph.create_relationship(mid_b, mid_a, "EXTENDS", {"aspect": "detail"})
+
+    # Build a mock result containing the extending memory (B)
+    results = [
+        SearchResult(id=mid_b, content="Alice 是前端工程师，主攻 React", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    # Should now contain both B and A
+    ids = {r.id for r in expanded}
+    assert mid_b in ids, "original result should be preserved"
+    assert mid_a in ids, "EXTENDS target should be included"
+    assert len(expanded) == 2
+
+
+@pytest.mark.asyncio
+async def test_expand_derives_from_relationship():
+    """Search result expanded via DERIVES_FROM to include source memories."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "derives_test"
+
+    mid_src1 = await graph.create_memory(
+        "Alice 在 Stripe 工作", entity_id=entity, memory_type="fact"
+    )
+    mid_src2 = await graph.create_memory(
+        "Stripe 是一家支付公司", entity_id=entity, memory_type="fact"
+    )
+    mid_derived = await graph.create_memory(
+        "Alice 很可能在支付行业工作", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_derived, mid_src1, "DERIVES_FROM", {"reasoning": "employment"})
+    await graph.create_relationship(mid_derived, mid_src2, "DERIVES_FROM", {"reasoning": "industry"})
+
+    results = [
+        SearchResult(id=mid_derived, content="Alice 很可能在支付行业工作", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    ids = {r.id for r in expanded}
+    assert mid_derived in ids
+    assert mid_src1 in ids, "DERIVES_FROM source 1 should be included"
+    assert mid_src2 in ids, "DERIVES_FROM source 2 should be included"
+    assert len(expanded) == 3
+
+
+@pytest.mark.asyncio
+async def test_expand_inbound_extends():
+    """When searching for the target of EXTENDS, the source should be included."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "inbound_test"
+
+    # B EXTENDS A
+    mid_a = await graph.create_memory(
+        "用户住在北京", entity_id=entity, memory_type="fact"
+    )
+    mid_b = await graph.create_memory(
+        "用户住在北京海淀区", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_b, mid_a, "EXTENDS")
+
+    # Search finds A (the target); expansion should include B (the source)
+    results = [
+        SearchResult(id=mid_a, content="用户住在北京", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    ids = {r.id for r in expanded}
+    assert mid_a in ids
+    assert mid_b in ids, "EXTENDS source should be included (inbound direction)"
+    assert len(expanded) == 2
+
+
+@pytest.mark.asyncio
+async def test_expand_deduplicates_and_scores():
+    """Expanded results are deduplicated and have lower scores than originals."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "dedup_test"
+
+    mid_base = await graph.create_memory(
+        "基础事实", entity_id=entity, memory_type="fact"
+    )
+    mid_ext = await graph.create_memory(
+        "扩展详情", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_ext, mid_base, "EXTENDS")
+
+    results = [
+        SearchResult(id=mid_base, content="基础事实", score=0.9, source="memory"),
+        SearchResult(id=mid_ext, content="扩展详情", score=0.8, source="memory"),
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    ids = [r.id for r in expanded]
+    # No duplicates
+    assert len(ids) == len(set(ids))
+    # Original results keep their scores; expanded ones have lower scores
+    for r in expanded:
+        if r.source == "memory_expanded":
+            assert r.score <= 0.9 * 0.85 + 0.01  # should be ≤ original × 0.85
+
+
+@pytest.mark.asyncio
+async def test_expand_no_relationships_no_change():
+    """When no relationships exist, results are unchanged."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "no_rel_test"
+
+    mid = await graph.create_memory(
+        "独立事实", entity_id=entity, memory_type="fact"
+    )
+
+    results = [
+        SearchResult(id=mid, content="独立事实", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    assert len(expanded) == 1
+    assert expanded[0].id == mid
+
+
+@pytest.mark.asyncio
+async def test_expand_excludes_updates():
+    """UPDATES relationships should NOT trigger expansion."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "no_updates_test"
+
+    mid_old = await graph.create_memory(
+        "旧事实：用户在 Google 工作", entity_id=entity, memory_type="fact"
+    )
+    mid_new = await graph.create_memory(
+        "新事实：用户在 Stripe 工作", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_new, mid_old, "UPDATES")
+    # Mark old as superseded
+    await graph.update_is_latest(mid_old, False, replaced_by=mid_new)
+
+    results = [
+        SearchResult(id=mid_new, content="新事实：用户在 Stripe 工作", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    # Only the new fact should be present (old one is is_latest=False)
+    ids = {r.id for r in expanded}
+    assert mid_new in ids
+    assert mid_old not in ids, "UPDATES relationships should not trigger expansion"

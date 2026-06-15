@@ -100,6 +100,14 @@ class MemoryEngine:
                 # 1. Extract
                 extracted = await self._extract(content, content_type)
 
+                # 1.5 Semantic dedup: skip if semantically identical to existing memory
+                is_dup = await self._check_duplicate(extracted.text, entity_id)
+                if is_dup:
+                    logger.info("memory.add.duplicate_skipped", entity_id=entity_id,
+                                content_preview=content[:50])
+                    return AddResult(memory_ids=[], pipeline_status="duplicate",
+                                     extracted_count=0)
+
                 # 2. Chunk
                 chunks = await self._chunk(extracted, content_type)
 
@@ -109,6 +117,12 @@ class MemoryEngine:
                 # 4. Index — store in graph + vector
                 memory_ids = await self._index(
                     chunks, embeddings, entity_id, content_type, metadata
+                )
+
+                # 4.5 Strengthen preferences: if similar preference already exists,
+                #      boost its confidence instead of creating a near-duplicate.
+                memory_ids = await self._strengthen_preferences(
+                    chunks, memory_ids, entity_id, metadata
                 )
 
                 # 5. Infer relationships
@@ -263,13 +277,30 @@ class MemoryEngine:
 
         for chunk, embedding in zip(chunks, embeddings):
             # 1. Store in Neo4j graph — memory_id becomes the canonical ID
+            # Allow metadata overrides for memory_type, confidence, and valid_until
+            # (the chunker provides defaults; callers may know better)
+            overridden_type = chunk.memory_type
+            overridden_confidence = chunk.confidence
+            overridden_valid_until = None
+            if metadata:
+                if "memory_type" in metadata:
+                    overridden_type = metadata["memory_type"]
+                if "confidence" in metadata:
+                    overridden_confidence = metadata["confidence"]
+                if "valid_until" in metadata:
+                    raw = metadata["valid_until"]
+                    if isinstance(raw, str):
+                        overridden_valid_until = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    elif isinstance(raw, datetime):
+                        overridden_valid_until = raw
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,
-                memory_type=chunk.memory_type,
-                confidence=chunk.confidence,
+                memory_type=overridden_type,
+                confidence=overridden_confidence,
                 summary=chunk.summary or None,
                 source_type="conversation" if content_type == "conversation" else "document",
+                valid_until=overridden_valid_until,
                 metadata=metadata,
             )
             chunk.id = memory_id
@@ -319,6 +350,166 @@ class MemoryEngine:
 
         return memory_ids
 
+    async def _strengthen_preferences(
+        self,
+        chunks: list[Chunk],
+        memory_ids: list[str],
+        entity_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[str]:
+        """Strengthen existing preference confidence when similar preferences repeat.
+
+        If a new preference has high text overlap with an existing preference,
+        boost the existing one's confidence by 0.05 (capped at 0.95) instead of
+        creating a duplicate.  Lower-overlap preferences are kept as separate
+        memories (complements, not duplicates).
+
+        Only applies to chunks with memory_type='preference'.
+        """
+        THRESHOLD = 0.3  # bigram overlap threshold for "same preference"
+
+        for chunk, mid in zip(chunks, memory_ids):
+            # Check memory_type — prefer metadata override, then chunk default
+            mem_type = (metadata or {}).get("memory_type") or chunk.memory_type
+            if mem_type != "preference":
+                continue
+
+            # Find existing preferences for this entity
+            existing = await self.graph.list_latest_memories(
+                entity_id, limit=50,
+            )
+            existing_prefs = [
+                m for m in existing
+                if m.get("memory_type") == "preference" and m["id"] != mid
+            ]
+
+            best_overlap = 0.0
+            best_match = None
+
+            new_bigrams = self._extract_bigrams(chunk.text)
+            if not new_bigrams:
+                continue
+
+            for old in existing_prefs:
+                overlap = self._bigram_overlap(chunk.text, old.get("content", ""))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_match = old
+
+            if best_overlap >= THRESHOLD and best_match:
+                # Boost existing preference confidence
+                current_conf = best_match.get("confidence", 0.8)
+                new_conf = min(current_conf + 0.05, 0.95)
+                await self.graph.update_memory_confidence(best_match["id"], new_conf)
+
+                # Mark the new (duplicate) memory as not latest
+                await self.graph.update_is_latest(mid, False, replaced_by=best_match["id"])
+                logger.info(
+                    "preference.strengthened",
+                    entity_id=entity_id,
+                    existing_id=best_match["id"][:8],
+                    confidence_before=current_conf,
+                    confidence_after=new_conf,
+                    overlap=round(best_overlap, 2),
+                )
+
+                # Remove duplicate from returned IDs
+                memory_ids = [i for i in memory_ids if i != mid]
+
+        return memory_ids
+
+    @staticmethod
+    def _extract_bigrams(text: str) -> set[str]:
+        """Extract character bigrams for text overlap scoring."""
+        import re
+        normalized = re.sub(r"\s+", "", text)
+        return {normalized[i:i+2] for i in range(len(normalized) - 1)}
+
+    @staticmethod
+    def _bigram_overlap(text_a: str, text_b: str) -> float:
+        """Compute bigram overlap ratio: |A ∩ B| / |A|."""
+        a = MemoryEngine._extract_bigrams(text_a)
+        b = MemoryEngine._extract_bigrams(text_b)
+        if not a:
+            return 0.0
+        return len(a & b) / len(a)
+
+    async def _check_duplicate(self, text: str, entity_id: str) -> bool:
+        """Check if text is semantically identical to an existing memory.
+
+        Uses fast bigram filter first; only calls LLM for borderline cases.
+        Returns True if text should be skipped as duplicate.
+        """
+        if not text.strip():
+            return True
+
+        # Fast filter: check bigram overlap with recent memories
+        existing = await self.graph.list_latest_memories(entity_id, limit=30)
+
+        exact_dup = None
+        borderline = None
+
+        for old in existing:
+            old_text = old.get("content", "")
+            # Exact match → definitely duplicate
+            if text.strip() == old_text.strip():
+                return True
+
+            overlap = self._bigram_overlap(text, old_text)
+
+            if overlap > 0.95:
+                exact_dup = old
+                break
+            elif overlap > 0.6:
+                borderline = old
+                # Keep checking — maybe we find a closer match
+
+        # High overlap → definitely duplicate
+        if exact_dup:
+            return True
+
+        # Borderline → ask LLM
+        if borderline:
+            return await self._llm_check_duplicate(text, borderline["content"])
+
+        return False
+
+    async def _llm_check_duplicate(self, new_text: str, old_text: str) -> bool:
+        """Use LLM to check if two texts convey the same fact."""
+        try:
+            from emerald.config import get_settings
+            settings = get_settings()
+            if not settings.deepseek_api_key:
+                return False
+
+            import httpx
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    f"{settings.fact_extraction_base_url.rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.deepseek_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [
+                            {"role": "system", "content": (
+                                "Determine if two texts express the same fact/information. "
+                                "Answer only YES or NO."
+                            )},
+                            {"role": "user", "content": f"Text A: {old_text}\nText B: {new_text}"},
+                        ],
+                        "temperature": 0.0,
+                        "max_tokens": 5,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                answer = data["choices"][0]["message"]["content"].strip().upper()
+                return "YES" in answer
+        except Exception:
+            return False
+
     async def process_async(
         self,
         content: str | bytes,
@@ -332,6 +523,13 @@ class MemoryEngine:
         Delegates to PipelineOrchestrator for full Celery chain execution.
         Returns pipeline_id for status tracking.
         """
+        # Dedup check for async path too
+        if isinstance(content, str):
+            is_dup = await self._check_duplicate(content, entity_id)
+            if is_dup:
+                logger.info("memory.add.duplicate_skipped_async", entity_id=entity_id)
+                return "duplicate"
+
         from emerald.pipeline.orchestrator import PipelineOrchestrator
 
         orchestrator = PipelineOrchestrator(

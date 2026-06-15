@@ -266,6 +266,30 @@ class GraphStore:
                         m["replaced_by"] = replaced_by
                     return
 
+    async def update_memory_confidence(
+        self, memory_id: str, confidence: float
+    ) -> None:
+        """Update the confidence score of a memory."""
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (m:Memory {id: $id})
+                    SET m.confidence = $confidence, m.updated_at = datetime()
+                    """,
+                    id=memory_id,
+                    confidence=confidence,
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == memory_id:
+                    m["confidence"] = confidence
+                    m["updated_at"] = datetime.now(UTC)
+                    return
+
     async def mark_expired(self, memory_id: str, reason: str = "expired") -> None:
         """Mark a memory as expired: is_latest=False + expired_at=now.
 
@@ -386,6 +410,68 @@ class GraphStore:
                         tid = m["id"]
                         sid = rel["from_id"]
                         result.setdefault(tid, []).append(sid)
+        return result
+
+    async def get_related_memories(
+        self,
+        memory_ids: list[str],
+        rel_types: list[str] | None = None,
+    ) -> dict[str, list[str]]:
+        """Find memories connected via EXTENDS or DERIVES_FROM (both directions).
+
+        Returns dict mapping ``memory_id → [related_memory_ids]``.
+        Both outbound (this memory extends/derives from others) AND
+        inbound (other memories extend/derive from this one) are included.
+        """
+        if rel_types is None:
+            rel_types = ["EXTENDS", "DERIVES_FROM"]
+
+        result: dict[str, list[str]] = {}
+        id_set = set(memory_ids)
+
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                res = await session.run(
+                    """
+                    MATCH (m:Memory)-[r]->(other:Memory)
+                    WHERE m.id IN $ids AND type(r) IN $rel_types
+                    RETURN m.id AS from_id, other.id AS related_id, type(r) AS rel_type
+                    UNION
+                    MATCH (other:Memory)-[r]->(m:Memory)
+                    WHERE m.id IN $ids AND type(r) IN $rel_types
+                    RETURN m.id AS from_id, other.id AS related_id, type(r) AS rel_type
+                    """,
+                    ids=list(id_set),
+                    rel_types=rel_types,
+                )
+                async for record in res:
+                    fid = record["from_id"]
+                    rid = record["related_id"]
+                    result.setdefault(fid, []).append(rid)
+            return result
+
+        # In-memory fallback: scan all memories for matching relationships
+        for entity_memories in self._memories.values():
+            for m in entity_memories:
+                mid = m["id"]
+                for rel in m.get("relationships", []):
+                    if rel["type"] not in rel_types:
+                        continue
+                    from_id = rel["from_id"]
+                    # Outbound: if this memory (mid) is a target, the source (from_id)
+                    # points to it — add the source as related to this memory.
+                    # Skip if source is already in the query set (caller already has it).
+                    if mid in id_set and from_id not in id_set:
+                        result.setdefault(mid, []).append(from_id)
+                    # Inbound: if the source (from_id) is in our set, then this
+                    # memory (mid) is a related target — add it.
+                    # Skip if target is already in the query set.
+                    if from_id in id_set and mid not in id_set:
+                        result.setdefault(from_id, []).append(mid)
+
+        # The caller handles deduplication (results may contain IDs that
+        # are already in the original result set).
         return result
 
     async def keyword_search_memories(
