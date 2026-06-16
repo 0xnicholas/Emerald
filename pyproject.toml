@@ -65,6 +65,7 @@ extraction = [
     "pytesseract>=0.3",
     "trafilatura>=1.12",
     "tree-sitter>=0.22",
+    "tree-sitter-python>=0.23",
 ]
 
 local-embeddings = [

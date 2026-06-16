@@ -2,6 +2,13 @@
 
 import pytest
 
+try:
+    import tree_sitter  # noqa: F401
+    import tree_sitter_python  # noqa: F401
+    HAS_TREE_SITTER = True
+except ImportError:
+    HAS_TREE_SITTER = False
+
 from emerald.pipeline.chunking.code import CodeChunker
 
 
@@ -71,7 +78,12 @@ async def test_chunk_empty(chunker):
 
 # ---- AST-aware tests (require tree-sitter) ----
 
+requires_tree_sitter = pytest.mark.skipif(
+    not HAS_TREE_SITTER, reason="tree-sitter / tree-sitter-python not installed"
+)
 
+
+@requires_tree_sitter
 async def test_ast_chunk_python_function_boundary(chunker):
     """AST mode extracts exact function boundaries."""
     code = """import os
@@ -90,6 +102,7 @@ def world():
     assert "world" in names
 
 
+@requires_tree_sitter
 async def test_ast_chunk_preserves_function_body(chunker):
     """Each function chunk contains its full body."""
     code = """def factorial(n):
@@ -103,6 +116,7 @@ async def test_ast_chunk_preserves_function_body(chunker):
     assert "factorial(n - 1)" in func_chunks[0].text
 
 
+@requires_tree_sitter
 async def test_ast_chunk_class_with_methods(chunker):
     """A class with methods is a single chunk."""
     code = """class Calculator:
@@ -119,6 +133,7 @@ async def test_ast_chunk_class_with_methods(chunker):
     assert "def sub" in class_chunks[0].text
 
 
+@requires_tree_sitter
 async def test_ast_chunk_line_numbers(chunker):
     """AST chunks include line_start and line_end metadata."""
     code = """def one():
@@ -135,6 +150,7 @@ def two():
             assert c.metadata["line_end"] >= c.metadata["line_start"]
 
 
+@requires_tree_sitter
 async def test_ast_chunk_typescript_function(chunker):
     """TypeScript functions are extracted via AST."""
     code = """function greet(name: string): string {
@@ -151,6 +167,7 @@ const farewell = (name: string) => {
     # Arrow function may be anonymous depending on AST
 
 
+@requires_tree_sitter
 async def test_ast_chunk_unknown_language_fallback(chunker):
     """Unknown language falls back to heuristic splitting."""
     code = """func hello() {

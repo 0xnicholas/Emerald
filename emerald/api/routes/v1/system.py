@@ -76,8 +76,8 @@ async def health_check() -> dict:
     }
 
 
-@router.get("/graph/viewport", response_model=dict, dependencies=[Depends(api_key_auth)])
-async def graph_viewport(
+@router.get("/memories/graph", response_model=dict, dependencies=[Depends(api_key_auth)])
+async def memories_graph(
     entity_id: str,
     limit: int = 100,
     request: Request = None,
