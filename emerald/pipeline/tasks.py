@@ -244,6 +244,20 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
 from celery import shared_task
 
 
+async def _locked_run(coro, lock_name: str, ttl: int = 600) -> dict | None:
+    """Execute *coro* under a distributed lock; skip if lock is held by another instance."""
+    from emerald.core.lock import DistributedLock
+
+    lock = DistributedLock(lock_name, ttl_seconds=ttl)
+    if not await lock.acquire():
+        logger.info("beat.skipped", task=lock_name, reason="lock_contention")
+        return None
+    try:
+        return await coro
+    finally:
+        await lock.release()
+
+
 @shared_task
 def forget_expired_task() -> dict:
     """Celery Beat: hourly - expire past valid_until memories."""
@@ -254,10 +268,14 @@ async def _run_forget_expired() -> dict:
     from emerald.core.forget import ForgetEngine
     from emerald.core.graph import GraphStore
 
-    engine = ForgetEngine(graph=GraphStore(use_db=True))
-    count = await engine.forget_expired()
-    logger.info("pipeline.task.forget_expired", count=count)
-    return {"strategy": "time_expiry", "count": count}
+    async def _work():
+        engine = ForgetEngine(graph=GraphStore(use_db=True))
+        count = await engine.forget_expired()
+        logger.info("pipeline.task.forget_expired", count=count)
+        return {"strategy": "time_expiry", "count": count}
+
+    result = await _locked_run(_work(), "task_forget_expired")
+    return result if result is not None else {"strategy": "time_expiry", "count": 0, "skipped": True}
 
 
 @shared_task
@@ -270,10 +288,14 @@ async def _run_forget_noise() -> dict:
     from emerald.core.forget import ForgetEngine
     from emerald.core.graph import GraphStore
 
-    engine = ForgetEngine(graph=GraphStore(use_db=True))
-    count = await engine.forget_noise()
-    logger.info("pipeline.task.forget_noise", count=count)
-    return {"strategy": "noise_filter", "count": count}
+    async def _work():
+        engine = ForgetEngine(graph=GraphStore(use_db=True))
+        count = await engine.forget_noise()
+        logger.info("pipeline.task.forget_noise", count=count)
+        return {"strategy": "noise_filter", "count": count}
+
+    result = await _locked_run(_work(), "task_forget_noise", ttl=1800)
+    return result if result is not None else {"strategy": "noise_filter", "count": 0, "skipped": True}
 
 
 @shared_task
@@ -286,10 +308,14 @@ async def _run_decay_episodic() -> dict:
     from emerald.core.forget import ForgetEngine
     from emerald.core.graph import GraphStore
 
-    engine = ForgetEngine(graph=GraphStore(use_db=True))
-    count = await engine.decay_episodic()
-    logger.info("pipeline.task.decay_episodic", count=count)
-    return {"strategy": "episodic_decay", "count": count}
+    async def _work():
+        engine = ForgetEngine(graph=GraphStore(use_db=True))
+        count = await engine.decay_episodic()
+        logger.info("pipeline.task.decay_episodic", count=count)
+        return {"strategy": "episodic_decay", "count": count}
+
+    result = await _locked_run(_work(), "task_decay_episodic", ttl=1800)
+    return result if result is not None else {"strategy": "episodic_decay", "count": 0, "skipped": True}
 
 
 @shared_task
@@ -309,16 +335,20 @@ async def _run_reconcile() -> dict:
     from emerald.core.reconciliation import ReconciliationEngine
     from emerald.core.vector import VectorStore
 
-    engine = ReconciliationEngine(
-        graph=GraphStore(use_db=True),
-        vector=VectorStore(use_db=True),
-        embedder=get_embedding_provider(),
-    )
-    result = await engine.reconcile(lookback_minutes=120, max_repairs=200)
-    logger.info(
-        "pipeline.task.reconcile",
-        found=result["found"],
-        repaired=result["repaired"],
-        failed=result["failed"],
-    )
-    return result
+    async def _work():
+        engine = ReconciliationEngine(
+            graph=GraphStore(use_db=True),
+            vector=VectorStore(use_db=True),
+            embedder=get_embedding_provider(),
+        )
+        result = await engine.reconcile(lookback_minutes=120, max_repairs=200)
+        logger.info(
+            "pipeline.task.reconcile",
+            found=result["found"],
+            repaired=result["repaired"],
+            failed=result["failed"],
+        )
+        return result
+
+    result = await _locked_run(_work(), "task_reconcile_index", ttl=600)
+    return result if result is not None else {"found": 0, "repaired": 0, "failed": 0, "skipped": True}
