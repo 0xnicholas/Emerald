@@ -290,3 +290,35 @@ async def _run_decay_episodic() -> dict:
     count = await engine.decay_episodic()
     logger.info("pipeline.task.decay_episodic", count=count)
     return {"strategy": "episodic_decay", "count": count}
+
+
+@shared_task
+def reconcile_index_task() -> dict:
+    """Celery Beat: every 30 min - repair orphaned graph nodes.
+
+    Scans for Memory nodes created recently that have no corresponding
+    pgvector embedding row and either re-writes the vector or marks the
+    node as ``indexing_failed``.
+    """
+    return run_async(_run_reconcile)()
+
+
+async def _run_reconcile() -> dict:
+    from emerald.core.embedder import get_embedding_provider
+    from emerald.core.graph import GraphStore
+    from emerald.core.reconciliation import ReconciliationEngine
+    from emerald.core.vector import VectorStore
+
+    engine = ReconciliationEngine(
+        graph=GraphStore(use_db=True),
+        vector=VectorStore(use_db=True),
+        embedder=get_embedding_provider(),
+    )
+    result = await engine.reconcile(lookback_minutes=120, max_repairs=200)
+    logger.info(
+        "pipeline.task.reconcile",
+        found=result["found"],
+        repaired=result["repaired"],
+        failed=result["failed"],
+    )
+    return result

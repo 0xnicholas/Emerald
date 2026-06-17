@@ -96,6 +96,22 @@ class VectorStore:
 
         logger.debug("vector.store", chunk_id=chunk_id, dims=len(embedding))
 
+    async def exists(self, chunk_id: str) -> bool:
+        """Check whether an embedding row exists for the given chunk_id.
+
+        Used by ReconciliationEngine to detect orphaned graph nodes
+        (memory created in Neo4j but never persisted to pgvector).
+        """
+        if self._use_db and self._session_factory:
+            from sqlalchemy import text as sql_text
+            async with self._session_factory.session() as session:
+                result = await session.execute(
+                    sql_text("SELECT 1 FROM embeddings WHERE chunk_id = :cid LIMIT 1"),
+                    {"cid": chunk_id},
+                )
+                return result.fetchone() is not None
+        return chunk_id in self._memory_store
+
     async def search(
         self,
         query_embedding: list[float],

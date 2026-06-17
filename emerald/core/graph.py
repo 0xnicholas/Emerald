@@ -197,6 +197,55 @@ class GraphStore:
         latest.sort(key=lambda m: m["created_at"], reverse=True)
         return latest[:limit]
 
+    async def list_recent_memories(
+        self,
+        *,
+        since_minutes: int = 120,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """List is_latest=True memories created in the last N minutes across all entities.
+
+        Used by ReconciliationEngine to find potentially orphaned nodes
+        (created in Neo4j but missing from pgvector).
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(minutes=since_minutes)
+
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory)
+                    WHERE m.is_latest = true
+                      AND m.created_at >= $cutoff
+                    RETURN m
+                    ORDER BY m.created_at DESC
+                    LIMIT $limit
+                    """,
+                    cutoff=cutoff.isoformat(),
+                    limit=limit,
+                )
+                memories = []
+                async for record in result:
+                    memories.append(dict(record["m"]))
+                return memories
+
+        # In-memory fallback: scan all entities
+        memories: list[dict[str, Any]] = []
+        for entity_memories in self._memories.values():
+            for m in entity_memories:
+                created = m.get("created_at")
+                if (
+                    m["is_latest"]
+                    and created is not None
+                    and created >= cutoff
+                ):
+                    memories.append(m)
+        memories.sort(key=lambda m: m.get("created_at", datetime.min.replace(tzinfo=UTC)), reverse=True)
+        return memories[:limit]
+
     async def list_forget_candidates(
         self,
         entity_id: str,

@@ -69,6 +69,10 @@ celery_app.conf.beat_schedule = {
         "schedule": 14400.0,
         "kwargs": {"provider": "github"},
     },
+    "reconcile-index": {
+        "task": "emerald.pipeline.tasks.reconcile_index_task",
+        "schedule": 1800.0,  # Every 30 minutes
+    },
 }
 
 # Auto-discover tasks in pipeline and connectors
