@@ -161,15 +161,29 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     )
 
     # CORS — production should restrict origins via CORS_ALLOWED_ORIGINS env var
-    _cors_origins = settings.cors_allowed_origins
-    cors_origins = [o.strip() for o in _cors_origins.split(",")] if "," in _cors_origins else [_cors_origins]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    _cors_origins = settings.cors_allowed_origins.strip()
+    if _cors_origins and _cors_origins != "*":
+        cors_origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    elif _cors_origins == "*":
+        cors_origins = ["*"]
+        if settings.emerald_env != "development":
+            logging.getLogger(__name__).warning(
+                "cors_wildcard_in_production: "
+                "CORS_ALLOWED_ORIGINS is set to '*'. "
+                "Restrict to specific origins in production."
+            )
+    else:
+        # Empty string — no CORS headers (most restrictive, breaks browser access)
+        cors_origins = []
+
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True if "*" not in cors_origins else False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Store engine in app state so routes can access it
     if engine is not None:
