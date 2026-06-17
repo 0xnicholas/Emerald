@@ -150,12 +150,9 @@ class ForgetEngine:
         return count
 
     async def _list_all_entity_ids(self) -> list[str]:
-        """List all entity IDs that have memories.
+        """List all entity IDs that have at least one latest memory.
 
-        In production this delegates to a Neo4j scan.  In-memory fallback
-        iterates over the internal store.
+        Delegates to GraphStore.list_entity_ids() which queries Neo4j
+        in production or scans the in-memory store for tests.
         """
-        # In-memory fallback
-        if hasattr(self.graph, "_memories"):
-            return list(self.graph._memories.keys())
-        return []
+        return await self.graph.list_entity_ids()

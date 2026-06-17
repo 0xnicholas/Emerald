@@ -184,6 +184,46 @@ async def test_decay_episodic_facts_not_affected(engine, entity_id):
     assert mem["is_latest"] is True
 
 
+# ---- GraphStore.list_entity_ids ----
+
+@pytest.mark.asyncio
+async def test_list_entity_ids_returns_distinct_entities(engine, entity_id):
+    """list_entity_ids returns all entities with latest memories."""
+    await _seed_memory(engine.graph, entity_id, "fact a")
+    await _seed_memory(engine.graph, entity_id, "fact b")
+    await _seed_memory(engine.graph, "other", "fact c")
+
+    ids = await engine.graph.list_entity_ids()
+    assert set(ids) == {entity_id, "other"}
+
+
+@pytest.mark.asyncio
+async def test_list_entity_ids_excludes_not_latest(engine, entity_id):
+    """Entities whose only memories are not-latest are excluded."""
+    mid = await _seed_memory(engine.graph, "ghost_entity", "stale")
+    await engine.graph.update_is_latest(mid, False)
+
+    ids = await engine.graph.list_entity_ids()
+    assert "ghost_entity" not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_entity_ids_empty_store(engine):
+    """Empty store returns empty list."""
+    ids = await engine.graph.list_entity_ids()
+    assert ids == []
+
+
+@pytest.mark.asyncio
+async def test_forget_engine_uses_public_list_entity_ids(engine, entity_id):
+    """ForgetEngine._list_all_entity_ids delegates to GraphStore.list_entity_ids."""
+    await _seed_memory(engine.graph, entity_id, "a")
+    await _seed_memory(engine.graph, "other", "b")
+
+    ids = await engine._list_all_entity_ids()
+    assert set(ids) == {entity_id, "other"}
+
+
 # ---- Combined strategies ----
 
 @pytest.mark.asyncio

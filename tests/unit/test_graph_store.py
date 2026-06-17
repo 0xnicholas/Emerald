@@ -101,3 +101,27 @@ async def test_entity_isolation(graph):
     await graph.create_memory("bob", entity_id="bob")
     alice_mems = await graph.list_latest_memories("alice")
     assert all("bob" not in m["content"] for m in alice_mems)
+
+
+async def test_list_entity_ids_all_active(graph):
+    """list_entity_ids returns all entities with latest memories."""
+    await graph.create_memory("a", entity_id="e1")
+    await graph.create_memory("b", entity_id="e1")
+    await graph.create_memory("c", entity_id="e2")
+
+    ids = await graph.list_entity_ids()
+    assert set(ids) == {"e1", "e2"}
+
+
+async def test_list_entity_ids_empty(graph):
+    """Empty store returns empty list."""
+    assert await graph.list_entity_ids() == []
+
+
+async def test_list_entity_ids_excludes_not_latest(graph):
+    """Entity with only not-latest memories is excluded."""
+    mid = await graph.create_memory("stale", entity_id="ghost")
+    await graph.update_is_latest(mid, False)
+
+    ids = await graph.list_entity_ids()
+    assert "ghost" not in ids

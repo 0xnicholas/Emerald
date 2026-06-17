@@ -197,6 +197,34 @@ class GraphStore:
         latest.sort(key=lambda m: m["created_at"], reverse=True)
         return latest[:limit]
 
+    async def list_entity_ids(self) -> list[str]:
+        """Return IDs of all entities that have at least one latest memory.
+
+        Used by ForgetEngine to iterate across entities for time-based
+        expiry, noise filtering, and episodic decay strategies.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (e:Entity)-[:HAS_MEMORY]->(m:Memory)
+                    WHERE m.is_latest = true
+                    RETURN DISTINCT e.id AS entity_id
+                    """
+                )
+                ids: list[str] = []
+                async for record in result:
+                    ids.append(record["entity_id"])
+                return ids
+
+        # In-memory fallback: filter to entities with at least one latest memory
+        ids: list[str] = []
+        for entity_id, memories in self._memories.items():
+            if any(m.get("is_latest", True) for m in memories):
+                ids.append(entity_id)
+        return ids
+
     async def list_recent_memories(
         self,
         *,
