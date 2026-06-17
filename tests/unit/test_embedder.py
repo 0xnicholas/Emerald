@@ -4,8 +4,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from emerald.core.embedder import (
+    FastembedProvider,
     MockEmbeddingProvider,
     OpenAIProvider,
+    SentenceTransformersProvider,
     get_embedding_provider,
 )
 
@@ -163,7 +165,7 @@ async def test_openai_cache_hit_skips_api_call(openai_provider):
 
 
 def test_fallback_when_key_missing(monkeypatch):
-    """OPENAI_API_KEY empty → try SentenceTransformersProvider, then MockEmbeddingProvider."""
+    """OPENAI_API_KEY empty → try FastembedProvider, then MockEmbeddingProvider."""
     monkeypatch.setenv("EMBEDDING_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "")
 
@@ -172,15 +174,109 @@ def test_fallback_when_key_missing(monkeypatch):
     get_settings.cache_clear()
 
     p = get_embedding_provider()
-    # If sentence-transformers is installed, use it; otherwise fall back to Mock
+    # If fastembed is installed, use it; otherwise fall back to Mock
     try:
-        import sentence_transformers  # noqa: F401
-        from emerald.core.embedder import SentenceTransformersProvider
-        assert isinstance(p, SentenceTransformersProvider)
+        import fastembed  # noqa: F401
+        assert isinstance(p, FastembedProvider)
     except ImportError:
-        from emerald.core.embedder import MockEmbeddingProvider
         assert isinstance(p, MockEmbeddingProvider)
-        assert p.dimension() == 1536
+        assert p.dimension() == 384
 
     # Restore settings for other tests
     get_settings.cache_clear()
+
+
+# ---- FastembedProvider tests ----
+
+
+@pytest.mark.asyncio
+async def test_fastembed_produces_semantic_embeddings():
+    """FastembedProvider returns real semantic vectors."""
+    try:
+        import fastembed  # noqa: F401
+    except ImportError:
+        pytest.skip("fastembed not installed")
+
+    provider = FastembedProvider()
+    assert provider.dimension() >= 384
+
+    embeddings = await provider.embed(["hello world", "goodbye world"])
+    assert len(embeddings) == 2
+    assert len(embeddings[0]) == provider.dimension()
+
+    # Semantic similarity: similar texts should be closer than dissimilar
+    import math
+
+    def cosine(a, b):
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        return dot / (na * nb) if na and nb else 0.0
+
+    sim_similar = cosine(embeddings[0], embeddings[1])
+
+    # Very different text
+    diff_emb = await provider.embed(["quantum physics and black holes"])
+    sim_diff = cosine(embeddings[0], diff_emb[0])
+
+    # Similar texts (both contain "world") should be closer than very different texts
+    assert sim_similar > sim_diff, (
+        f"Expected similar texts ({sim_similar:.3f}) > different ({sim_diff:.3f})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fastembed_empty_batch():
+    """Empty text list returns empty result."""
+    try:
+        import fastembed  # noqa: F401
+    except ImportError:
+        pytest.skip("fastembed not installed")
+
+    provider = FastembedProvider()
+    assert await provider.embed([]) == []
+
+
+@pytest.mark.asyncio
+async def test_fastembed_custom_model():
+    """Custom model name is respected."""
+    try:
+        import fastembed  # noqa: F401
+    except ImportError:
+        pytest.skip("fastembed not installed")
+
+    provider = FastembedProvider(model_name="BAAI/bge-small-en-v1.5")
+    assert provider.dimension() == 384
+
+
+@pytest.mark.asyncio
+async def test_fastembed_dimension_before_embed():
+    """dimension() works before any embed() call (lazy init)."""
+    try:
+        import fastembed  # noqa: F401
+    except ImportError:
+        pytest.skip("fastembed not installed")
+
+    provider = FastembedProvider()
+    # Should trigger lazy model load
+    assert provider.dimension() == 384
+
+
+@pytest.mark.asyncio
+async def test_fastembed_import_error_graceful():
+    """When fastembed is not importable, FastembedProvider raises ImportError on first use."""
+    with patch.dict("sys.modules", {"fastembed": None}):
+        provider = FastembedProvider()
+        with pytest.raises(ImportError, match="fastembed"):
+            await provider.embed(["test"])
+
+
+# ---- SentenceTransformersProvider tests (keep for backward compat) ----
+
+
+@pytest.mark.asyncio
+async def test_sentence_transformers_import_error():
+    """When sentence-transformers is not installed, provider raises ImportError."""
+    with patch.dict("sys.modules", {"sentence_transformers": None}):
+        with pytest.raises(ImportError, match="sentence-transformers"):
+            SentenceTransformersProvider()

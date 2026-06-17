@@ -69,6 +69,7 @@ extraction = [
 ]
 
 local-embeddings = [
+    "fastembed>=0.4",
     "sentence-transformers>=2.0",
 ]
 

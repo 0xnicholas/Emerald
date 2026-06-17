@@ -206,17 +206,78 @@ class SentenceTransformersProvider(EmbeddingProvider):
         return self._load_model().get_sentence_embedding_dimension()
 
 
+class FastembedProvider(EmbeddingProvider):
+    """Local embedding via fastembed (ONNX runtime, no PyTorch).
+
+    Uses BGE-small-en-v1.5 by default (67 MB, 384 dims).  Falls back
+    gracefully if ``fastembed`` is not installed.
+    """
+
+    DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+    DEFAULT_DIMENSION = 384
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        max_length: int = 512,
+    ) -> None:
+        self._model_name = model_name or self.DEFAULT_MODEL
+        self._max_length = max_length
+        self._model = None
+        self._dimension = self.DEFAULT_DIMENSION
+
+    def _load_model(self):
+        if self._model is None:
+            try:
+                from fastembed import TextEmbedding
+
+                self._model = TextEmbedding(
+                    model_name=self._model_name,
+                    max_length=self._max_length,
+                )
+                # Determine dimension from the loaded model's config
+                desc = self._model._get_model_description(self._model_name)
+                if desc is not None and hasattr(desc, "dim"):
+                    self._dimension = desc.dim
+            except ImportError as exc:
+                raise ImportError(
+                    "fastembed is required for local embeddings. "
+                    "Install it with: pip install fastembed"
+                ) from exc
+        return self._model
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        model = self._load_model()
+        import asyncio
+
+        # fastembed.embed() returns a generator of numpy arrays
+        def _embed_sync():
+            return list(model.embed(texts))
+
+        embeddings = await asyncio.to_thread(_embed_sync)
+        return [e.tolist() for e in embeddings]
+
+    def dimension(self) -> int:
+        if self._model is not None:
+            return self._dimension
+        # Lazy-load to get accurate dimension
+        self._load_model()
+        return self._dimension
+
+
 class LocalProvider(EmbeddingProvider):
-    """Deprecated alias — use SentenceTransformersProvider directly."""
+    """Deprecated alias — use FastembedProvider or SentenceTransformersProvider directly."""
 
     def __init__(self, model_path: str, dimension: int = 1024) -> None:
         self._model_path = model_path
         self._dimension = dimension
-        self._provider: SentenceTransformersProvider | None = None
+        self._provider: FastembedProvider | None = None
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if self._provider is None:
-            self._provider = SentenceTransformersProvider(model_name=self._model_path)
+            self._provider = FastembedProvider(model_name=self._model_path)
         return await self._provider.embed(texts)
 
     def dimension(self) -> int:
@@ -270,13 +331,13 @@ def get_embedding_provider() -> EmbeddingProvider:
             "OpenAI API key missing; attempting local embedding fallback"
         )
         try:
-            return SentenceTransformersProvider()
+            return FastembedProvider()
         except ImportError:
             logger.warning(
-                "sentence-transformers not installed; falling back to MockEmbeddingProvider "
-                "(deterministic but NOT semantic). Install with: pip install sentence-transformers>=2.0"
+                "fastembed not installed; falling back to MockEmbeddingProvider "
+                "(deterministic but NOT semantic). Install with: pip install fastembed"
             )
-            return MockEmbeddingProvider(dimension=1536)
+            return MockEmbeddingProvider(dimension=384)
 
     if settings.embedding_provider in (
         EmbeddingProviderEnum.bge,
@@ -284,11 +345,11 @@ def get_embedding_provider() -> EmbeddingProvider:
         EmbeddingProviderEnum.local,
     ):
         try:
-            return SentenceTransformersProvider(model_name=settings.bge_model_path)
+            return FastembedProvider(model_name=settings.bge_model_path)
         except ImportError:
             logger.warning(
-                "sentence-transformers not installed; falling back to MockEmbeddingProvider"
+                "fastembed not installed; falling back to MockEmbeddingProvider"
             )
-            return MockEmbeddingProvider(dimension=1024)
+            return MockEmbeddingProvider(dimension=384)
 
     raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")
