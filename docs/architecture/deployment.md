@@ -743,3 +743,206 @@ logger = structlog.get_logger()
 - [ ] 定时安全更新基础镜像
 - [ ] API 速率限制已启用
 - [ ] 健康检查端点不暴露内部状态
+
+---
+
+## 9. Post-v0.3.0 部署增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响部署的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### 9.1 K8s 部署模板已补齐
+
+commit `a6d131d` 后，K8s 部署所需的所有 manifest 已就位：
+
+```
+k8s/
+├── namespace.yaml        # emerald namespace
+├── configmap.yaml        # 非敏感配置
+├── secret.yaml           # 敏感凭据模板
+├── deployment.yaml       # API Deployment（replicas: 2）
+├── service.yaml          # ClusterIP service
+├── hpa.yaml              # HorizontalPodAutoscaler（CPU 70%, Memory 80%）
+├── ingress.yaml          # Nginx ingress（50MB body limit）
+└── backup-cronjob.yaml   # PostgreSQL 每日 02:00 备份
+```
+
+**当前限制：** 数据层（Postgres / Neo4j / Redis / MinIO）仍在 docker-compose 下部署。K8s 数据层 manifest 是 [M2+ (v0.5.0) 路线图](../roadmap.md) 交付项。详见 [`docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`](../superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md) §A2。
+
+### 9.2 本地嵌入部署选项（fastembed）
+
+Post-v0.3.0 新增 `FastEmbedProvider`，完全离线运行：
+
+**安装：**
+
+```bash
+pip install fastembed
+```
+
+**环境变量配置：**
+
+```bash
+# .env
+EMBEDDING_PROVIDER=fastembed
+FASTEMBED_MODEL=BAAI/bge-small-en-v1.5  # 默认模型
+# 可选：FASTEMBED_CACHE_DIR=/path/to/cache
+```
+
+**适用场景：**
+
+| 场景 | 推荐 provider |
+|---|---|
+| 有 OpenAI API key + 需要高质量语义 | `openai` |
+| 企业内网 / 数据敏感 | `fastembed`（本地 ONNX） |
+| CI 测试 | `mock`（确定性，无外部依赖） |
+
+### 9.3 LLM 事实提取（需要 API key）
+
+Post-v0.3.0 默认需要 LLM 提取事实。可选提供商：
+
+```bash
+# 优先使用 DeepSeek V4-Flash（性价比高）
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_BASE_URL=https://api.deepseek.com  # 可选自定义
+DEEPSEEK_MODEL=deepseek-v4-flash  # 可选
+
+# 降级：使用 OpenAI
+OPENAI_API_KEY=sk-...
+
+# 无 API key 时：走降级路径，整段文本作为 chunk，memory_type 默认 "fact"
+```
+
+**生产建议：** 使用 DeepSeek V4-Flash（成本约为 OpenAI 的 1/10），保留 OpenAI 作为备份。
+
+### 9.4 Reconciliation 任务（后台）
+
+`emerald/pipeline/celery.py` 中 Beat 调度新增 reconciliation 任务：
+
+```python
+app.conf.beat_schedule = {
+    "reconcile-orphans": {
+        "task": "emerald.core.reconciliation.reconcile_orphans",
+        "schedule": crontab(minute="*/30"),  # 每 30 分钟
+    },
+    "forget-expired": {
+        "task": "emerald.core.forget.run_forget_strategies",
+        "schedule": crontab(minute=0),  # 每小时
+    },
+}
+```
+
+**部署验证：**
+
+```bash
+# 检查 Beat 调度
+celery -A emerald.pipeline.celery inspect scheduled
+
+# 手动触发一次
+celery -A emerald.pipeline.celery call emerald.core.reconciliation.reconcile_orphans
+```
+
+### 9.5 CORS 生产加固
+
+`.env` 配置：
+
+```bash
+# 开发环境（默认值）
+CORS_ALLOWED_ORIGINS=*
+
+# 生产环境（必须明确指定）
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+代码层（`emerald/api/app.py`）：
+- 检测到 `*` 时输出 WARNING 日志
+- 配置了具体 origins 时自动启用 credentials
+
+### 9.6 OpenTelemetry 集成（手动 span）
+
+当前版本（M1 之前）：手动 span 集成，无自动 instrumentation。
+
+**已配置项（`.env`）：**
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317  # OTLP gRPC endpoint
+OTEL_SERVICE_NAME=emerald
+OTEL_TRACES_SAMPLER=parentbased_traceidratio
+OTEL_TRACES_SAMPLER_ARG=1.0  # 100% 采样（开发），生产建议 0.1
+```
+
+**关键 span 名称：**
+
+| Span | 组件 | 关键属性 |
+|---|---|---|
+| `pipeline.extract` | worker | content_type |
+| `pipeline.chunk` | worker | chunk_count |
+| `pipeline.embed` | worker | embedding_dim |
+| `pipeline.index` | worker | memory_ids |
+| `pipeline.postprocess` | worker | — |
+| `graph.get_related_memories` | api | rel_types |
+| `search.expand_relationships` | api | expansion_count |
+
+**M1 (v0.4.0) 计划：** 增加 httpx / asyncpg / redis / celery 自动 instrumentation。
+
+### 9.7 Neo4j 生产配置
+
+`emerald/db/neo4j.py` 已应用生产配置：
+
+```python
+_driver = AsyncGraphDatabase.driver(
+    settings.neo4j_uri,
+    auth=(settings.neo4j_user, settings.neo4j_password),
+    max_connection_pool_size=50,
+    connection_acquisition_timeout=30,
+    connection_timeout=10,
+    max_transaction_retry_time=30.0,
+)
+```
+
+无需额外配置——`docker-compose.yml` 中的 Neo4j 5.x 默认与上述参数兼容。
+
+### 9.8 Redis 分布式锁（Celery Beat 多实例）
+
+如部署多个 Celery Beat 实例（如 K8s Deployment replicas > 1），Redis 锁确保同一任务不会并发执行：
+
+```python
+# emerald/core/lock.py
+@beat_lock(ttl_seconds=600)
+@shared_task
+def my_scheduled_task():
+    ...
+```
+
+**配置：** `.env` 中 `REDIS_URL` 正确即可，无需额外配置。
+
+### 9.9 Docker 镜像优化目标（M1 计划中）
+
+当前（v0.3.0）Dockerfile：
+
+```dockerfile
+FROM python:3.12-slim AS production
+COPY --from=development /usr/local/lib/python3.12/site-packages ...
+# 镜像体积 ~1.5GB
+```
+
+**M1 (v0.4.0) 计划：**
+
+```dockerfile
+FROM python:3.12-slim AS production
+COPY requirements-prod.txt ./
+RUN pip install --no-cache-dir -r requirements-prod.txt
+# 镜像体积目标 <1.2GB（含 ffmpeg）/ <800MB（不含 ffmpeg）
+```
+
+详见 [`docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md` A1](../superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md)。
+
+### 9.10 部署验证清单
+
+Post-v0.3.0 部署后必须验证：
+
+- [ ] **健康检查：** `curl http://api/v1/health` 返回 200 + `version` 字段
+- [ ] **指标端点：** `curl http://api/v1/metrics` 返回 Prometheus 格式
+- [ ] **Beat 调度：** `celery -A emerald.pipeline.celery inspect scheduled` 列出 reconcile-orphans 和 forget-expired
+- [ ] **Reconciliation：** 手动触发一次，确认日志输出 reconciliation.orphans_found 或 reconciliation.no_orphans
+- [ ] **CORS：** 生产环境 `CORS_ALLOWED_ORIGINS` 已设置为具体域名（非 `*`）
+- [ ] **Neo4j：** 启动日志应包含 `neo4j_connected, max_pool=50` 等字段
+- [ ] **Tracing（可选）：** 设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 后，访问 API 应在 collector 中看到 spans

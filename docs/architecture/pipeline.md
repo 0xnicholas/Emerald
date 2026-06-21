@@ -772,3 +772,254 @@ def decay_episodic():
 | `chunks_per_document` | Histogram | 每个文档的分块数分布 |
 | `memories_per_entity` | Gauge | 每个实体的记忆数 |
 | `forget_actions_total` | Counter | 遗忘操作计数（按策略） |
+
+---
+
+## 9. Post-v0.3.0 管线增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响处理管线的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### 9.1 新增事实提取阶段（FACT_EXTRACTION）
+
+v0.3.0 设计中，提取阶段（EXTRACTING）只做格式转换（PDF→text、图片→OCR）。Post-v0.3.0 引入**新增的 FACT_EXTRACTION 阶段**，位于 CHUNKING 之前。
+
+**新管线状态机：**
+
+```
+                    ┌────────────────┐
+                    │    QUEUED      │
+                    └───────┬────────┘
+                            │
+                    ┌───────▼────────┐
+                    │   EXTRACTING   │  内容类型检测 + 格式转换
+                    └───────┬────────┘
+                            │
+                    ┌───────▼────────┐
+                    │ FACT_EXTRACTION│  【新增】LLM 驱动的事实分解
+                    └───────┬────────┘
+                            │
+                    ┌───────▼────────┐
+                    │   CHUNKING     │  语义分块（仅在无 LLM 提取时运行）
+                    └───────┬────────┘
+                            │
+                    ┌───────▼────────┐
+                    │   EMBEDDING    │  向量化
+                    └───────┬────────┘
+                            │
+                    ┌───────▼────────┐
+                    │   INDEXING     │  图谱关系构建 + 画像更新
+                    └───────┬────────┘
+                            │
+                    ┌───────▼────────┐
+                    │     DONE       │
+                    └────────────────┘
+```
+
+**为什么放在 CHUNKING 之前？** LLM 提取直接产生 N 条原子事实（每条都是合适的 chunk），不需要传统分块。当 LLM 不可用时，降级路径仍然走传统分块。
+
+**实现：**
+
+```python
+class FactExtractor(ABC):
+    @abstractmethod
+    async def extract(
+        self, text: str, *, entity_context: str | None = None
+    ) -> list[Fact]:
+        raise NotImplementedError
+
+@dataclass
+class Fact:
+    text: str              # 1-2 句原子事实
+    memory_type: str       # "fact" | "preference" | "episodic"
+    confidence: float      # 0.0-1.0
+    summary: str           # 1 句话摘要
+
+class DeepSeekFactExtractor(FactExtractor):
+    """使用 DeepSeek V4-Flash (OpenAI 兼容 API) 进行事实提取。
+    API 失败时返回空列表，走降级路径。
+    """
+```
+
+**工厂函数：**
+
+```python
+def get_fact_extractor() -> FactExtractor | None:
+    settings = get_settings()
+    if not settings.deepseek_api_key:
+        return None  # 无 API key，跳过事实提取阶段
+    return DeepSeekFactExtractor(api_key=settings.deepseek_api_key, ...)
+```
+
+### 9.2 Chunk 数据模型扩展
+
+`emerald/pipeline/chunking/base.py:Chunk` 数据类扩展三个新字段：
+
+```python
+@dataclass
+class Chunk:
+    text: str
+    metadata: dict[str, Any]
+    memory_type: str = "fact"      # 【新增】从 FactExtractor 继承
+    confidence: float = 0.8        # 【新增】从 FactExtractor 继承
+    summary: str = ""              # 【新增】从 FactExtractor 继承
+```
+
+**字段填充路径：**
+
+| 路径 | memory_type 来源 | confidence 来源 | summary 来源 |
+|---|---|---|---|
+| LLM 提取 | LLM 分类 | LLM 评分 | LLM 生成 |
+| 传统分块 | 默认 `fact` | 硬编码 0.8 | 空字符串 |
+| Engine metadata override | API 调用方指定 | API 调用方指定 | API 调用方指定 |
+
+### 9.3 新增 SemanticTextChunker
+
+`emerald/pipeline/chunking/text.py` 新增 `SemanticTextChunker`：传统文本分块 + LLM 事实提取混合。
+
+```python
+class SemanticTextChunker(BaseChunker):
+    """传统分块后调用 LLM 提取事实。
+    适用于：长文本、多种主题混合的文档。
+    """
+    async def chunk(self, text: str, ...) -> list[Chunk]:
+        traditional_chunks = await super().chunk(text, ...)
+        if self._fact_extractor is None:
+            return traditional_chunks
+        # 对每个 chunk 提取事实，返回多个结构化 chunk
+        ...
+```
+
+### 9.4 ConversationChunker 与 FactExtractor 集成
+
+对话内容不再整段存储，而是逐条提取事实：
+
+```python
+class ConversationChunker(BaseChunker):
+    """对话分块器，每条消息可调用 FactExtractor 提取事实。"""
+    def __init__(self, fact_extractor: FactExtractor | None = None):
+        self._fact_extractor = fact_extractor
+    
+    async def chunk(self, conversation: list[Message], ...) -> list[Chunk]:
+        # 对每条消息或合并窗口调用 fact_extractor.extract()
+        # 返回 N 条结构化 Chunk
+        ...
+```
+
+### 9.5 PipelineJob 新字段
+
+```python
+class PipelineJob:
+    id: str
+    status: str
+    content_type: str                   # 【Post-v0.3.0】
+    entity_id: str
+    memory_ids: list[str]               # 【Post-v0.3.0】可能包含多个（LLM 提取后多事实）
+    fact_extraction_status: str         # 【Post-v0.3.0】"success" | "failed" | "skipped"
+```
+
+### 9.6 全异步化
+
+所有 chunker、engine、tasks 方法统一改为 `async def`：
+
+```python
+# 之前
+def chunk(self, text: str) -> list[Chunk]: ...
+
+# 之后
+async def chunk(self, text: str) -> list[Chunk]: ...
+```
+
+**原因：** Celery 任务链需要 `await`，同步方法会阻塞 worker event loop。
+
+### 9.7 异步事件循环修复
+
+`emerald/api/routes/v1/upload.py` 中 MinIO `put_object()` 是同步调用，Post-v0.3.0 改用 `asyncio.to_thread` 包裹：
+
+```python
+# 之前
+client.put_object(...)  # 阻塞整个 async 事件循环
+
+# 之后
+await asyncio.to_thread(
+    client.put_object,
+    bucket_name, object_name, data, length
+)
+```
+
+### 9.8 关系推断增强
+
+Post-v0.3.0 关系推断从「纯文本匹配」升级为「规则 + LLM」两阶段：
+
+```
+RelationshipEngine.infer(new_memory, existing_memories):
+    1. 规则路径（关键词 + 结构模板 + bigram 重叠）— 快路径
+       ├─ UPDATES / EXTENDS 命中 → 返回
+       └─ NONE → 继续
+    2. LLM 路径（DeepSeek → OpenAI 降级）— 慢路径
+       └─ 调用 LLM 判断关系类型
+```
+
+详见 [`emerald/core/relationship.py:RelationshipEngine.infer()`](../../emerald/core/relationship.py)。
+
+### 9.9 首选项强化集成到管线
+
+管线 INDEXING 阶段后调用 `engine._strengthen_preferences()`：
+
+```
+INDEXING:
+    ├─ 写 Memory 节点到 Neo4j
+    ├─ 写 Embedding 到 pgvector
+    ├─ 调用 RelationshipEngine.infer() 创建关系
+    ├─ 【Post-v0.3.0】调用 _strengthen_preferences()
+    │    ├─ 检测与已有偏好的 bigram 重叠
+    │    ├─ 重叠 ≥ 0.3 → 已有偏好 confidence +0.05（上限 0.95）
+    │    └─ 新记忆标记 is_latest=False
+    └─ 【Post-v0.3.0】调用 _check_duplicate()
+         ├─ bigram 快速过滤
+         └─ 边界情形调用 LLM 判定
+```
+
+### 9.10 Reconciliation 兜底
+
+新增 `emerald/core/reconciliation.py` 后台任务（Celery Beat 调度）：
+
+```python
+class ReconciliationEngine:
+    """修复 Neo4j 中存在但 pgvector 中缺失向量的孤立节点。"""
+    async def reconcile(self) -> int:
+        # 1. 获取最近 N 个图谱节点
+        # 2. 对每个节点检查 pgvector 是否有匹配行
+        # 3. 缺失则标记 is_latest=False + replaced_by="reconciliation_failed"
+        ...
+```
+
+**为什么需要：** 管线写入 Neo4j 后写入 pgvector，后者失败时补偿逻辑标记 `is_latest=False`。如果补偿也失败（图谱连接断开），节点孤立。Reconciliation 兜底清理。
+
+### 9.11 Redis 分布式锁
+
+Celery Beat 多实例并发防护：
+
+```python
+from emerald.core.lock import beat_lock
+
+@beat_lock(ttl_seconds=600)
+@shared_task
+def my_scheduled_task():
+    """多个 Beat 实例下只有一个会真正执行。"""
+    ...
+```
+
+协议：`SET lock-key instance-id NX EX ttl` 自动释放。
+
+### 9.12 新的可观测性指标
+
+新增 Prometheus 指标（与现有 8.2 表格合并）：
+
+| 指标名 | 类型 | 说明 |
+|---|---|---|
+| `fact_extraction_latency_seconds` | Histogram | LLM 事实提取耗时 |
+| `fact_extraction_tokens_total` | Counter | LLM token 消耗（按模型分组） |
+| `fact_extraction_failures_total` | Counter | LLM 提取失败次数 |
+| `memory_type_distribution` | Gauge | 各 memory_type 当前计数 |
+| `reconciliation_orphans_fixed` | Counter | 兜底修复的孤立节点数 |
+| `preference_strengthening_events` | Counter | 偏好强化触发次数 |
