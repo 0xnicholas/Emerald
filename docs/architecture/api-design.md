@@ -646,3 +646,128 @@ Python SDK 与 REST API 的映射关系必须一致：
 | `client.list_files(...)` | `GET /v1/files` | 列出文件 |
 | `client.connect(provider)` | `POST /v1/connectors/{provider}/connect` | 发起 OAuth |
 | `client.pipeline_status(id)` | `GET /v1/pipelines/{id}` | 管线状态 |
+
+---
+
+## 11. Post-v0.3.0 API 增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响 API 设计的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### 11.1 新增端点
+
+| 端点 | 用途 | SDK 覆盖 |
+|---|---|---|
+| `POST /v1/memories/batch` | 批量写入（最多 50 条） | ❌ 未暴露（可通过底层 httpx 手动调用） |
+| `GET /v1/graph/viewport` | 图谱可视化（节点+边） | ❌ 未暴露 |
+| `DELETE /v1/memories/{id}` | 软删除 | ❌ 未暴露（见 11.3 SDK 现状） |
+
+详见 [`docs/api/rest-guide.md`](../api/rest-guide.md) 中「高级端点」一节。
+
+### 11.2 元数据过滤（MongoDB 风格）
+
+`POST /v1/search` 请求体新增 `filters` 参数：
+
+```json
+{
+  "q": "用户偏好什么",
+  "entity_id": "user_123",
+  "search_mode": "memory",
+  "filters": {
+    "$and": [
+      {"memory_type": "preference"},
+      {"confidence": {"$gte": 0.7}}
+    ]
+  }
+}
+```
+
+**支持的 6 个操作符：**
+
+| 操作符 | 含义 | 示例 |
+|---|---|---|
+| (隐含) | 精确匹配 | `{"memory_type": "fact"}` |
+| `$eq` / `$ne` | 等于 / 不等于 | `{"memory_type": {"$eq": "fact"}}` |
+| `$gt` / `$gte` | 大于 / 大于等于 | `{"confidence": {"$gte": 0.5}}` |
+| `$lt` / `$lte` | 小于 / 小于等于 | `{"confidence": {"$lte": 0.9}}` |
+| `$and` | 所有子条件满足 | `{"$and": [{...}, {...}]}` |
+| `$or` | 任一子条件满足 | `{"$or": [{...}, {...}]}` |
+
+**Python SDK 用法：**
+
+```python
+result = await client.search(
+    q="用户偏好什么",
+    entity_id="user_123",
+    search_mode="memory",
+    filters={
+        "$and": [
+            {"memory_type": "preference"},
+            {"confidence": {"$gte": 0.7}},
+        ]
+    },
+)
+```
+
+### 11.3 SDK 暴露现状
+
+Post-v0.3.0 新增的 3 个端点**目前未在 Python SDK 中暴露方法**。临时方案：
+
+| 端点 | 临时用法 |
+|---|---|
+| `POST /v1/memories/batch` | 使用 `httpx.AsyncClient` 直接调用 |
+| `GET /v1/graph/viewport` | 使用 `httpx.AsyncClient` 直接调用 |
+| `DELETE /v1/memories/{id}` | 使用 `httpx.AsyncClient` 直接调用 |
+
+**路线图：** M3 (v0.6.0) 将补齐 SDK 方法。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### 11.4 请求/响应模型扩展
+
+**添加记忆请求体新增可选字段：**
+
+```json
+{
+  "content": "...",
+  "entity_id": "user_123",
+  "content_type": "text",
+  "memory_type": "fact",                  // 【Post-v0.3.0】覆盖 LLM 提取结果
+  "confidence": 0.95,                     // 【Post-v0.3.0】覆盖 LLM 评分
+  "valid_until": "2026-12-31T23:59:59Z",  // 【Post-v0.3.0】临时事实过期时间
+  "metadata": {                            // 【Post-v0.3.0】MongoDB 过滤的目标
+    "source": "manual_entry",
+    "tags": ["important", "verified"]
+  }
+}
+```
+
+**记忆响应扩展：**
+
+```json
+{
+  "memory_ids": ["mem_abc"],
+  "pipeline_status": "completed",
+  "memory_count": 1,
+  "facts_extracted": 3,           // 【Post-v0.3.0】LLM 提取的事实数
+  "extraction_skipped": false     // 【Post-v0.3.0】是否跳过（无 LLM key）
+}
+```
+
+### 11.5 错误码扩展
+
+Post-v0.3.0 新增 4 个业务错误码（与原有错误码体系一致）：
+
+| HTTP | 错误码 | 场景 |
+|---|---|---|
+| 422 | `BATCH_SIZE_EXCEEDED` | `/memories/batch` 超过 50 条限制 |
+| 422 | `INVALID_MEMORY_TYPE` | memory_type 不在 {fact, preference, episodic} |
+| 422 | `INVALID_VALID_UNTIL` | valid_until 不是合法 ISO 8601 时间 |
+| 404 | `MEMORY_NOT_FOUND` | `DELETE /memories/{id}` 找不到记忆 |
+
+### 11.6 API 版本演进策略
+
+| 版本 | 状态 | 兼容性 |
+|---|---|---|
+| v1 | 当前 | API 可能变更；不保证向后兼容 |
+| **v0.8 (Production-Ready Beta)** | 路线图 | API 趋于稳定；仍可能变更 |
+| **v1.0 (GA)** | 路线图 | 承诺 12 个月向后兼容 |
+
+v1.0 不会因功能完成自动触发。详见 [`docs/roadmap.md` 第 10.2 节](../roadmap.md) 中的 7 个硬性条件。

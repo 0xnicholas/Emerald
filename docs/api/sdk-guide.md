@@ -438,3 +438,186 @@ Emerald 同时提供 MCP（Model Context Protocol）服务器，供 Claude Deskt
 ```
 
 暴露的 MCP 工具：`emerald_add`、`emerald_search`、`emerald_profile`。
+
+---
+
+## Post-v0.3.0 SDK 增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响 Python SDK 的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### SDK 方法覆盖现状
+
+Python SDK (`emerald/sdk/client.py`) 当前公开 8 个方法，与 REST API 对应关系：
+
+| SDK 方法 | HTTP 端点 | v0.3.0 覆盖 | Post-v0.3.0 增强 |
+|---|---|---|---|
+| `add(content, ...)` | `POST /v1/memories` | ✅ | + `metadata` 参数、`memory_type`/`confidence`/`valid_until` 覆盖 |
+| `search(q, ...)` | `POST /v1/search` | ✅ | + `filters` 参数（MongoDB 风格） |
+| `profile(entity_id)` | `GET /v1/profiles/{id}` | ✅ | + 多因子 `importance` 评分 |
+| `upload(file, ...)` | `POST /v1/upload` | ✅ | + 异步执行（不阻塞） |
+| `health()` | `GET /v1/health` | ✅ | — |
+| `pipeline_status(id)` | `GET /v1/pipelines/{id}` | ✅ | + `fact_extraction_status` 字段 |
+| `get_memory(id)` | `GET /v1/memories/{id}` | ✅ | — |
+| `close()` | — | ✅ | — |
+
+**SDK 未覆盖的 Post-v0.3.0 新端点**（临时通过 httpx 调用）：
+
+```python
+# POST /v1/memories/batch
+import httpx
+async with httpx.AsyncClient(base_url=client.base_url, headers=client._headers) as h:
+    resp = await h.post("/v1/memories/batch", json={"memories": [...]})
+
+# GET /v1/graph/viewport
+resp = await h.get("/v1/graph/viewport", params={"entity_id": "...", "limit": 100})
+
+# DELETE /v1/memories/{id}
+resp = await h.delete(f"/v1/memories/{memory_id}")
+```
+
+**路线图：** M3 (v0.6.0) 将补齐这些方法为 SDK 一等公民。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### 新增 `filters` 参数（搜索）
+
+```python
+# 查找高置信度的偏好记忆
+result = await client.search(
+    q="用户偏好什么",
+    entity_id="user_123",
+    search_mode="memory",
+    filters={
+        "$and": [
+            {"memory_type": "preference"},
+            {"confidence": {"$gte": 0.7}},
+        ]
+    },
+)
+
+# 查找最近 30 天的 fact 或 episodic
+import datetime
+from datetime import timezone
+thirty_days_ago = (datetime.now(timezone.utc) - datetime.timedelta(days=30)).isoformat()
+
+result = await client.search(
+    q="用户最近在做什么",
+    entity_id="user_123",
+    filters={
+        "$or": [
+            {"memory_type": "fact"},
+            {"memory_type": "episodic"},
+        ],
+        "created_at": {"$gte": thirty_days_ago},  # 注：created_at 过滤需要服务端支持
+    },
+)
+```
+
+**支持的操作符：** `$eq`、`$ne`、`$gt`、`$gte`、`$lt`、`$lte`、`$and`、`$or`。详见 [`docs/architecture/api-design.md`](../architecture/api-design.md) §11.2。
+
+### `add()` 新增 metadata override
+
+```python
+# 覆盖 LLM 提取结果（高级用户场景）
+result = await client.add(
+    content="用户偏好 TypeScript",  # LLM 通常会归类为 preference
+    entity_id="user_123",
+    memory_type="preference",        # 显式指定
+    confidence=0.95,                  # 跳过 LLM 评分
+    valid_until=None,                 # 永不过期（默认）
+    metadata={
+        "source": "manual_entry",
+        "tags": ["important", "verified"],
+        "captured_by": "operator_jane",
+    },
+)
+```
+
+**注意：** 设置 `memory_type`/`confidence` 后，引擎跳过 LLM 提取阶段（节省 token 成本）。但你仍需保证内容确实属于该类型。
+
+### `pipeline_status()` 返回 `fact_extraction_status`
+
+```python
+status = await client.pipeline_status(pipeline_id)
+print(f"事实提取: {status.fact_extraction_status}")  # "success" | "failed" | "skipped"
+print(f"提取事实数: {status.memory_count}")           # 可能 > 1（LLM 提取后多事实）
+```
+
+### 错误处理增强
+
+Post-v0.3.0 SDK 抛出更具体的异常类型（基于 HTTP 错误码）：
+
+| HTTP | SDK 异常 | 场景 |
+|---|---|---|
+| 401 | `EmeraldAuthError` | API Key 无效或过期 |
+| 404 | `EmeraldNotFoundError` | 记忆/画像/管线不存在 |
+| 422 | `EmeraldValidationError` | 请求体验证失败（包含字段级错误） |
+| 429 | `EmeraldRateLimitError` | 速率限制（带 `Retry-After` header） |
+| 5xx | `EmeraldServerError` | 服务端错误（自动重试 3 次） |
+| 网络错误 | `EmeraldNetworkError` | 连接超时、DNS 失败等 |
+
+```python
+from emerald.sdk.exceptions import (
+    EmeraldAuthError, EmeraldValidationError, EmeraldRateLimitError
+)
+
+try:
+    result = await client.add(content=..., entity_id=...)
+except EmeraldValidationError as e:
+    print(f"字段错误: {e.field_errors}")  # {"memory_type": "must be one of fact, preference, episodic"}
+except EmeraldRateLimitError as e:
+    await asyncio.sleep(e.retry_after)  # 自动从 Retry-After header 读取
+    # 重试...
+```
+
+### SDK 安装方式变化
+
+Post-v0.3.0 推荐使用 `uv` 而非 `pip`：
+
+```bash
+# 推荐（10× 更快）
+uv add emerald-sdk
+
+# 兼容
+pip install emerald-sdk
+```
+
+**源码安装（开发场景）：**
+
+```bash
+git clone https://github.com/your-org/Emerald.git
+cd Emerald
+uv pip install -e emerald/sdk
+```
+
+### 异步上下文管理器（增强）
+
+```python
+# 之前
+client = EmeraldClient()
+result = await client.add(...)
+await client.close()
+
+# 之后（推荐）
+async with EmeraldClient() as client:
+    result = await client.add(...)
+    # 退出 with 块时自动 close()
+```
+
+### 调试技巧
+
+```python
+# 启用详细日志（默认 WARNING）
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+# 查看原始 HTTP 请求/响应
+client = EmeraldClient()
+client._client = httpx.AsyncClient(
+    base_url=client.base_url,
+    headers=client._headers,
+    timeout=30.0,
+    event_hooks={
+        "request": [lambda r: print(f">>> {r.method} {r.url}")],
+        "response": [lambda r: print(f"<<< {r.status_code} {r.url}")],
+    },
+)
+```

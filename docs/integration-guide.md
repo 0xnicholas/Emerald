@@ -534,3 +534,201 @@ docker compose up -d mcp
 | 提取依赖缺失 | 抛 `ExtractionError`，不阻塞管线 |
 | 速率限制 | HTTP 429，等待 `Retry-After` 后重试 |
 | 文件损坏 | 单文件失败不阻塞其他文件同步 |
+
+---
+
+## 13. Post-v0.3.0 集成增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响集成路径的重大变更。详见 [`docs/roadmap.md`](roadmap.md)。
+
+### 13.1 LLM 事实提取集成（核心变更）
+
+Post-v0.3.0 中，摄入到 Emerald 的内容不再原样存储，而是被 LLM 分解为多条结构化事实。
+
+**对集成方的影响：**
+
+| 之前 | 之后 |
+|---|---|
+| 发送 1 段对话 → 返回 1 个 memory_id | 发送 1 段对话 → 返回 N 个 memory_id（LLM 提取的多条事实） |
+| 记忆的 content == 原始文本 | 记忆的 content == LLM 提取的 1-2 句原子事实 |
+| 没有 memory_type / confidence | 每个记忆自动分类 (fact/preference/episodic) 并评分 (0-1) |
+
+**集成代码适配示例：**
+
+```python
+# 之前
+result = await client.add(content="...", entity_id="user_123")
+# result.memory_ids == ["mem_xxx"]
+# 单个记忆包含整段原始文本
+
+# 之后
+result = await client.add(content="...", entity_id="user_123")
+# result.memory_ids 可能是 ["mem_001", "mem_002", "mem_003"]
+# 每个记忆是 LLM 提取的原子事实
+# 可以查看 result.facts_extracted 等元数据
+```
+
+**如果需要 LLM 不介入：** 在调用 `add()` 时显式指定 `memory_type` 和 `confidence`（SDK / REST 都支持），引擎会跳过 LLM 提取。
+
+```python
+result = await client.add(
+    content="用户偏好 TypeScript",
+    entity_id="user_123",
+    memory_type="preference",
+    confidence=0.95,
+    # 跳过 LLM 提取，直接存入
+)
+```
+
+**降级行为：** 无 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY` 时，引擎走降级路径——整段文本作为单个 chunk，memory_type 默认 `fact`。
+
+### 13.2 批量添加集成
+
+Post-v0.3.0 新增 `POST /v1/memories/batch` 端点，一次最多 50 条：
+
+```python
+# REST
+async with httpx.AsyncClient(...) as h:
+    resp = await h.post("/v1/memories/batch", json={
+        "memories": [
+            {"content": "...", "entity_id": "user_a"},
+            {"content": "...", "entity_id": "user_a"},
+            {"content": "...", "entity_id": "user_b", "memory_type": "preference"},
+        ]
+    })
+```
+
+**SDK 暂未暴露 batch 方法**——临时通过 httpx 调用。详见 [`docs/architecture/api-design.md`](architecture/api-design.md) §11.1。
+
+**适用场景：**
+- 预填充：从 CSV/数据库批量导入历史记录
+- 多用户隔离：一次提交多个 entity 的内容
+- 离线批处理：定期上传积累的内容
+
+### 13.3 元数据过滤集成
+
+Post-v0.3.0 搜索支持 MongoDB 风格 metadata 过滤：
+
+```python
+# 仅检索高置信度偏好
+result = await client.search(
+    q="用户偏好什么",
+    entity_id="user_123",
+    filters={
+        "$and": [
+            {"memory_type": "preference"},
+            {"confidence": {"$gte": 0.7}},
+        ]
+    },
+)
+
+# 检索最近事实或情节
+result = await client.search(
+    q="用户最近在做什么",
+    entity_id="user_123",
+    filters={
+        "$or": [
+            {"memory_type": "fact"},
+            {"memory_type": "episodic"},
+        ]
+    },
+)
+```
+
+### 13.4 图谱可视化集成（前端场景）
+
+Post-v0.3.0 新增 `GET /v1/graph/viewport`，返回节点+边数据供 D3.js / vis-network 渲染：
+
+```python
+# 获取图谱可视化数据
+async with httpx.AsyncClient(...) as h:
+    resp = await h.get(
+        "/v1/graph/viewport",
+        params={"entity_id": "user_123", "limit": 100},
+    )
+    graph_data = resp.json()["data"]
+    # graph_data["nodes"]: [{"id": "mem_xxx", "label": "...", "memory_type": "fact"}, ...]
+    # graph_data["edges"]: [{"source": "mem_yyy", "target": "mem_xxx", "type": "EXTENDS"}, ...]
+```
+
+**前端集成示例（D3.js）：**
+
+```javascript
+// 使用 d3-force + d3-drag 渲染
+const graphData = await fetch(`/v1/graph/viewport?entity_id=${userId}&limit=100`)
+  .then(r => r.json()).then(d => d.data);
+
+const simulation = d3.forceSimulation(graphData.nodes)
+  .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+  .force("charge", d3.forceManyBody().strength(-200))
+  .force("center", d3.forceCenter(width / 2, height / 2));
+```
+
+### 13.5 软删除集成
+
+Post-v0.3.0 新增 `DELETE /v1/memories/{id}` 软删除：
+
+```python
+async with httpx.AsyncClient(...) as h:
+    resp = await h.delete(f"/v1/memories/{memory_id}")
+    # 返回 {"data": {"memory_id": "...", "deleted_at": "...", "is_latest": false}, ...}
+```
+
+**软删除语义：** 记忆 `is_latest=False`，不在默认搜索返回，但保留在数据库中可追溯。如需硬删除（GDPR 等），联系运维手动执行。
+
+### 13.6 集成方需要关注的 Post-v0.3.0 兼容性
+
+| 集成类型 | 是否需要调整 | 原因 |
+|---|---|---|
+| 简单添加+搜索 | ❌ 无需调整 | API 表面不变 |
+| 精确记忆 ID 跟踪 | ✅ **需要适配** | 1 段输入可能产生 N 个记忆 |
+| 自定义 content_type 处理 | ⚠️ 需验证 | LLM 提取后会忽略某些自定义字段 |
+| 实时同步（每分钟级） | ⚠️ 需关注配额 | LLM 提取增加 token 消耗 |
+| 预填充大量历史数据 | ✅ 用 batch 端点 | `/memories/batch` 性能更好 |
+
+### 13.7 本地嵌入集成（数据敏感场景）
+
+如果你的场景禁止外部 API 调用，Post-v0.3.0 支持 fastembed 本地嵌入：
+
+```bash
+# .env
+EMBEDDING_PROVIDER=fastembed
+FASTEMBED_MODEL=BAAI/bge-small-en-v1.5
+pip install fastembed
+```
+
+**注意：** LLM 事实提取（DeepSeek/OpenAI）仍需要外部 API。仅嵌入可本地化。
+
+**完全离线场景：** 暂不支持（事实提取是 Emerald 核心价值）。建议等待 M3+ 路线图中的小型 LLM 集成方案。
+
+### 13.8 MCP 集成增强
+
+Post-v0.3.0 中 MCP Server 保持稳定（3 个工具：`emerald_add`、`emerald_search`、`emerald_profile`）。但工具返回格式有变化：
+
+```json
+// emerald_search 工具返回
+{
+  "results": [
+    {
+      "id": "mem_xxx",
+      "content": "用户在 Stripe 工作",
+      "summary": "...",           // 【新增】LLM 生成的摘要
+      "score": 0.92,
+      "memory_type": "fact",      // 【新增】自动分类
+      "source": "memory"          // 可能为 "memory" / "memory_expanded" / "rag"
+    }
+  ],
+  "profile": {...}               // 可选，并行调用
+}
+```
+
+Claude Desktop 集成无需变更；MCP 客户端会自动适配新字段。
+
+### 13.9 路线图集成影响
+
+| 里程碑 | 对集成方的影响 |
+|---|---|
+| M2 (v0.5.0) | TypeScript SDK v1 发布，TypeScript/JS 集成成为一等公民 |
+| M3 (v0.6.0) | LangChain.js / Vercel AI SDK 集成，框架生态扩展 |
+| M4 (v0.7.0) | 多跳推理，搜索结果可能包含 DERIVES_FROM 链 |
+| M5 (v0.8.0) | Production-Ready Beta，SLA 文档发布，集成方需关注性能承诺 |

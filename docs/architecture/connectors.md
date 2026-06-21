@@ -434,3 +434,117 @@ class GitHubConnector(BaseConnector): ...
 | Slack | P2 | Slack OAuth |
 | Discord | P3 | Discord OAuth |
 | Web Crawler | P3 | 无（纯 HTTP 抓取） |
+
+---
+
+## 10. Post-v0.3.0 连接器增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响连接器的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
+
+### 10.1 连接器实施状态（实际 vs 规划）
+
+v0.3.0 已实现（4 个连接器，commit `b5dd940` + 后续增强）：
+
+| 连接器 | 文件 | 实施状态 |
+|---|---|---|
+| GitHub | `emerald/connectors/github.py` | ✅ 完成（358 行） |
+| Google Drive | `emerald/connectors/google_drive.py` | ✅ 完成（404 行） |
+| Gmail | `emerald/connectors/gmail.py` | ✅ 完成（367 行） |
+| Notion | `emerald/connectors/notion.py` | ✅ 完成（476 行） |
+| OneDrive / Slack / Discord / Web Crawler | — | ❌ 未开始 |
+
+### 10.2 Redis 分布式锁（多实例 Beat 防护）
+
+Post-v0.3.0 commit `83cba27` 引入 `emerald/core/lock.py`，**所有连接器定时同步任务都受影响**：
+
+```python
+from emerald.core.lock import beat_lock
+
+@beat_lock(ttl_seconds=3600)  # 1 小时锁
+@shared_task
+def sync_github_repos():
+    """同一小时只有一个 Beat 实例会真正执行同步。"""
+    ...
+```
+
+**部署影响：** 如果 K8s Deployment `replicas > 1`，不锁会导致：
+- 同一文件被多次同步（重复入库）
+- 触发 LLM 提取 API 额外调用
+- 浪费 OAuth API 配额
+
+**现有连接器是否应用锁：** v0.3.0 release 时连接器任务未应用锁，是 Post-v0.3.0 应当补齐的项（见 10.6）。
+
+### 10.3 Reconciliation 对连接器的影响
+
+Post-v0.3.0 commit `251e8ed` 引入 `ReconciliationEngine`：
+
+**问题：** 连接器同步路径为「外部 API → MinIO 存储 → 管线摄入」。如果管线摄入失败（如 LLM 提取服务临时不可用），文件已存储但未索引。
+
+**Reconciliation 解决方案：**
+- 每 30 分钟扫描最近 N 个图谱节点
+- 检查 pgvector 是否有匹配行
+- 缺失则标记 `is_latest=False` + `replaced_by="reconciliation_failed"`
+- 管理员可手动重试这些文件
+
+**对连接器任务的影响：** 重试失败的同步时，需要先过滤掉 `replaced_by="reconciliation_failed"` 的文件，避免重复处理。
+
+### 10.4 OAuth Token 刷新增强
+
+Post-v0.3.0 中 OAuth token 刷新路径统一使用 `emerald/connectors/auth.py:TokenManager`：
+
+```python
+class TokenManager:
+    async def get_valid_token(self, connector_id: str) -> str:
+        """获取有效 token，必要时自动刷新。"""
+        token = await self._load_token(connector_id)
+        if token.expires_at < now():
+            token = await self._refresh(connector_id)
+        return token.access_token
+```
+
+**之前：** 各连接器自行实现刷新逻辑，容易遗漏边界条件。
+
+### 10.5 Webhook 签名验证（Post-v0.3.0 增强）
+
+Post-v0.3.0 commit 增强了 webhook 签名验证（`emerald/api/routes/connectors.py`）：
+
+| 提供商 | 签名头 | 算法 |
+|---|---|---|
+| GitHub | `X-Hub-Signature-256` | HMAC-SHA256 |
+| Google Drive | `X-Goog-Channel-Token` | HMAC-SHA256 |
+| Gmail (Pub/Sub) | Pub/Sub JWT verification | JWT |
+| Notion | `X-Notion-Signature` | HMAC-SHA256 |
+
+**Post-v0.3.0 新增：** 统一签名验证中间件 `verify_connector_signature()`，避免每个连接器各自实现。
+
+### 10.6 连接器任务与管线集成（Post-v0.3.0 改变）
+
+**之前：** 连接器直接调用 `MemoryEngine.add()`，同步等待。
+
+**之后：** 连接器提交到 Celery 异步管线（与 `POST /v1/upload` 一致）：
+
+```python
+class BaseConnector:
+    async def submit_for_indexing(self, file_path: str, entity_id: str) -> str:
+        """提交文件到处理管线，返回 pipeline_id。"""
+        pipeline_job = await self._create_pipeline_job(file_path, entity_id)
+        await self._submit_celery_task(pipeline_job.id)
+        return pipeline_job.id
+```
+
+**好处：**
+- 统一管线状态管理
+- LLM 提取在 worker 中执行（不阻塞连接器任务）
+- 自动重试 + 死信处理
+
+### 10.7 实施缺失项（路线图补齐）
+
+| 项 | 优先级 | 说明 |
+|---|---|---|
+| `beat_lock` 应用到所有连接器同步任务 | P0 (M1) | 多实例 Beat 防重复 |
+| Reconciliation 对接连接器失败重试 | P0 (M1) | 失败文件可手动重试 |
+| OneDrive 连接器 | P2 (M3+) | 用户需求验证后启动 |
+| Slack 连接器 | P2 (M3+) | 同上 |
+| Web Crawler 连接器 | P3 (M3+) | 通用网页抓取 |
+
+详见 [`docs/roadmap.md`](../roadmap.md) 中主题 A（生产加固）和主题 C（生态扩展）。
