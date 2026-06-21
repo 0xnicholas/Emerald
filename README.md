@@ -294,7 +294,9 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**v0.3.0** — 核心功能全部实现并通过测试（548 tests passing）。
+**当前 HEAD** (post-v0.3.0, 33 commits) — v0.3.0 + 重大增强，**601 test 函数定义**（~548 passed, 9 skipped, 53 parametrize 展开）。详见 [`docs/roadmap.md`](docs/roadmap.md) v0.4 → v0.8 路线图。
+
+### v0.3.0 核心模块
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -308,14 +310,34 @@ docker compose up -d mcp
 | Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status |
 | 连接器 | ✅ 完整 | GitHub、Google Drive、Gmail、Notion（OAuth + 增量同步） |
 | MCP Server | ✅ 完整 | stdio + SSE 双模式 |
-| 基准测试 | ✅ 完整 | LongMemEval / LoCoMo / ConvoMem 风格评估脚本 |
-| 可观测性 | ✅ 部分 | Prometheus 指标 (`/v1/metrics`)、结构化 JSON 日志 |
+| 基准测试 | ✅ 完整 | LongMemEval / LoCoMo / ConvoMem 风格评估脚本，6 维度 + JSON 报告 |
+| 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + **OpenTelemetry 手动 span 集成** |
 | Docker E2E | ✅ 完整 | `docker-compose.test.yml` + `.env.test`，全栈集成测试通过 |
 
-规划中：
-- K8s 生产部署模板
-- 框架集成（LangChain、OpenAI Agents SDK 等）
-- 开源记忆基准测试框架
+### v0.3.0 之后的增强（post-release commits，未发布）
+
+- 🆕 **LLM 事实提取**：DeepSeek V4-Flash 驱动的多事实分解、类型分类、置信度评分
+- 🆕 **图谱搜索遍历**：`_expand_relationships()` 沿 EXTENDS/DERIVES_FROM 双向遍历
+- 🆕 **首选项强化**：重复偏好 +0.05 置信度
+- 🆕 **本地嵌入**：[fastembed](https://github.com/qdrant/fastembed)（ONNX 无 PyTorch）
+- 🆕 **批量写入**：`POST /v1/memories/batch`（最多 50 条）
+- 🆕 **图谱可视化**：`GET /v1/graph/viewport`
+- 🆕 **元数据过滤**：MongoDB 风格（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`）
+- 🆕 **双写一致性**：`ReconciliationEngine` 后台修复孤立节点
+- 🆕 **Redis 分布式锁**：防止 Celery Beat 多实例并发
+- 🆕 **Neo4j 生产配置**：连接池、超时、重试
+- 🆕 **CORS 加固**：环境变量区分 dev/prod 模式
+- 🆕 **关系推断 LLM 化**：DeepSeek → OpenAI 降级路径
+- 🆕 **ForgetEngine 生产修复**：`GraphStore.list_entity_ids()`
+- 🆕 **多因子画像评分**：置信度 35% + 时近性 25% + 类型 20% + 关系 20%
+
+### 规划中（详见 [roadmap](docs/roadmap.md)）
+
+- **M1 (v0.4.0)**：Dockerfile 优化、K8s 灾备演练、OpenTelemetry 自动 instrumentation、真实 LLM 基准跑分、CI 自动化
+- **M2 (v0.5.0)**：v2 API 实质化、Cross-encoder 重排序、**TypeScript SDK v1**、安全审计
+- **M3 (v0.6.0)**：NER、多跳推理、LangChain.js/Vercel AI/Mastra 集成
+- **M4 (v0.7.0)**：高级遗忘、负载测试、Staging 压测
+- **M5 (v0.8.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
 
 ## OpenAI API Key
 
@@ -347,7 +369,7 @@ docker compose -f docker-compose.test.yml up -d
 cp .env.test .env.test.local  # 按需修改
 set -a && source .env.test && set +a
 alembic upgrade head
-pytest  # 548 passed, 9 skipped
+pytest  # 601 test functions; ~548 passed, 9 skipped (some parametrize expanded)
 ```
 
 ---

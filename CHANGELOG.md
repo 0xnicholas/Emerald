@@ -42,6 +42,74 @@ All notable changes to this project will be documented in this file.
 - `pipeline/tasks.py` now uses default registries for extract and chunk Celery tasks
 - All 484 unit tests now pass (previously 2 tests failed due to missing `OPENAI_API_KEY` in CI)
 
+## [Unreleased] — Post-v0.3.0 (2026-06-02 to 2026-06-21)
+
+> **状态：** 33 commits after v0.3.0 release。未作为 v0.4.0 发布（需要 M1 实施完成后升版本号）。详见 [`docs/roadmap.md`](docs/roadmap.md) 与 [`docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`](docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md)。
+
+### Added
+
+#### M3 — Graph Intelligence 补齐
+- **LLM 事实提取** (`emerald/pipeline/chunking/fact_extractor.py`)：DeepSeek V4-Flash 驱动的多事实分解、类型分类（fact/preference/episodic）、置信度评分、summary 生成
+- **图谱搜索遍历** (`emerald/core/search.py:_expand_relationships`)：沿 EXTENDS / DERIVES_FROM 关系双向深度=1 遍历，`expansion_factor=0.85`
+- **首选项强化** (`emerald/core/engine.py:_strengthen_preferences`)：重复偏好 +0.05 置信度（上限 0.95）
+- **关系推断 LLM 化** (`emerald/core/relationship.py`)：DeepSeek 优先，OpenAI 降级
+- **语义去重** (`emerald/core/engine.py:_check_duplicate`)：bigram 快速过滤 + LLM 边界判定
+- **多因子画像评分** (`emerald/core/profile.py:_compute_importance`)：置信度 35% + 时近性 25% + 类型 20% + 关系 20%
+
+#### API 增强
+- `POST /v1/memories/batch` — 批量写入（最多 50 条）
+- `GET /v1/graph/viewport` — 图谱可视化（节点+边）
+- MongoDB 风格元数据过滤：`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`
+- 查询改写 LLM 化：DeepSeek 语义扩展替代模式匹配
+
+#### 本地嵌入
+- **fastembed 支持** (`emerald/core/embedder.py`)：ONNX runtime，无 PyTorch 依赖，完全离线运行
+
+#### 生产基础设施
+- `ReconciliationEngine` (`emerald/core/reconciliation.py`)：后台修复 Neo4j 孤立节点（双写一致性补偿）
+- Redis 分布式锁 (`emerald/core/lock.py`)：防止 Celery Beat 多实例并发执行
+- Neo4j 生产配置：连接池 50、超时 30s、重试 30s
+- CORS 生产加固：环境变量区分 wildcard 与严格模式
+- `GraphStore.update_memory_confidence()`：原子置信度更新
+- `GraphStore.get_related_memories()`：双向关系遍历
+- `GraphStore.list_entity_ids()`：修复 ForgetEngine 生产环境失效
+
+#### 基准测试
+- 升级至 6 维度评估（Fact Recall / Temporal Updates / Relationship Class / Profile Accuracy / Distractor Resist / Forgetting Correctness）
+- 对齐 LongMemEval / LoCoMo / ConvoMem 三大公开基准
+- `scripts/run_benchmarks.py` 从 ~250 行扩展到 1154 行
+- JSON 报告自动生成到 `reports/benchmark-YYYYMMDD-HHMMSS.json`
+- `reports/` 已添加至 `.gitignore`
+
+#### 文档
+- `docs/comparison-supermemory.md` v2 重写（495 行）：对比矩阵完整反转——三项 P0 致命差距中两项已修复
+- `docs/roadmap.md`：post-v0.3.0 战略路线图（4 主题、5 里程碑 v0.4-v0.8、依赖驱动、不锁死时间）
+- `docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`：M1 (v0.4.0) 实施计划（2228 行，TDD bite-sized 任务）
+- 删除本地 `_references/supermemory-main` 仓库引用
+
+### Fixed
+- 异步阻塞修复：`emerald/api/routes/v1/upload.py` 改用 `asyncio.to_thread` 包裹 MinIO 同步调用
+- 5 个测试失败修复：tracing、code chunker、API route leakage
+- CORS 配置生产加固（移除硬编码 `allow_origins=["*"]`）
+- stdlib logging 误用 structlog 关键字参数导致 OTel 缺失时导入崩溃
+- `pipeline/tasks.py` 改用默认 registry 以避免空 registry 运行时失败
+- 移除 dead code `raw_content_ref`，改进 dedup 归一化
+- 恢复 `ConversationChunker.__init__` 中 `FactExtractor` 注入（在 merge 中丢失）
+- `engine.add()` 与 `pipeline/tasks.py` 全面异步化
+- 所有 chunker `chunk()` 方法统一改为 `async def`
+
+### Test Coverage
+- 测试函数定义数：537 → **601**（+64，+12%）
+- 重点新增：
+  - `tests/pipeline/test_fact_extractor.py`（11 tests，DeepSeekFactExtractor）
+  - `tests/pipeline/test_semantic_text_chunker.py`（6 tests）
+  - `tests/pipeline/test_conversation_chunker.py`（+49 tests）
+  - `tests/unit/test_lock.py`（Redis 锁）
+  - `tests/unit/test_reconciliation.py`（双写一致性）
+  - `tests/unit/test_embedder.py`（fastembed）
+  - `tests/core/test_search.py`（+193 行图谱遍历测试）
+- 5 个测试失败 → 全部修复
+
 ## [0.2.0] — 2026-05-27
 
 ### Added
