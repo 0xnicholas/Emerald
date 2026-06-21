@@ -56,7 +56,7 @@
 
 **新能力**：
 - ✅ `POST /v1/memories/batch`（批量 50 条）
-- ✅ `GET /v1/graph/viewport`（图谱可视化）
+- ✅ `GET /v1/memories/graph`（图谱可视化）
 - ✅ MongoDB 风格元数据过滤（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`）
 - ✅ 语义去重（bigram 快速过滤 + LLM 边界判定）
 - ✅ 多因子画像评分（confidence 35% + recency 25% + type 20% + rels 20%）

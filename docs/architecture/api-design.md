@@ -658,7 +658,7 @@ Python SDK 与 REST API 的映射关系必须一致：
 | 端点 | 用途 | SDK 覆盖 |
 |---|---|---|
 | `POST /v1/memories/batch` | 批量写入（最多 50 条） | ❌ 未暴露（可通过底层 httpx 手动调用） |
-| `GET /v1/graph/viewport` | 图谱可视化（节点+边） | ❌ 未暴露 |
+| `GET /v1/memories/graph` | 图谱可视化（节点+边） | ❌ 未暴露 |
 | `DELETE /v1/memories/{id}` | 软删除 | ❌ 未暴露（见 11.3 SDK 现状） |
 
 详见 [`docs/api/rest-guide.md`](../api/rest-guide.md) 中「高级端点」一节。
@@ -715,7 +715,7 @@ Post-v0.3.0 新增的 3 个端点**目前未在 Python SDK 中暴露方法**。�
 | 端点 | 临时用法 |
 |---|---|
 | `POST /v1/memories/batch` | 使用 `httpx.AsyncClient` 直接调用 |
-| `GET /v1/graph/viewport` | 使用 `httpx.AsyncClient` 直接调用 |
+| `GET /v1/memories/graph` | 使用 `httpx.AsyncClient` 直接调用 |
 | `DELETE /v1/memories/{id}` | 使用 `httpx.AsyncClient` 直接调用 |
 
 **路线图：** M3 (v0.6.0) 将补齐 SDK 方法。详见 [`docs/roadmap.md`](../roadmap.md)。

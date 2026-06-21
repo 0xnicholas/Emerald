@@ -637,13 +637,13 @@ result = await client.search(
 
 ### 13.4 图谱可视化集成（前端场景）
 
-Post-v0.3.0 新增 `GET /v1/graph/viewport`，返回节点+边数据供 D3.js / vis-network 渲染：
+Post-v0.3.0 新增 `GET /v1/memories/graph`，返回节点+边数据供 D3.js / vis-network 渲染：
 
 ```python
 # 获取图谱可视化数据
 async with httpx.AsyncClient(...) as h:
     resp = await h.get(
-        "/v1/graph/viewport",
+        "/v1/memories/graph",
         params={"entity_id": "user_123", "limit": 100},
     )
     graph_data = resp.json()["data"]
@@ -655,7 +655,7 @@ async with httpx.AsyncClient(...) as h:
 
 ```javascript
 // 使用 d3-force + d3-drag 渲染
-const graphData = await fetch(`/v1/graph/viewport?entity_id=${userId}&limit=100`)
+const graphData = await fetch(`/v1/memories/graph?entity_id=${userId}&limit=100`)
   .then(r => r.json()).then(d => d.data);
 
 const simulation = d3.forceSimulation(graphData.nodes)

@@ -567,12 +567,12 @@ Content-Type: application/json
 
 **限制：** 每次最多 50 条。超出返 422 错误。
 
-### 9b. 获取图谱节点和边 — `GET /graph/viewport`
+### 9b. 获取图谱节点和边 — `GET /memories/graph`
 
 返回实体图谱的节点+边数据，供 D3.js / vis-network 等可视化库使用。
 
 ```http
-GET /v1/graph/viewport?entity_id=user_alex&limit=100
+GET /v1/memories/graph?entity_id=user_alex&limit=100
 Authorization: Bearer em_xxx
 ```
 

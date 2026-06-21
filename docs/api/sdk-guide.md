@@ -468,8 +468,8 @@ import httpx
 async with httpx.AsyncClient(base_url=client.base_url, headers=client._headers) as h:
     resp = await h.post("/v1/memories/batch", json={"memories": [...]})
 
-# GET /v1/graph/viewport
-resp = await h.get("/v1/graph/viewport", params={"entity_id": "...", "limit": 100})
+# GET /v1/memories/graph
+resp = await h.get("/v1/memories/graph", params={"entity_id": "...", "limit": 100})
 
 # DELETE /v1/memories/{id}
 resp = await h.delete(f"/v1/memories/{memory_id}")

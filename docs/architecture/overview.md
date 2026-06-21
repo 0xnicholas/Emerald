@@ -248,7 +248,7 @@ search_mode = "rag"    → 仅向量相似度搜索
 
 ## 6. Post-v0.3.0 增强（2026-06-02 之后）
 
-> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后 33 个 commit 中的重大架构变更。未作为独立版本发布，将在路线图 v0.4 → v0.8 中逐步发布。完整 roadmap 见 [`docs/roadmap.md`](../../roadmap.md)。
+> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后 33 个 commit 中的重大架构变更。未作为独立版本发布，将在路线图 v0.4 → v0.8 中逐步发布。完整 roadmap 见 [`docs/roadmap.md`](../roadmap.md)。
 
 ### 6.1 事实提取从「格式转换」升级为「语义理解」
 
@@ -354,7 +354,7 @@ importance = 0.35 × confidence
 | 端点 | 用途 |
 |---|---|
 | `POST /v1/memories/batch` | 批量写入最多 50 条 |
-| `GET /v1/graph/viewport` | 图谱节点+边可视化数据（D3/vis-network） |
+| `GET /v1/memories/graph` | 图谱节点+边可视化数据（D3/vis-network） |
 | `DELETE /v1/memories/{id}` | 软删除（标记 `is_latest=False`） |
 | MongoDB 风格 metadata 过滤（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`） | 在 search 接口的 `filters` 参数中 |
 

@@ -20,7 +20,7 @@
 | **记忆类型自动检测** | ✅ **已实现** fact/preference/episodic 三类自动分类（LLM 提取阶段） | ✅ 类型检测 | 🟢 **已对齐** |
 | **元数据过滤** | ✅ MongoDB 风格（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`） | ✅ 复杂过滤 | 🟢 已对齐 |
 | **批量写入** | ✅ `POST /v1/memories/batch`（最多 50 条） | ✅ | 🟢 已对齐 |
-| **图谱可视化** | ✅ `GET /v1/graph/viewport`（节点+边） | ✅ | 🟢 已对齐 |
+| **图谱可视化** | ✅ `GET /v1/memories/graph`（节点+边） | ✅ | 🟢 已对齐 |
 | **基准测试** | ✅ 6 维度 / 1154 行 / JSON 报告（实际跑分中） | ✅ LongMemEval/LoCoMo/ConvoMem 公开分数 | 🟡 跑分存在但需真实 LLM |
 | **本地嵌入** | ✅ **新** fastembed（ONNX，无 PyTorch） | ❌ 仅云端 | 🟢 **Emerald 优势** |
 | **双写一致性** | ✅ **新** ReconciliationEngine（后台修复孤立节点） | ✅ | 🟢 已对齐 |
@@ -225,7 +225,7 @@ async def _strengthen_preferences(self, chunks, memory_ids, entity_id, metadata=
 | 端点 / 能力 | 状态 | 实现位置 |
 |---|---|---|
 | `POST /v1/memories/batch` | ✅ 新增（最多 50 条） | `api/routes/v1/memories.py:94` |
-| `GET /v1/graph/viewport` | ✅ 新增（节点+边，可视化用） | `api/routes/v1/system.py:77` |
+| `GET /v1/memories/graph` | ✅ 新增（节点+边，可视化用） | `api/routes/v1/system.py:77` |
 | 元数据过滤 `$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne` | ✅ 新增 | `core/search.py:263-321` |
 | Engine metadata override | ✅ `memory_type`/`confidence`/`valid_until` | `core/engine.py` |
 | Query rewrite LLM 化 | ✅ DeepSeek → OpenAI 降级 | `core/search.py:584-605` |
@@ -389,7 +389,7 @@ def my_scheduled_task():
 | 5 | **`engine.add()` metadata 覆盖** `memory_type`/`confidence`/`valid_until` | `engine.py` |
 | 6 | **ForgetEngine 生产修复** `GraphStore.list_entity_ids()` | `graph.py:200` |
 | 7 | **`/v1/memories/batch`** 批量 50 条 | `api/routes/v1/memories.py:94` |
-| 8 | **`/v1/graph/viewport`** 节点+边可视化 | `api/routes/v1/system.py:77` |
+| 8 | **`/v1/memories/graph`** 节点+边可视化 | `api/routes/v1/system.py:77` |
 
 ### 8.1 本地嵌入（Emerald 差异化优势）
 
@@ -448,7 +448,7 @@ WEIGHT_RELATIONSHIPS = 0.20    # 关系数归一化到 [0,1]
 | **P1** | 至少 2 个框架集成：LangChain.js + Vercel AI SDK | 进入主流 AI 开发生态是 Supermemory 拉开差距的主因 | 2-3 周 |
 | **P1** | v2 API 真实改进（v2 是 v1 别名问题） | 至少实现分页、限流、`customId` 幂等 3 项实质差异 | 1-2 周 |
 | **P2** | 关系推断规则路径重写为 LLM-first（仅在 LLM 不可用时降级到规则） | 当前 LLM 是降级路径，与最佳实践相反 | 1 周 |
-| **P2** | NER 实体抽取层（在 LLM 提取后补充结构化实体节点） | 提升图谱可分析性，支持 `GET /v1/graph/viewport` 的实体可视化 | 2 周 |
+| **P2** | NER 实体抽取层（在 LLM 提取后补充结构化实体节点） | 提升图谱可分析性，支持 `GET /v1/memories/graph` 的实体可视化 | 2 周 |
 | **P3** | 真实时序扩展（depth=2+ 多跳推理） | 高价值但低频场景，先观察用户反馈 | 1 个月 |
 | **P3** | 框架生态扩张（CrewAI/n8n/Mastra 等） | 长期生态建设 | 持续 |
 

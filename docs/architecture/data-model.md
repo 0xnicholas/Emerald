@@ -463,7 +463,7 @@ pipeline_lock:{job_id}         → 管线任务分布式锁，TTL 5m
 
 ## 7. Post-v0.3.0 数据模型增强（2026-06-02 之后）
 
-> 本节记录 v0.3.0 之后 33 个 commit 中影响数据模型的重要变更。详见 [`docs/roadmap.md`](../../roadmap.md)。
+> 本节记录 v0.3.0 之后 33 个 commit 中影响数据模型的重要变更。详见 [`docs/roadmap.md`](../roadmap.md)。
 
 ### 7.1 Memory 节点新增字段（LLM 事实提取使能）
 
