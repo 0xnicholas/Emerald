@@ -458,3 +458,89 @@ pipeline_lock:{job_id}         → 管线任务分布式锁，TTL 5m
 | 画像更新 | Redis 缓存 + PostgreSQL 持久化双写 | 先写 PG，再写 Redis，失败回滚 |
 | 文件上传 | MinIO 写入 → 成功后写 PG documents 表 | 先存储，后索引 |
 | 连接器同步 | 每个文件的摄取作为独立管线任务 | 隔离失败，不影响其他文件 |
+
+---
+
+## 7. Post-v0.3.0 数据模型增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 之后 33 个 commit 中影响数据模型的重要变更。详见 [`docs/roadmap.md`](../../roadmap.md)。
+
+### 7.1 Memory 节点新增字段（LLM 事实提取使能）
+
+原 Memory 节点设计在 v0.3.0 中为 `memory_type`、`confidence`、`summary` 预留了字段，但 Post-v0.3.0 由 LLM 实际填充：
+
+```
+(:Memory {
+    ...原有字段...
+    summary: String,           # 【真正填充】LLM 生成的 1 句话摘要（搜索/画像展示用）
+    memory_type: String,       # 【真正填充】"fact" | "preference" | "episodic"
+    confidence: Float,         # 【真正填充】LLM 评分 0.0-1.0
+    importance: Float,         # 【新增】多因子评分 0.0-1.0（见 7.3）
+})
+```
+
+**三级字段填充路径：**
+
+| 路径 | memory_type 来源 | confidence 来源 | 适用场景 |
+|---|---|---|---|
+| LLM 提取（默认） | DeepSeek 分类 | DeepSeek 评分 | 启用 `DEEPSEEK_API_KEY` 后 |
+| LLM 提取（降级） | OpenAI 分类 | OpenAI 评分 | 仅有 `OPENAI_API_KEY` 时 |
+| 无 LLM（传统） | 默认 `fact` | 硬编码 0.8 | 无 API key 或提取失败 |
+
+### 7.2 Chunk 中间产物字段
+
+`emerald/pipeline/chunking/base.py:Chunk` 数据类扩展：
+
+```python
+@dataclass
+class Chunk:
+    text: str                          # 块文本
+    metadata: dict[str, Any]           # 位置/类型元数据
+    memory_type: str = "fact"          # 【新增】从 LLM 提取结果继承
+    confidence: float = 0.8            # 【新增】从 LLM 提取结果继承
+    summary: str = ""                  # 【新增】从 LLM 提取结果继承
+```
+
+**价值：** Chunk 与最终 Memory 节点字段一一对应，便于调试与可观测。
+
+### 7.3 importance 多因子评分
+
+Post-v0.3.0 新增 `importance` 字段（`emerald/core/profile.py:_compute_importance`）：
+
+```
+importance = 0.35 × confidence
+          + 0.25 × recency(指数衰减, half_life=30天)
+          + 0.20 × type_weight(preference=1.0, fact=0.8, episodic=0.5, noise=0.2)
+          + 0.20 × relationship_count(归一化到 [0,1])
+```
+
+**与 confidence 的区别：** confidence 反映来源可信度（LLM 评分）；importance 反映「该记忆当前的相关度」。
+
+### 7.4 Neo4j 索引
+
+新增索引（Post-v0.3.0）：
+
+```cypher
+CREATE INDEX memory_importance IF NOT EXISTS FOR (m:Memory) ON (m.importance);
+CREATE INDEX memory_confidence IF NOT EXISTS FOR (m:Memory) ON (m.confidence);
+```
+
+### 7.5 Reconciliation 元数据
+
+孤立节点补偿：`ReconciliationEngine` (`emerald/core/reconciliation.py`) 扫描最近 N 个图谱节点，检查向量表是否存在匹配行，缺失则标记 `is_latest=False` + `replaced_by="reconciliation_failed"`。
+
+### 7.6 Redis 锁键
+
+新增 `beat_lock:{task_name}` 键，用于 Celery Beat 多实例并发防护（`emerald/core/lock.py`）。协议：`SET key instance-id NX EX ttl` 自动释放。
+
+### 7.7 PipelineJob 新字段
+
+```python
+class PipelineJob:
+    id: str
+    status: str                # QUEUED | EXTRACTING | CHUNKING | EMBEDDING | INDEXING | DONE | FAILED
+    content_type: str          # 【Post-v0.3.0】记录实际提取路径
+    entity_id: str
+    memory_ids: list[str]      # 【Post-v0.3.0】可能包含多个 memory_id（LLM 提取后多事实）
+    fact_extraction_status: str  # 【Post-v0.3.0】"success" | "failed" | "skipped"
+```

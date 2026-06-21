@@ -374,4 +374,21 @@ pytest  # 601 test functions; ~548 passed, 9 skipped (some parametrize expanded)
 
 ---
 
+## 文档导航
+
+| 我想知道 | 看这个 |
+|---|---|
+| 5 分钟跑通 Emerald | [docs/quickstart.md](docs/quickstart.md) |
+| 记忆 vs RAG、三种记忆类型、三种关系 | [docs/concepts.md](docs/concepts.md) |
+| 系统架构全景 | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| 数据模型设计 | [docs/architecture/data-model.md](docs/architecture/data-model.md) |
+| 处理管线 | [docs/architecture/pipeline.md](docs/architecture/pipeline.md) |
+| REST API 完整参考 | [docs/api/rest-guide.md](docs/api/rest-guide.md) |
+| Python SDK | [docs/api/sdk-guide.md](docs/api/sdk-guide.md) |
+| 与 Supermemory 能力对比 | [docs/comparison-supermemory.md](docs/comparison-supermemory.md) |
+| 项目路线图 | [docs/roadmap.md](docs/roadmap.md) |
+| Pandaria (Rust) 集成 | [docs/integration-guide.md](docs/integration-guide.md) |
+
+---
+
 **给你的 AI 一段记忆。**

@@ -500,6 +500,156 @@ Authorization: Bearer em_xxx
 
 ---
 
+## 高级端点（Post-v0.3.0）
+
+### 9a. 批量添加记忆 — `POST /memories/batch`
+
+一次提交多条记忆（最多 50 条），适用于用户批量上传或预填充场景。
+
+```http
+POST /v1/memories/batch
+Authorization: Bearer em_xxx
+Content-Type: application/json
+
+{
+  "memories": [
+    {
+      "content": "Alex 在 Stripe 担任产品经理",
+      "entity_id": "user_alex"
+    },
+    {
+      "content": "Alex 偏好用 TypeScript 写后端",
+      "entity_id": "user_alex",
+      "memory_type": "preference"
+    },
+    {
+      "content": "Alex 最近在评估 Kafka vs Pulsar",
+      "entity_id": "user_alex",
+      "valid_until": "2026-07-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+**响应：**
+
+```json
+{
+  "data": {
+    "results": [
+      {"index": 0, "memory_ids": ["mem_abc"], "status": "completed"},
+      {"index": 1, "memory_ids": ["mem_def"], "status": "completed"},
+      {"index": 2, "memory_ids": ["mem_ghi"], "status": "completed"}
+    ],
+    "total": 3,
+    "successful": 3,
+    "failed": 0
+  },
+  "meta": {"request_id": "...", "took_ms": 42}
+}
+```
+
+**错误响应（部分失败）：**
+
+```json
+{
+  "data": {
+    "results": [
+      {"index": 0, "memory_ids": ["mem_abc"], "status": "completed"},
+      {"index": 1, "status": "failed", "error": "memory_type must be one of: fact, preference, episodic"}
+    ],
+    "total": 2,
+    "successful": 1,
+    "failed": 1
+  }
+}
+```
+
+**限制：** 每次最多 50 条。超出返 422 错误。
+
+### 9b. 获取图谱节点和边 — `GET /graph/viewport`
+
+返回实体图谱的节点+边数据，供 D3.js / vis-network 等可视化库使用。
+
+```http
+GET /v1/graph/viewport?entity_id=user_alex&limit=100
+Authorization: Bearer em_xxx
+```
+
+**响应：**
+
+```json
+{
+  "data": {
+    "nodes": [
+      {"id": "mem_abc", "label": "Alex 在 Stripe 担任产品经理", "memory_type": "fact", "is_latest": true},
+      {"id": "mem_def", "label": "Alex 偏好 TypeScript", "memory_type": "preference", "is_latest": true}
+    ],
+    "edges": [
+      {"source": "mem_def", "target": "mem_abc", "type": "EXTENDS"}
+    ]
+  },
+  "meta": {"request_id": "...", "took_ms": 35}
+}
+```
+
+**用途：** 在调试 UI 中可视化实体的记忆网络。
+
+### 9c. 删除记忆（软删除）— `DELETE /memories/{memory_id}`
+
+软删除：将记忆标记为 `is_latest=False`，不真正删除节点（保留时序历史）。
+
+```http
+DELETE /v1/memories/mem_abc123
+Authorization: Bearer em_xxx
+```
+
+**响应：**
+
+```json
+{
+  "data": {
+    "memory_id": "mem_abc123",
+    "deleted_at": "2026-06-21T10:30:00Z",
+    "is_latest": false
+  },
+  "meta": {"request_id": "...", "took_ms": 12}
+}
+```
+
+**注意：** 是软删除，记忆仍可通过 `is_latest=false` 查询访问。如需硬删除，联系运维手动执行。
+
+### 9d. 元数据过滤（搜索接口增强）
+
+在 `POST /search` 请求体中添加 `filters` 参数，支持 MongoDB 风格查询：
+
+```json
+{
+  "q": "用户偏好什么",
+  "entity_id": "user_123",
+  "search_mode": "memory",
+  "filters": {
+    "$and": [
+      {"memory_type": "preference"},
+      {"confidence": {"$gte": 0.7}}
+    ]
+  }
+}
+```
+
+**支持的操作符：**
+
+| 操作符 | 用途 | 示例 |
+|---|---|---|
+| (无) | 精确匹配 | `{"memory_type": "fact"}` |
+| `$eq` / `$ne` | 等于 / 不等于 | `{"memory_type": {"$eq": "fact"}}` |
+| `$gt` / `$gte` | 大于 / 大于等于 | `{"confidence": {"$gte": 0.5}}` |
+| `$lt` / `$lte` | 小于 / 小于等于 | `{"confidence": {"$lte": 0.9}}` |
+| `$and` | 所有子条件满足 | `{"$and": [{...}, {...}]}` |
+| `$or` | 任一子条件满足 | `{"$or": [{"memory_type": "fact"}, {"memory_type": "episodic"}]}` |
+
+---
+
 ## 连接器端点
 
 ### 10. 发起 OAuth 连接 — `POST /connectors/{provider}/connect`

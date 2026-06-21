@@ -243,3 +243,132 @@ search_mode = "rag"    → 仅向量相似度搜索
 3. **关系推断是幂等的。** 同一内容重复摄入不会创建重复关系。
 4. **画像在摄入后增量更新。** 只在新增记忆可能影响画像时才重新计算。
 5. **搜索响应时间目标。** 混合搜索 P99 < 500ms，画像读取 P99 < 100ms。
+
+---
+
+## 6. Post-v0.3.0 增强（2026-06-02 之后）
+
+> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后 33 个 commit 中的重大架构变更。未作为独立版本发布，将在路线图 v0.4 → v0.8 中逐步发布。完整 roadmap 见 [`docs/roadmap.md`](../../roadmap.md)。
+
+### 6.1 事实提取从「格式转换」升级为「语义理解」
+
+**之前 (v0.3.0)：** 提取器只是格式转换（PDF→text, 图片→OCR），不进行 LLM 事实抽取。整段文本作为一个 chunk 存入图谱。
+
+**之后 (Post-v0.3.0)：** 新增 LLM 驱动的事实提取层：
+
+```
+emerald/pipeline/chunking/fact_extractor.py
+├─ FactExtractor          # 抽象基类
+├─ DeepSeekFactExtractor  # 生产实现（OpenAI 兼容 API）
+└─ get_fact_extractor()   # 工厂函数（无 API key 返回 None，走降级路径）
+```
+
+**工作流变化：**
+
+```
+v0.3.0:    原文 → chunks(N 个固定大小) → memory(N 个原文片段)
+Post-v0.3.0: 原文 → fact extraction(LLM) → 多条结构化事实 → memory(每条事实 1 个)
+```
+
+**提取的每条事实包含：**
+- `text`: 1-2 句可独立理解的陈述
+- `memory_type`: `fact` | `preference` | `episodic`
+- `confidence`: 0.0-1.0
+- `summary`: 1 句话摘要（搜索/画像展示用）
+
+### 6.2 图谱搜索从「平铺」升级为「关系遍历」
+
+**之前：** 向量搜索命中 → is_latest + valid_until 过滤 → 返回。**已建立的关系从不参与搜索。**
+
+**之后：** 新增 `_expand_relationships()` 阶段（`emerald/core/search.py`）：
+
+```
+搜索流程:
+  1. 向量搜索找到 Top-K 记忆
+  2. 对每个命中，沿 EXTENDS / DERIVES_FROM 关系双向深度=1 遍历
+  3. 关联记忆以 0.85× 折扣分数并入结果集
+  4. 重新排序 + 截断到 2× top_k
+```
+
+**效果：** 输入「用户在 Stripe 工作」可自动召回「用户领导 5 人支付团队」（EXTENDS 关系）。
+
+### 6.3 关系推断新增 LLM 降级路径
+
+**之前：** 仅关键词匹配 + 结构模板 + bigram 重叠。对隐含矛盾检测弱。
+
+**之后：** 两阶段分类：
+
+1. 规则路径（关键词、结构模板）— 快路径
+2. LLM 路径（DeepSeek V4-Flash → OpenAI 降级）— 当规则结果为 NONE 时启用
+
+### 6.4 首选项强化与语义去重
+
+- **首选项强化**：当新偏好的 bigram 重叠 ≥ 0.3 与已有偏好时，已有偏好 confidence +0.05（上限 0.95），新记忆标记为 duplicate
+- **语义去重**：bigram 快速过滤 + LLM 边界判定，避免重复记忆入库
+
+### 6.5 本地嵌入（fastembed）
+
+新增 `FastEmbedProvider`，使用 ONNX Runtime 提供本地嵌入，**无需 PyTorch / 无需 API key**：
+
+```
+emerald/core/embedder.py
+├─ OpenAIProvider          # 云端
+├─ FastEmbedProvider       # 本地（新增，零依赖 OpenAI）
+├─ MockEmbeddingProvider   # 测试/CI
+└─ get_embedding_provider() # 自动选择
+```
+
+**价值：** 完全离线运行 → 适合金融/医疗/政府等数据敏感场景。
+
+### 6.6 多因子画像评分
+
+**之前：** 画像排序使用单一维度（confidence）。
+
+**之后：** 多因子加权评分：
+```
+importance = 0.35 × confidence
+          + 0.25 × recency(指数衰减, 半衰期=30天)
+          + 0.20 × type_weight(preference=1.0, fact=0.8, episodic=0.5, noise=0.2)
+          + 0.20 × relationship_count(归一化到 [0,1])
+```
+
+### 6.7 生产可靠性组件
+
+| 组件 | 作用 | 文件 |
+|---|---|---|
+| `ReconciliationEngine` | 后台修复 Neo4j 中无对应向量的孤立节点 | `emerald/core/reconciliation.py` |
+| `beat_lock` | Redis 分布式锁，防止 Celery Beat 多实例并发 | `emerald/core/lock.py` |
+| `GraphStore.update_memory_confidence()` | 原子置信度更新 | `emerald/core/graph.py` |
+| `GraphStore.get_related_memories()` | 双向关系遍历 | `emerald/core/graph.py` |
+| `GraphStore.list_entity_ids()` | 列出所有实体（修复 ForgetEngine 生产失效） | `emerald/core/graph.py` |
+| `Neo4jDriver` | 连接池 50 + 超时 30s + 重试 30s | `emerald/db/neo4j.py` |
+
+### 6.8 可观测性
+
+- **OpenTelemetry 手动 span 集成**（`emerald/core/tracing.py`, 132 行）：FastAPI、Neo4j、httpx、Celery 自动 + 手动 span
+- **结构化 JSON 日志** + Prometheus `/v1/metrics` 端点
+- M1 (v0.4.0) 计划增加 OpenTelemetry 自动 instrumentation（httpx/asyncpg/redis/celery）
+
+### 6.9 新 API 端点
+
+| 端点 | 用途 |
+|---|---|
+| `POST /v1/memories/batch` | 批量写入最多 50 条 |
+| `GET /v1/graph/viewport` | 图谱节点+边可视化数据（D3/vis-network） |
+| `DELETE /v1/memories/{id}` | 软删除（标记 `is_latest=False`） |
+| MongoDB 风格 metadata 过滤（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`） | 在 search 接口的 `filters` 参数中 |
+
+### 6.10 基准测试套件升级
+
+`scripts/run_benchmarks.py` 从 ~250 行扩展到 1154 行：
+
+- 6 个评估维度：Fact Recall、Temporal Updates、Relationship Class、Profile Accuracy、Distractor Resist、Forgetting Correctness
+- 对齐 LongMemEval / LoCoMo / ConvoMem 三大公开基准
+- JSON 报告自动生成到 `reports/benchmark-YYYYMMDD-HHMMSS.json`
+
+### 6.11 性能与稳定性优化
+
+- `upload.py` 改用 `asyncio.to_thread` 包裹 MinIO 同步调用（修复 async 事件循环阻塞）
+- CORS 生产加固（基于 `CORS_ALLOWED_ORIGINS` 环境变量区分 dev/prod）
+- `engine.py` 全面 `async def` 化 + Celery 任务链异步化
+- 移除 `raw_content_ref` dead code，改进 dedup 归一化
