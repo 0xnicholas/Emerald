@@ -191,6 +191,82 @@ async def test_infer_derives_from_multiple_sources(engine, entity_id):
     assert created >= 1
 
 
+# ---- _has_text_overlap (fast pre-filter) ----
+
+@pytest.mark.asyncio
+async def test_has_text_overlap_shared_bigrams():
+    """Texts sharing character bigrams have overlap."""
+    assert RelationshipEngine._has_text_overlap("用户在 Google 工作", "用户在 Stripe 工作") is True
+
+
+@pytest.mark.asyncio
+async def test_has_text_overlap_no_shared_bigrams():
+    """Completely unrelated texts have no overlap."""
+    assert RelationshipEngine._has_text_overlap("猫咪在睡觉", "用户喜欢 TypeScript") is False
+
+
+@pytest.mark.asyncio
+async def test_has_text_overlap_single_char():
+    """Single character has no bigrams → False."""
+    assert RelationshipEngine._has_text_overlap("A", "A") is False
+
+
+@pytest.mark.asyncio
+async def test_has_text_overlap_empty():
+    """Empty string has no bigrams → False."""
+    assert RelationshipEngine._has_text_overlap("", "anything") is False
+
+
+# ---- LLM-first ordering ----
+
+
+@pytest.mark.asyncio
+async def test_llm_first_when_api_key_available():
+    """With use_llm=True, LLM is tried before rules.
+
+    Verifies the ordering: even when rules would classify as EXTENDS,
+    the LLM path is attempted first.  Since no API key is configured
+    in test, LLM returns NONE and rules kick in as fallback.
+    """
+    engine = RelationshipEngine(graph=GraphStore(use_db=False), use_llm=True)
+
+    # These would be classified as EXTENDS by rules (shared context + new detail)
+    result = await engine.classify_relation(
+        "a", "b", "e",
+        "用户在 Stripe 负责支付团队",
+        "用户在 Stripe 工作",
+    )
+    # Without API key, LLM returns NONE → rules classify as EXTENDS
+    assert result == RelationType.EXTENDS
+
+
+@pytest.mark.asyncio
+async def test_llm_disabled_falls_back_to_rules_immediately():
+    """With use_llm=False, rules are the sole classifier (no LLM call)."""
+    engine = RelationshipEngine(graph=GraphStore(use_db=False), use_llm=False)
+
+    # Same structure different fillers → UPDATES via rules
+    result = await engine.classify_relation(
+        "a", "b", "e",
+        "用户在 Google 工作",
+        "用户在 Stripe 工作",
+    )
+    assert result == RelationType.UPDATES
+
+
+@pytest.mark.asyncio
+async def test_pre_filter_skips_unrelated_before_llm():
+    """Unrelated pairs (no bigram overlap) skip LLM and rules entirely."""
+    engine = RelationshipEngine(graph=GraphStore(use_db=False), use_llm=True)
+
+    result = await engine.classify_relation(
+        "a", "b", "e",
+        "猫咪在睡觉",
+        "用户喜欢 TypeScript",
+    )
+    assert result == RelationType.NONE
+
+
 # ---- _find_derives_sources ----
 
 @pytest.mark.asyncio

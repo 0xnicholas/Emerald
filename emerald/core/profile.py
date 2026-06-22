@@ -51,6 +51,43 @@ class EntityProfile:
     source_memory_ids: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ProfileConfig:
+    """Per-entity profile configuration overrides.
+
+    When set for an entity, these values override the ProfileManager
+    class-level defaults.  Stored in Redis with a key prefix.
+    """
+    static_max_items: int = 10
+    dynamic_max_items: int = 5
+    dynamic_lookback_days: int = 7
+    min_confidence_static: float = 0.5
+    min_confidence_dynamic: float = 0.3
+
+    def to_json(self) -> str:
+        import json as _json
+        return _json.dumps({
+            "static_max_items": self.static_max_items,
+            "dynamic_max_items": self.dynamic_max_items,
+            "dynamic_lookback_days": self.dynamic_lookback_days,
+            "min_confidence_static": self.min_confidence_static,
+            "min_confidence_dynamic": self.min_confidence_dynamic,
+        })
+
+    @classmethod
+    def from_json(cls, data: str | dict) -> "ProfileConfig":
+        import json as _json
+        if isinstance(data, str):
+            data = _json.loads(data)
+        return cls(
+            static_max_items=data.get("static_max_items", 10),
+            dynamic_max_items=data.get("dynamic_max_items", 5),
+            dynamic_lookback_days=data.get("dynamic_lookback_days", 7),
+            min_confidence_static=data.get("min_confidence_static", 0.5),
+            min_confidence_dynamic=data.get("min_confidence_dynamic", 0.3),
+        )
+
+
 class ProfileManager:
     """Manages entity profiles: compute, cache, invalidate, incremental refresh.
 
@@ -73,6 +110,67 @@ class ProfileManager:
         self._redis = redis_client
         self._memory_cache: dict[str, EntityProfile] = {}
         self._versions: dict[str, int] = {}
+        # In-memory config cache fallback (tests without Redis)
+        self._config_cache: dict[str, ProfileConfig] = {}
+
+    async def get_config(self, entity_id: str) -> ProfileConfig:
+        """Return the per-entity profile config, or class defaults if none set."""
+        # Check in-memory fallback first
+        if entity_id in self._config_cache:
+            return self._config_cache[entity_id]
+
+        redis = self._get_redis()
+        if redis:
+            raw = await redis.get(f"profile:config:{entity_id}")
+            if raw:
+                config = ProfileConfig.from_json(raw)
+                self._config_cache[entity_id] = config
+                return config
+
+        return ProfileConfig()  # Class defaults
+
+    async def set_config(self, entity_id: str, config: ProfileConfig) -> None:
+        """Store per-entity profile config overrides in Redis."""
+        redis = self._get_redis()
+        if redis:
+            await redis.set(
+                f"profile:config:{entity_id}",
+                config.to_json(),
+            )
+            logger.info(
+                "profile.config.set",
+                entity_id=entity_id,
+                static_max=config.static_max_items,
+                dynamic_max=config.dynamic_max_items,
+            )
+        else:
+            self._config_cache[entity_id] = config
+
+        # Invalidate cached profile so next get() uses new config
+        await self.invalidate(entity_id)
+
+    async def delete_config(self, entity_id: str) -> bool:
+        """Remove per-entity config, reverting to class defaults. Returns True if deleted."""
+        deleted = False
+        redis = self._get_redis()
+        if redis:
+            deleted = await redis.delete(f"profile:config:{entity_id}") > 0
+        if entity_id in self._config_cache:
+            del self._config_cache[entity_id]
+            deleted = True
+
+        if deleted:
+            await self.invalidate(entity_id)
+            logger.info("profile.config.deleted", entity_id=entity_id)
+        return deleted
+
+    async def _resolve_config(self, entity_id: str) -> ProfileConfig:
+        """Resolve effective config: per-entity overrides merged with class defaults.
+
+        Returns a ProfileConfig with entity-specific overrides applied.
+        Cached in-memory for the lifetime of the profile compute.
+        """
+        return await self.get_config(entity_id)
 
     def _get_redis(self):
         if self._redis is not None:
@@ -161,16 +259,21 @@ class ProfileManager:
     async def compute(self, entity_id: str) -> EntityProfile:
         """Compute profile from the graph store.
 
-        Static facts: fact/preference type, confidence >= 0.5, is_latest=True
-        Dynamic facts: episodic type, created within 7 days, confidence >= 0.3
+        Uses per-entity config overrides when available (via Redis),
+        falling back to class-level defaults.
+
+        Static facts: fact/preference type, confidence >= config.min_confidence_static
+        Dynamic facts: episodic type, created within config.dynamic_lookback_days
         """
         tracer = get_tracer()
         with tracer.start_as_current_span("profile.compute") as span:
             span.set_attribute("entity_id", entity_id)
             with timed(profile_compute_latency_seconds):
+                config = await self._resolve_config(entity_id)
+
                 all_memories = await self.graph.list_latest_memories(entity_id, limit=200)
                 now = datetime.now(UTC)
-                cutoff = now - timedelta(days=self.DYNAMIC_LOOKBACK_DAYS)
+                cutoff = now - timedelta(days=config.dynamic_lookback_days)
 
                 static_facts: list[ProfileFact] = []
                 dynamic_facts: list[ProfileFact] = []
@@ -189,7 +292,7 @@ class ProfileManager:
                     )
 
                     # Static: fact or preference with high confidence
-                    if memory_type in ("fact", "preference") and confidence >= self.STATIC_CONFIDENCE_MIN:
+                    if memory_type in ("fact", "preference") and confidence >= config.min_confidence_static:
                         static_facts.append(
                             ProfileFact(
                                 content=content,
@@ -201,7 +304,7 @@ class ProfileManager:
                         source_ids.append(mid)
 
                     # Dynamic: episodic and recent
-                    if memory_type == "episodic" and confidence >= self.DYNAMIC_CONFIDENCE_MIN:
+                    if memory_type == "episodic" and confidence >= config.min_confidence_dynamic:
                         if hasattr(created_at, "isoformat"):
                             if created_at >= cutoff:
                                 dynamic_facts.append(
@@ -229,9 +332,9 @@ class ProfileManager:
                 static_facts.sort(key=lambda f: f.importance, reverse=True)
                 dynamic_facts.sort(key=lambda f: f.relevance, reverse=True)
 
-                # Trim to max items
-                static_facts = static_facts[: self.STATIC_MAX_ITEMS]
-                dynamic_facts = dynamic_facts[: self.DYNAMIC_MAX_ITEMS]
+                # Trim to max items (per-entity config)
+                static_facts = static_facts[: config.static_max_items]
+                dynamic_facts = dynamic_facts[: config.dynamic_max_items]
 
                 # Version: increment from previous counter
                 self._versions.setdefault(entity_id, 0)
@@ -330,8 +433,9 @@ class ProfileManager:
         new_memory_ids: list[str],
     ) -> EntityProfile:
         """Merge new memories into an existing profile."""
+        config = await self._resolve_config(entity_id)
         now = datetime.now(UTC)
-        cutoff = now - timedelta(days=self.DYNAMIC_LOOKBACK_DAYS)
+        cutoff = now - timedelta(days=config.dynamic_lookback_days)
 
         # 1. Find UPDATES relationships: new memories that replace existing ones
         updates = await self.graph.get_relationships_to(profile.source_memory_ids)
@@ -355,7 +459,7 @@ class ProfileManager:
             created_at = m.get("created_at", now)
             content = m.get("content", "")
 
-            if memory_type in ("fact", "preference") and confidence >= self.STATIC_CONFIDENCE_MIN:
+            if memory_type in ("fact", "preference") and confidence >= config.min_confidence_static:
                 profile.static.append(
                     ProfileFact(
                         content=content,
@@ -365,7 +469,7 @@ class ProfileManager:
                     )
                 )
 
-            if memory_type == "episodic" and confidence >= self.DYNAMIC_CONFIDENCE_MIN:
+            if memory_type == "episodic" and confidence >= config.min_confidence_dynamic:
                 is_recent = True
                 if hasattr(created_at, "isoformat"):
                     is_recent = created_at >= cutoff
@@ -386,11 +490,11 @@ class ProfileManager:
             if self._is_recent(f.acquired_at, cutoff)
         ]
 
-        # 4. Re-sort and trim
+        # 4. Re-sort and trim (per-entity config)
         profile.static.sort(key=lambda f: f.importance, reverse=True)
         profile.dynamic.sort(key=lambda f: f.relevance, reverse=True)
-        profile.static = profile.static[: self.STATIC_MAX_ITEMS]
-        profile.dynamic = profile.dynamic[: self.DYNAMIC_MAX_ITEMS]
+        profile.static = profile.static[: config.static_max_items]
+        profile.dynamic = profile.dynamic[: config.dynamic_max_items]
 
         # Rebuild source_memory_ids from facts so it stays in sync after sort/trim
         profile.source_memory_ids = [f.memory_id for f in profile.static + profile.dynamic]

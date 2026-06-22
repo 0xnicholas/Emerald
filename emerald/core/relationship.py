@@ -116,26 +116,33 @@ class RelationshipEngine:
     ) -> RelationType:
         """Classify the relationship type between two memories.
 
-        Two-phase classification:
-        1. Fast rule-based heuristics for obvious patterns
-        2. LLM semantic classification when rules are inconclusive
+        LLM-first classification with rule-based fallback:
+        0. Identical content → NONE (trivial)
+        0. No text overlap → NONE (skip obviously unrelated pairs fast)
+        1. LLM semantic classification (primary, when API key available)
+        2. Rule-based heuristics (fallback when LLM unavailable or returns NONE)
+
+        AGENTS.md §6: 时序完整性 — LLM captures temporal nuance that
+        pure bigram/structural rules miss (e.g. "moved from A to B" vs
+        "works at A" and "works at B").
         """
-        # Identical content
+        # Identical content → NONE
         if new_content.strip() == old_content.strip():
             return RelationType.NONE
 
-        # Phase 1: Rule-based fast path
-        rule_result = self._rule_classify(new_content, old_content)
-        if rule_result != RelationType.NONE:
-            return rule_result
+        # Fast pre-filter: skip pairs with no textual overlap whatsoever
+        # This avoids wasting LLM calls on completely unrelated memories.
+        if not self._has_text_overlap(new_content, old_content):
+            return RelationType.NONE
 
-        # Phase 2: LLM semantic classification (if enabled and key available)
+        # Phase 1: LLM-first (primary classifier when API key available)
         if self.use_llm:
             llm_result = await self._llm_classify(new_content, old_content)
             if llm_result != RelationType.NONE:
                 return llm_result
 
-        return RelationType.NONE
+        # Phase 2: Rule-based fallback (deterministic, fast, always available)
+        return self._rule_classify(new_content, old_content)
 
     def _rule_classify(self, new_content: str, old_content: str) -> RelationType:
         """Fast rule-based classification."""
@@ -382,6 +389,22 @@ class RelationshipEngine:
                 return True
 
         return False
+
+    @staticmethod
+    def _has_text_overlap(new_text: str, old_text: str) -> bool:
+        """Fast pre-filter: check if two texts share any bigrams.
+
+        Returns False for completely unrelated content — these pairs
+        can be skipped before the expensive LLM classification step.
+
+        This is intentionally lenient (low bar) — it only filters out
+        pairs with ZERO overlap.  Even a single shared bigram passes.
+        """
+        new_bigrams = RelationshipEngine._extract_bigrams(new_text)
+        old_bigrams = RelationshipEngine._extract_bigrams(old_text)
+        if not new_bigrams or not old_bigrams:
+            return False
+        return bool(new_bigrams & old_bigrams)
 
     @staticmethod
     def _is_complementary(new_text: str, old_text: str) -> bool:

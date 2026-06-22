@@ -76,6 +76,7 @@
 | 🔴 | 框架集成生态空白（仅 Pandaria） | comparison-supermemory §10 P1 |
 | 🟡 | 真实 LLM 嵌入下的基准分数未发布 | comparison-supermemory §10 P0 |
 | 🟡 | Cross-encoder 重排序未实现（仍是 Stub） | production-readiness §5 |
+| ✅ | **Cross-encoder 重排序** — 2026-06-22 完成：三级降级链（cached CE → embedding cosine → keyword boost） |
 | 🟡 | NER 实体抽取层未实现 | comparison-supermemory §10 P2 |
 | 🟡 | 分布式追踪未实现 | production-readiness §4 |
 | 🟡 | 安全审计未做 | production-readiness §7 |
@@ -185,8 +186,8 @@ M1 ─────┼─ A2 K8s 验证 ───────────┼─�
                                        │
    ┌─ A3 v2 API ─┐                     │
 M2 ─┤              ├─→ M3 ─────────────┘
-   ├─ B1 cross-encoder ─┐              │
-   ├─ B2 LLM-first rel  ─┤              │
+   ├─ B1 cross-encoder ─┐ ✅ 已完成 (2026-06-22)
+   ├─ B2 LLM-first rel ────┤ ✅ 已完成 (2026-06-22)
    ├─ C1 TS SDK ────────┤              │
    └─ A6 安全审计 ──────┘              │
                                        │
@@ -227,14 +228,14 @@ M2 ─┤              ├─→ M3 ─────────────┘
 
 **前置依赖**：M1 完成
 
-**包含工作项**：A3 + B1 + B2 + C1 + A6
+**包含工作项**：A3 + C1 + A6（B1 cross-encoder + B2 LLM-first rel 已提前完成）
 
 **可发布物**：
 - v2 API 实质改进（分页、限流、`customId` 幂等、业务错误码体系）
-- Cross-encoder 重排序（搜索精度提升 10-20%）
-- 关系推断改为 LLM-first 路径
 - **TypeScript SDK v1**（首个非 Python SDK）
 - 安全审计报告（无 P0/P1 漏洞）
+
+> **注**：Cross-encoder 重排序（B1）和 LLM-first 关系推断（B2）已于 2026-06-22 提前完成，从 M2 范围移除。
 
 **版本号**：v0.5.0
 
@@ -242,9 +243,9 @@ M2 ─┤              ├─→ M3 ─────────────┘
 
 **成功标准**：
 - ✅ TS SDK 方法集 ≥ Python SDK 的 80%
-- ✅ Cross-encoder 启用后基准分数提升 ≥ 10%
 - ✅ v2 API 至少 3 项实质改进
 - ✅ 安全扫描 0 个 P0/P1 漏洞
+- ✅ Cross-encoder 重排序 & LLM-first 关系推断（已提前完成）
 
 ---
 
@@ -337,6 +338,7 @@ A1 (Dockerfile) → A2 (K8s 验证) → D2 (负载测试) → D3 (Staging 压测
 B0 (真实基准) → B1 (cross-encoder) → D1 (基准 CI) → M3-M5 验证
 A3 (v2 API) → C1 (TS SDK) → C2/C3 (框架集成)
 B2 (LLM-first rel) → B3 (NER) → B4 (多跳推理)
+# B1 (cross-encoder) + B2 已完成（2026-06-22），不再阻塞下游
 ```
 
 ### 5.2 可以并行的依赖

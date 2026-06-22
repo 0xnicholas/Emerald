@@ -42,9 +42,9 @@ All notable changes to this project will be documented in this file.
 - `pipeline/tasks.py` now uses default registries for extract and chunk Celery tasks
 - All 484 unit tests now pass (previously 2 tests failed due to missing `OPENAI_API_KEY` in CI)
 
-## [Unreleased] — Post-v0.3.0 (2026-06-02 to 2026-06-21)
+## [Unreleased] — Post-v0.3.0 (2026-06-02 to 2026-06-22)
 
-> **状态：** 33 commits after v0.3.0 release。未作为 v0.4.0 发布（需要 M1 实施完成后升版本号）。详见 [`docs/roadmap.md`](docs/roadmap.md) 与 [`docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`](docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md)。
+> **状态：** ~36 commits after v0.3.0 release。未作为 v0.4.0 发布（需要 M1 实施完成后升版本号）。详见 [`docs/roadmap.md`](docs/roadmap.md) 与 [`docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`](docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md)。
 
 ### Added
 
@@ -54,6 +54,9 @@ All notable changes to this project will be documented in this file.
 - **首选项强化** (`emerald/core/engine.py:_strengthen_preferences`)：重复偏好 +0.05 置信度（上限 0.95）
 - **关系推断 LLM 化** (`emerald/core/relationship.py`)：DeepSeek 优先，OpenAI 降级
 - **语义去重** (`emerald/core/engine.py:_check_duplicate`)：bigram 快速过滤 + LLM 边界判定
+- **Cross-encoder 重排序升级** (`emerald/core/search.py`)：三级降级链（cached cross-encoder → embedding cosine → keyword boost），模型实例级缓存，支持 sentence-transformers 热加载
+- **关系推断 LLM-first** (`emerald/core/relationship.py`)：LLM 优先分类 + 规则降级；新增 bigram 快速预滤跳过无关配对，避免浪费 LLM 调用
+- **Profile config 端点** (`emerald/api/routes/v1/profiles.py`)：PUT/GET/DELETE `/v1/profiles/{entity_id}/config`，per-entity 画像配置覆写（Redis 持久化），ProfileManager 在 compute/merge 时旁加载
 - **多因子画像评分** (`emerald/core/profile.py:_compute_importance`)：置信度 35% + 时近性 25% + 类型 20% + 关系 20%
 
 #### API 增强
@@ -86,6 +89,12 @@ All notable changes to this project will be documented in this file.
 - `docs/roadmap.md`：post-v0.3.0 战略路线图（4 主题、5 里程碑 v0.4-v0.8、依赖驱动、不锁死时间）
 - `docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`：M1 (v0.4.0) 实施计划（2228 行，TDD bite-sized 任务）
 - 删除本地 `_references/supermemory-main` 仓库引用
+- **2026-06-22：** 所有文档同步更新，生产就绪评估反映最新状态；过时 superpowers plans/specs 归档（10 份）
+
+#### 2026-06-22 补齐（最后 3 项 Stub 清零）
+- **Cross-encoder 重排序升级**：三级降级链（cached CE → embedding cosine → keyword boost）
+- **关系推断 LLM-first**：LLM 优先 + bigram 预滤 + 规则降级
+- **Profile config 端点**：PUT/GET/DELETE `/v1/profiles/{entity_id}/config`，per-entity 配置覆写（Redis 持久化）
 
 ### Fixed
 - 异步阻塞修复：`emerald/api/routes/v1/upload.py` 改用 `asyncio.to_thread` 包裹 MinIO 同步调用
@@ -99,7 +108,7 @@ All notable changes to this project will be documented in this file.
 - 所有 chunker `chunk()` 方法统一改为 `async def`
 
 ### Test Coverage
-- 测试函数定义数：537 → **601**（+64，+12%）
+- 测试函数定义数：537 → **621**（+84，+16%）
 - 重点新增：
   - `tests/pipeline/test_fact_extractor.py`（11 tests，DeepSeekFactExtractor）
   - `tests/pipeline/test_semantic_text_chunker.py`（6 tests）
@@ -107,7 +116,8 @@ All notable changes to this project will be documented in this file.
   - `tests/unit/test_lock.py`（Redis 锁）
   - `tests/unit/test_reconciliation.py`（双写一致性）
   - `tests/unit/test_embedder.py`（fastembed）
-  - `tests/core/test_search.py`（+193 行图谱遍历测试）
+  - `tests/core/test_search.py`（+193 行图谱遍历测试；+5 重排序测试）
+  - `tests/core/test_profile_manager.py`（+8 测试：profile config CRUD + 效果验证）
 - 5 个测试失败 → 全部修复
 
 ## [0.2.0] — 2026-05-27

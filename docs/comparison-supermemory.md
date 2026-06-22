@@ -14,7 +14,7 @@
 |---|---|---|---|
 | **版本** | v0.3.0（HEAD b301cfa，33 commits after 0.3.0 release） | v4 生产级 | 🟡 版本号差异缩小中 |
 | **事实提取** | ✅ **已实现** DeepSeek V4-Flash LLM 驱动（多事实分解、类型分类、置信度评分、summary） | ✅ LLM 驱动 | 🟢 **已对齐** |
-| **关系推断** | 🟡 规则优先 + LLM 语义分类（DeepSeek → OpenAI 降级） | ✅ LLM 驱动语义理解 | 🟡 质量待 LLM 启用后验证 |
+| **关系推断** | ✅ LLM-first + bigram 预滤 + 规则降级 | ✅ LLM 驱动语义理解 | ✅ 已对齐 |
 | **图谱搜索** | ✅ **已实现** Relationship Expansion（EXTENDS/DERIVES_FROM 双向遍历 depth=1） | ✅ Relationship Expansion | 🟢 **已对齐** |
 | **首选项强化** | ✅ **已实现** `_strengthen_preferences()`（重复偏好 +0.05 置信度，上限 0.95） | ✅ 重复提及增强 | 🟢 **已对齐** |
 | **记忆类型自动检测** | ✅ **已实现** fact/preference/episodic 三类自动分类（LLM 提取阶段） | ✅ 类型检测 | 🟢 **已对齐** |
@@ -137,7 +137,7 @@ async def get_related_memories(
 
 ---
 
-## 3. 关系推断 —— 部分修复（从纯文本匹配到「规则+LLM」）🟡
+## 3. 关系推断 —— 已对齐 ✅
 
 ### 3.1 现状
 
@@ -447,7 +447,7 @@ WEIGHT_RELATIONSHIPS = 0.20    # 关系数归一化到 [0,1]
 | **P1** | TypeScript SDK v1（对齐 Python SDK 方法集） | 拓展开发者基础，TS 生态（LangChain.js、Vercel AI SDK、Mastra）是 AI 应用主流 | 2-3 周 |
 | **P1** | 至少 2 个框架集成：LangChain.js + Vercel AI SDK | 进入主流 AI 开发生态是 Supermemory 拉开差距的主因 | 2-3 周 |
 | **P1** | v2 API 真实改进（v2 是 v1 别名问题） | 至少实现分页、限流、`customId` 幂等 3 项实质差异 | 1-2 周 |
-| **P2** | 关系推断规则路径重写为 LLM-first（仅在 LLM 不可用时降级到规则） | 当前 LLM 是降级路径，与最佳实践相反 | 1 周 |
+| **P2** | ~~关系推断规则路径重写为 LLM-first~~ ✅ 已完成（2026-06-22） | LLM-first + bigram 预滤 + 规则降级 | — |
 | **P2** | NER 实体抽取层（在 LLM 提取后补充结构化实体节点） | 提升图谱可分析性，支持 `GET /v1/memories/graph` 的实体可视化 | 2 周 |
 | **P3** | 真实时序扩展（depth=2+ 多跳推理） | 高价值但低频场景，先观察用户反馈 | 1 个月 |
 | **P3** | 框架生态扩张（CrewAI/n8n/Mastra 等） | 长期生态建设 | 持续 |

@@ -230,6 +230,92 @@ async def test_rerank_no_overlap_unchanged():
     assert reranked[1].id == "2"
 
 
+@pytest.mark.asyncio
+async def test_rerank_empty_results():
+    """_rerank_results on empty list returns empty."""
+    orchestrator = SearchOrchestrator()
+    result = await orchestrator._rerank_results([], "anything")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_embedding_rerank_with_mock_embedder():
+    """Embedding-based rerank reorders results by cosine similarity."""
+    embedder = MockEmbeddingProvider(dimension=128)
+    orchestrator = SearchOrchestrator(embedder=embedder)
+
+    # Create results where content closer to query should rank higher
+    results = [
+        SearchResult(id="1", content="量子计算和黑洞研究", score=0.5, source="memory"),
+        SearchResult(id="2", content="TypeScript 前端开发", score=0.9, source="memory"),
+    ]
+    # Query about physics — result 1 should rise, result 2 should fall
+    reranked = await orchestrator._embedding_rerank(results, "物理学 量子")
+
+    # Embedding rerank should produce results
+    assert len(reranked) == 2
+    # All scores should still be valid numbers
+    for r in reranked:
+        assert 0.0 <= r.score <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_embedding_rerank_falls_back_without_embedder():
+    """Without embedder, _embedding_rerank falls back to keyword boost."""
+    orchestrator = SearchOrchestrator()  # No embedder
+    results = [
+        SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
+        SearchResult(id="2", content="Bob 喜欢 Rust", score=0.8, source="memory"),
+    ]
+    # Should fall back to keyword boost (no crash)
+    reranked = await orchestrator._embedding_rerank(results, "Rust")
+    assert len(reranked) == 2
+    # Keyword boost moves Rust result ahead
+    assert reranked[0].id == "2"
+
+
+@pytest.mark.asyncio
+async def test_cross_encoder_cache_is_class_level():
+    """Cross-encoder model cache is shared across instances (classmethod)."""
+    # Reset cache for test isolation
+    SearchOrchestrator._cross_encoder_cache = None
+
+    o1 = SearchOrchestrator()
+    o2 = SearchOrchestrator()
+
+    # Both should return the same result (None if not installed, or model if installed)
+    ce1 = o1._get_cross_encoder()
+    ce2 = o2._get_cross_encoder()
+    assert ce1 is ce2  # Same cached reference
+
+    # Reset
+    SearchOrchestrator._cross_encoder_cache = None
+
+
+@pytest.mark.asyncio
+async def test_rerank_tier_fallback_chain_with_mock():
+    """When cross-encoder unavailable, falls through to embedding then keyword.
+    
+    With MockEmbeddingProvider, Tier 2 (embedding) should succeed.
+    """
+    # Force cross-encoder to be unavailable
+    SearchOrchestrator._cross_encoder_cache = "__unavailable__"
+
+    embedder = MockEmbeddingProvider(dimension=128)
+    orchestrator = SearchOrchestrator(embedder=embedder)
+
+    results = [
+        SearchResult(id="1", content="物理和数学", score=0.5, source="memory"),
+        SearchResult(id="2", content="编程和开发", score=0.9, source="memory"),
+    ]
+
+    reranked = await orchestrator._rerank_results(results, "物理科学")
+    assert len(reranked) == 2
+
+    # Reset
+    SearchOrchestrator._cross_encoder_cache = None
+
+
 # ---- Relationship expansion ----
 
 

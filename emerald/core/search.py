@@ -462,39 +462,115 @@ class SearchOrchestrator:
 
     # ---- Rerank ----
 
+    # Module-level cross-encoder cache (lazy loaded, shared across all instances)
+    _cross_encoder_cache: object | None = None
+    _cross_encoder_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    @classmethod
+    def _get_cross_encoder(cls) -> object | None:
+        """Return the module-level cached cross-encoder, loading it once.
+
+        Returns None if sentence-transformers is not installed.
+        Model is loaded on first call and reused thereafter.
+        """
+        if cls._cross_encoder_cache is not None:
+            return cls._cross_encoder_cache
+        try:
+            from sentence_transformers import CrossEncoder
+            cls._cross_encoder_cache = CrossEncoder(cls._cross_encoder_model_name)
+            logger.info("rerank.cross_encoder_loaded", model=cls._cross_encoder_model_name)
+            return cls._cross_encoder_cache
+        except ImportError:
+            logger.info("rerank.cross_encoder_unavailable", reason="sentence_transformers not installed")
+            return None
+        except Exception:
+            logger.warning("rerank.cross_encoder_load_failed", exc_info=True)
+            return None
+
     async def _rerank_results(
         self, results: list[SearchResult], q: str
     ) -> list[SearchResult]:
-        """Rerank results using cross-encoder if available; fall back to keyword boost."""
+        """Rerank results using 3-tier fallback:
+
+        1. Cross-encoder (sentence-transformers) — highest quality
+        2. Embedding cosine similarity (if embedder available) — medium quality
+        3. Keyword boost — always available, lowest quality
+        """
         if not results:
             return results
 
-        try:
-            return await self._cross_encoder_rerank(results, q)
-        except ImportError:
-            # sentence-transformers not installed — use keyword boost fallback
-            return self._keyword_boost_rerank(results, q)
+        # Tier 1: Cross-encoder (cached, lazy-loaded)
+        ce = self._get_cross_encoder()
+        if ce is not None:
+            try:
+                return await self._cross_encoder_rerank(results, q, ce)
+            except Exception:
+                logger.warning("rerank.cross_encoder_failed", exc_info=True)
+                # Fall through to Tier 2
+
+        # Tier 2: Embedding-based cosine rerank (if embedder available)
+        if self.embedder is not None:
+            try:
+                return await self._embedding_rerank(results, q)
+            except Exception:
+                logger.warning("rerank.embedding_failed", exc_info=True)
+                # Fall through to Tier 3
+
+        # Tier 3: Keyword boost (always available)
+        return self._keyword_boost_rerank(results, q)
 
     async def _cross_encoder_rerank(
-        self, results: list[SearchResult], q: str
+        self, results: list[SearchResult], q: str, ce: object
     ) -> list[SearchResult]:
         """Use a cross-encoder to score query-document pairs.
 
-        Requires: pip install sentence-transformers>=2.0
+        Uses the pre-loaded module-level cached model.
         Default model: cross-encoder/ms-marco-MiniLM-L-6-v2
         """
-        from sentence_transformers import CrossEncoder
         import asyncio
-
-        model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-        # Lazy-load model (module-level cache could be added later)
-        ce = CrossEncoder(model_name)
 
         pairs = [(q, r.content) for r in results]
         scores = await asyncio.to_thread(ce.predict, pairs)
 
         for r, score in zip(results, scores):
             r.score = float(score)
+
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results
+
+    async def _embedding_rerank(
+        self, results: list[SearchResult], q: str
+    ) -> list[SearchResult]:
+        """Rerank using cosine similarity between query embedding and result content.
+
+        Falls back to keyword boost if embedder is unavailable or fails.
+        """
+        if not self.embedder:
+            return self._keyword_boost_rerank(results, q)
+
+        import asyncio
+        import math
+
+        def _cosine_similarity(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = math.sqrt(sum(x * x for x in a))
+            norm_b = math.sqrt(sum(x * x for x in b))
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return dot / (norm_a * norm_b)
+
+        # Embed query + all result contents in one batch
+        texts = [q] + [r.content for r in results]
+        try:
+            embeddings = await self.embedder.embed(texts)
+        except Exception:
+            return self._keyword_boost_rerank(results, q)
+
+        query_emb = embeddings[0]
+        for i, r in enumerate(results):
+            sim = _cosine_similarity(query_emb, embeddings[i + 1])
+            # Blend: 70% cosine similarity, 30% original score
+            r.score = 0.7 * sim + 0.3 * r.score
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results

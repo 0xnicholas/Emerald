@@ -248,7 +248,7 @@ search_mode = "rag"    → 仅向量相似度搜索
 
 ## 6. Post-v0.3.0 增强（2026-06-02 之后）
 
-> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后 33 个 commit 中的重大架构变更。未作为独立版本发布，将在路线图 v0.4 → v0.8 中逐步发布。完整 roadmap 见 [`docs/roadmap.md`](../roadmap.md)。
+> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后 ~36 个 commit 中的重大架构变更。未作为独立版本发布，将在路线图 v0.4 → v0.8 中逐步发布。完整 roadmap 见 [`docs/roadmap.md`](../roadmap.md)。
 
 ### 6.1 事实提取从「格式转换」升级为「语义理解」
 
@@ -292,14 +292,15 @@ Post-v0.3.0: 原文 → fact extraction(LLM) → 多条结构化事实 → memor
 
 **效果：** 输入「用户在 Stripe 工作」可自动召回「用户领导 5 人支付团队」（EXTENDS 关系）。
 
-### 6.3 关系推断新增 LLM 降级路径
+### 6.3 关系推断 LLM-first
 
-**之前：** 仅关键词匹配 + 结构模板 + bigram 重叠。对隐含矛盾检测弱。
+**之前：** 规则优先 + LLM 降级。结构模板/关键词匹配先运行，LLM 仅当规则返回 NONE 时调用。
 
-**之后：** 两阶段分类：
-
-1. 规则路径（关键词、结构模板）— 快路径
-2. LLM 路径（DeepSeek V4-Flash → OpenAI 降级）— 当规则结果为 NONE 时启用
+**之后（2026-06-22）：** LLM-first + bigram 预滤 + 规则降级：
+1. Identical check → NONE
+2. Bigram 预滤 → 无重叠的直接 NONE（避免浪费 LLM 调用）
+3. LLM 优先（DeepSeek → OpenAI 降级）
+4. 规则降级（结构模板、矛盾检测、互补检测）
 
 ### 6.4 首选项强化与语义去重
 
@@ -372,3 +373,36 @@ importance = 0.35 × confidence
 - CORS 生产加固（基于 `CORS_ALLOWED_ORIGINS` 环境变量区分 dev/prod）
 - `engine.py` 全面 `async def` 化 + Celery 任务链异步化
 - 移除 `raw_content_ref` dead code，改进 dedup 归一化
+
+### 6.12 Cross-encoder 重排序升级（2026-06-22）
+
+**之前（Stub）：** 仅 keyword boost（最多 15% boost），无语义重排序。
+
+**之后：** 三级降级链：
+
+```
+_rerank_results()
+  ├─ Tier 1: Cross-encoder (sentence-transformers, cached)
+  │    模型: cross-encoder/ms-marco-MiniLM-L-6-v2
+  │    加载: 模块级 @classmethod 缓存，首次加载后复用
+  ├─ Tier 2: Embedding cosine (复用现有 embedder)
+  │    公式: score = 0.7 × cosine_sim(q, doc) + 0.3 × original_score
+  └─ Tier 3: Keyword boost (bigram 重叠, 最多 15%)
+```
+
+### 6.13 Profile config 端点（2026-06-22）
+
+新增 per-entity 画像配置覆写：
+
+```
+PUT/GET/DELETE /v1/profiles/{entity_id}/config
+  ├─ static_max_items (1-50, default 10)
+  ├─ dynamic_max_items (1-20, default 5)
+  ├─ dynamic_lookback_days (1-90, default 7)
+  ├─ min_confidence_static (0.0-1.0, default 0.5)
+  └─ min_confidence_dynamic (0.0-1.0, default 0.3)
+```
+
+存储：Redis `profile:config:{entity_id}` + 内存降级。
+效果：`ProfileManager.compute()` 和 `_merge_incremental()` 在计算时旁加载 per-entity config。
+设置 config 后自动失效画像缓存，下次 GET 即使用新配置。
