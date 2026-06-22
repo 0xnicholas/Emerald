@@ -34,12 +34,21 @@ curl http://localhost:8000/v1/health
 
 API Key 格式：`em_` + 32 字符随机字符串。服务端仅存储 SHA-256 哈希。
 
-```python
-# 通过 SDK 创建（需要 admin 权限）
-# TODO: POST /v1/admin/api-keys
-```
+**当前创建方式（无 admin API）：** 通过 `scripts/seed_dev_api_key.py` 创建开发 key，生产环境需手动在数据库插入（参见 [`emerald/models/api_key.py`](../emerald/models/api_key.py)）。
 
-开发阶段可使用任意 `em_` 前缀的字符串。
+**生产环境推荐流程：**
+
+1. 通过数据库迁移或内部工具创建 `ApiKey` 记录（参考 [`scripts/seed_dev_api_key.py`](../scripts/seed_dev_api_key.py) 中的实现）
+2. 将原始 key 安全交付给用户（一次）
+3. 服务端仅存储 `key_hash`（SHA-256）
+
+**路线图：** `POST /v1/admin/api-keys` 管理端点是 [M2 (v0.5.0) 计划](roadmap.md)。在此之前，请使用脚本 / 手动方式。
+
+```bash
+# 开发环境创建示例
+python scripts/seed_dev_api_key.py
+# 输出：Dev API key created: em_dev_test_key_001
+```
 
 ---
 

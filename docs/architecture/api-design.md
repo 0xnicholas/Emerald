@@ -370,8 +370,12 @@ GET /v1/profiles/{entity_id}
 
 #### 更新画像配置
 
+> ⚠️ **状态：计划中**。此端点尚未实现。代码中不存在 `PUT /v1/profiles/{entity_id}/config` 路由。计划在 [M2 (v0.5.0)](../roadmap.md) 实现。
+>
+> 下面是设计草案（供参考）：
+
 ```
-PUT /v1/profiles/{entity_id}/config
+PUT /v1/profiles/{entity_id}/config   [Planned for v0.5.0]
 ```
 
 ```json
@@ -383,6 +387,8 @@ PUT /v1/profiles/{entity_id}/config
     "min_confidence_dynamic": 0.3
 }
 ```
+
+**临时配置方式：** 当前画像参数（`min_confidence_static`、`dynamic_max_items` 等）在 `emerald/core/profile.py` 中硬编码默认值。如需调整，需直接修改代码并重启服务。
 
 ---
 

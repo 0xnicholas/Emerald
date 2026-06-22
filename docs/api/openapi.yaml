@@ -729,8 +729,13 @@ paths:
 
     delete:
       tags: [Memories]
-      summary: Delete a memory
-      description: Soft delete — marks the memory as `is_latest=false`.
+      summary: Delete a memory (soft delete)
+      description: |
+        Soft delete — marks the memory as `is_latest=false`. Memory
+        remains in the database for temporal history queries. Hard
+        delete requires manual DB intervention (for GDPR etc.).
+
+        **Added in Post-v0.3.0.**
       operationId: deleteMemory
       parameters:
         - name: memory_id
@@ -749,11 +754,14 @@ paths:
                   data:
                     type: object
                     properties:
-                      deleted:
-                        type: boolean
-                        example: true
                       memory_id:
                         type: string
+                      is_latest:
+                        type: boolean
+                        example: false
+                      deleted_at:
+                        type: string
+                        format: date-time
                   meta:
                     $ref: "#/components/schemas/Meta"
         "404":
@@ -762,6 +770,156 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /memories/batch:
+    post:
+      tags: [Memories]
+      summary: Batch add memories (up to 50 per request)
+      description: |
+        Add multiple memories in a single request. Each memory is processed
+        independently by the pipeline; partial failures are returned in the
+        response with per-item status.
+
+        **Added in Post-v0.3.0.**
+      operationId: addMemoriesBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [memories]
+              properties:
+                memories:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [content, entity_id]
+                    properties:
+                      content:
+                        type: string
+                        description: Memory content
+                      entity_id:
+                        type: string
+                        description: Target entity ID
+                      memory_type:
+                        type: string
+                        enum: [fact, preference, episodic]
+                        description: Override LLM extraction
+                      confidence:
+                        type: number
+                        minimum: 0.0
+                        maximum: 1.0
+                      valid_until:
+                        type: string
+                        format: date-time
+                      metadata:
+                        type: object
+                        additionalProperties: true
+      responses:
+        "200":
+          description: Batch processed (may include partial failures)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            memory_ids:
+                              type: array
+                              items: {type: string}
+                            status:
+                              type: string
+                              enum: [completed, failed]
+                            error:
+                              type: string
+                      total: {type: integer}
+                      successful: {type: integer}
+                      failed: {type: integer}
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "422":
+          description: Validation error (e.g., > 50 memories)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /memories/graph:
+    get:
+      tags: [Memories]
+      summary: Get graph viewport for visualization
+      description: |
+        Return nodes and edges for the entity's graph, suitable for D3.js /
+        vis-network force-directed rendering.
+
+        **Added in Post-v0.3.0.**
+      operationId: getMemoryGraph
+      parameters:
+        - name: entity_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        "200":
+          description: Graph data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      nodes:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: {type: string}
+                            label: {type: string}
+                            memory_type:
+                              type: string
+                              enum: [fact, preference, episodic]
+                            is_latest: {type: boolean}
+                      edges:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            source: {type: string}
+                            target: {type: string}
+                            type:
+                              type: string
+                              enum: [UPDATES, EXTENDS, DERIVES_FROM]
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 
   # ---- Search ----
 
