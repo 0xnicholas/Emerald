@@ -7,7 +7,7 @@ import io
 import time
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 
 from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
 from emerald.config import get_settings
@@ -114,6 +114,7 @@ async def upload_file(
     dependencies=[Depends(api_key_auth)],
 )
 async def list_files(
+    request: Request,
     entity_id: str,
     status_filter: str = "done",
     page: int = 1,
@@ -183,7 +184,7 @@ async def list_files(
             "page_size": page_size,
         },
         "meta": {
-            "request_id": str(uuid4())[:8],
+            "request_id": getattr(request.state, "request_id", str(uuid4())[:8]),
             "took_ms": int((time.perf_counter() - start) * 1000),
         },
     }

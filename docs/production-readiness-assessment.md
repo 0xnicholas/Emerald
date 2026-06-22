@@ -171,7 +171,7 @@
 | **连接器** | 🟡 | GitHub 完整实现，其他连接器（Gmail/Drive/Notion）存在但 coverage omit |
 | **MCP Server** | 🟢 | stdio + SSE 双模式，3 个工具 |
 | **Python SDK** | 🟢 | async client，4 核心方法 + 辅助方法 |
-| **文档列表** | 🔴 | `GET /v1/files` 返回空列表（stub 实现） |
+| **文档列表** | 🟢 | `GET /v1/files` 已实现 Document 分页查询（7 个集成测试覆盖） |
 | **幂等写入** | 🔴 | 无 `customId` 或幂等机制，重复提交会产生重复记忆 |
 | **metadata 过滤** | 🟡 | 基础支持（memory_type、min_confidence），**无 $and/$or 表达式** |
 
@@ -215,7 +215,7 @@
 | 8 | **遗忘引擎 Neo4j 实现不完整** | ✅ 已修复 | `9cd4c48`：添加 `GraphStore.list_entity_ids()` 公共接口，ForgetEngine 走正常接口 |
 | 9 | **Neo4j 驱动无连接池配置** | ✅ 已修复 | `9cd4c48`：`max_connection_pool_size=50`, `connection_acquisition_timeout=30`, `max_transaction_retry_time=30` |
 | 10 | **无幂等写入** | 🟡 部分修复 | `0f29876`：Redis 缓存 `idempotency_key` (1h TTL)；SDK 仍可通过 metadata 覆盖 memory_type |
-| 11 | **`/v1/files` stub 实现** | ⏳ 仍 Stub | `emerald/api/routes/v1/upload.py:list_files` 仍返回空。计划在 M1 (v0.4.0) 实现 Document 分页查询 |
+| 11 | **`/v1/files` stub 实现** | ✅ 已修复 | `emerald/api/routes/v1/upload.py:list_files` 实现完整 Document 分页查询（带 status_filter）；新增 7 个集成测试覆盖。详情见 `tests/api/test_list_files.py`。**该文档本身的“stub”描述已修正** |
 | 12 | **无分布式锁** | ✅ 已修复 | `83cba27`：`beat_lock(ttl_seconds=...)` Redis 分布式锁，防 Celery Beat 多实例重复执行 |
 
 ### 🟢 P2 — 优化建议

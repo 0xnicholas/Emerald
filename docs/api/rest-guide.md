@@ -491,12 +491,53 @@ queued → extracting → chunking → embedding → indexing → done
 
 ### 9. 文件列表 — `GET /files`
 
-列出实体上传的文件。**注意：当前为 stub，始终返回空列表。**
+列出实体上传的文件。支持分页与状态过滤。
 
 ```http
 GET /v1/files?entity_id=user_123&status=done&page=1&page_size=20
 Authorization: Bearer em_xxx
 ```
+
+**查询参数：**
+
+| 参数 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `entity_id` | string | ✅ | — | 实体 ID（external_id） |
+| `status_filter` | string | ❌ | `done` | 按状态过滤（`queued` / `processing` / `done` / `failed`） |
+| `page` | int | ❌ | `1` | 页码（从 1 开始） |
+| `page_size` | int | ❌ | `20` | 每页数量 |
+
+**响应：**
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "doc_abc123",
+        "title": "report.pdf",
+        "content_type": "application/pdf",
+        "status": "done",
+        "file_size_bytes": 102400,
+        "chunk_count": 12,
+        "created_at": "2026-06-21T10:00:00+00:00"
+      }
+    ],
+    "total": 42,
+    "page": 1,
+    "page_size": 20
+  },
+  "meta": {
+    "request_id": "req_xyz",
+    "took_ms": 12
+  }
+}
+```
+
+**特殊行为：**
+- 未知的 `entity_id` 返回空列表（不是 404）
+- 默认只返回 `status=done` 的文档
+- 按 `created_at` 降序排列
 
 ---
 
