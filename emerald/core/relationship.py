@@ -22,7 +22,7 @@ logger = structlog.get_logger(__name__)
 
 # Rule-based classification patterns
 _FUTURE_TEMPORAL_RE = re.compile(
-    r"(明天|后天|下周|下个月|明年|未来|tomorrow|next\s+week|next\s+month|next\s+year)",
+    r"(?:明天|后天|大后天|\d+\s*天后|下周|下个月|明年|未来|tomorrow|\d+\s*days\s+later|next\s+week|next\s+month|next\s+year)",
     re.IGNORECASE,
 )
 _COMPLETION_RE = re.compile(

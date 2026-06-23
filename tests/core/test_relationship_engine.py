@@ -182,6 +182,17 @@ def test_temporal_update_exam_finished(engine):
     assert rel_type == RelationType.UPDATES
 
 
+def test_temporal_update_numeric_days_later(engine):
+    """Numeric future-relative expressions (N天后 / N days later) followed by
+    a completion word should trigger UPDATES.
+    """
+    rel_type = engine._rule_classify("我考完试了", "我3天后有考试")
+    assert rel_type == RelationType.UPDATES
+
+    rel_type = engine._rule_classify("The meeting is cancelled", "The meeting is 5 days later")
+    assert rel_type == RelationType.UPDATES
+
+
 def test_budget_cut_is_update_not_extends(engine):
     """Changing a numeric value on the same subject should be UPDATES, not EXTENDS."""
     rel_type = engine._rule_classify("项目预算 5 万", "项目预算 10 万")
