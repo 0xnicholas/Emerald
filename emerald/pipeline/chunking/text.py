@@ -158,12 +158,15 @@ class TextChunker(BaseChunker):
         results = []
         for i, (text, offset, _overlap) in enumerate(chunks):
             token_count = max(1, len(text) // self._chars_per_token)
+            temporal = TemporalExtractor().extract(text)
+            valid_until = temporal.valid_until if temporal is not None else None
             results.append(
                 Chunk(
                     text=text,
                     index=i,
                     token_count=token_count,
                     content_type="text",
+                    valid_until=valid_until,
                     metadata={
                         "char_offset_start": offset,
                         "char_offset_end": offset + len(text),

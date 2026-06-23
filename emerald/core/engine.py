@@ -5,20 +5,23 @@ Routes incoming content through the pipeline: detect type → extract → chunk 
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
 import structlog
 
-from emerald.core.chunker import Chunk, ChunkerRegistry, get_default_registry as get_default_chunker_registry
+from emerald.core.chunker import Chunk, ChunkerRegistry
+from emerald.core.chunker import get_default_registry as get_default_chunker_registry
 from emerald.core.embedder import EmbeddingProvider, get_embedding_provider
 from emerald.core.exceptions import IndexingError
-from emerald.core.extractor import ExtractedContent, ExtractorRegistry, get_default_registry as get_default_extractor_registry
+from emerald.core.extractor import ExtractedContent, ExtractorRegistry
+from emerald.core.extractor import get_default_registry as get_default_extractor_registry
 from emerald.core.graph import GraphStore
 from emerald.core.metrics import memory_add_latency_seconds, memory_add_total, timed
-from emerald.core.tracing import get_tracer
 from emerald.core.profile import ProfileManager
 from emerald.core.relationship import RelationshipEngine
+from emerald.core.tracing import get_tracer
 from emerald.core.vector import VectorStore
 
 logger = structlog.get_logger(__name__)
@@ -281,7 +284,7 @@ class MemoryEngine:
             # (the chunker provides defaults; callers may know better)
             overridden_type = chunk.memory_type
             overridden_confidence = chunk.confidence
-            overridden_valid_until = None
+            overridden_valid_until = chunk.valid_until
             if metadata:
                 if "memory_type" in metadata:
                     overridden_type = metadata["memory_type"]

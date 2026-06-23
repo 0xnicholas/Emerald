@@ -134,3 +134,36 @@ async def test_vector_search_respects_entity_isolation(engine):
     assert any("Alice" in t for t in alice_texts)
     assert not any("Bob" in t for t in alice_texts)
     assert any("Bob" in t for t in bob_texts)
+
+
+@pytest.mark.asyncio
+async def test_add_sets_valid_until_from_temporal_expression(engine):
+    from datetime import UTC, datetime, timedelta
+
+    entity = "user_temporal"
+    result = await engine.add("我明天有考试", entity_id=entity)
+    assert result.memory_ids
+    mid = result.memory_ids[0]
+    memory = await engine.graph.get_memory(mid)
+    assert memory["valid_until"] is not None
+    now = datetime.now(UTC)
+    assert now < memory["valid_until"] <= now + timedelta(days=2)
+
+
+@pytest.mark.asyncio
+async def test_add_metadata_valid_until_overrides_chunk(engine):
+    from datetime import UTC, datetime, timedelta
+
+    entity = "user_metadata_override"
+    override = datetime.now(UTC) + timedelta(days=30)
+    result = await engine.add(
+        "我明天有考试",
+        entity_id=entity,
+        metadata={"valid_until": override.isoformat()},
+    )
+    assert result.memory_ids
+    mid = result.memory_ids[0]
+    memory = await engine.graph.get_memory(mid)
+    assert memory["valid_until"] is not None
+    # Metadata override wins over chunk-derived tomorrow deadline.
+    assert memory["valid_until"] > datetime.now(UTC) + timedelta(days=7)
