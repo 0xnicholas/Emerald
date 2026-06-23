@@ -142,6 +142,29 @@ def test_no_temporal_expression(extractor: TemporalExtractor) -> None:
         assert result is None
 
 
+def test_non_future_reference_does_not_abort_scan(extractor: TemporalExtractor) -> None:
+    """A non-future reference (今天/昨天/today/yesterday) must not prevent
+    discovery of a later future expression in the same text.
+
+    Regression test for the early-return bug where extract() returned None
+    as soon as the first pattern resolved to None.
+    """
+    cases = [
+        ("今天通知明天有考试", "明天", datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC)),
+        (
+            "Yesterday I learned the report is due tomorrow",
+            "tomorrow",
+            datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC),
+        ),
+        ("今天3天后要交作业", "3天后", datetime(2026, 6, 26, 12, 0, 0, tzinfo=UTC)),
+    ]
+    for text, matched, expected_day in cases:
+        result = extractor.extract(text)
+        assert isinstance(result, TimeExpression)
+        assert result.text == matched
+        assert result.valid_until == _end_of_day(expected_day)
+
+
 def test_past_absolute_dates_return_none(extractor: TemporalExtractor) -> None:
     """Absolute dates/months on or before the reference date return None."""
     cases = [

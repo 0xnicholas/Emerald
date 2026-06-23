@@ -70,7 +70,13 @@ class TemporalExtractor:
         ]
 
     def extract(self, text: str) -> TimeExpression | None:
-        """Return the first future deadline found in *text*, or ``None``."""
+        """Return the first future deadline found in *text*, or ``None``.
+
+        Scans all registered patterns in priority order. A resolver may return
+        ``None`` for non-future references (e.g. 今天/昨天/today/yesterday); in
+        that case the scan continues so that later future expressions in the
+        same text are still discovered.
+        """
         for pattern, resolver in self._compiled_patterns:
             match = pattern.search(text)
             if not match:
@@ -84,7 +90,7 @@ class TemporalExtractor:
                 continue
 
             if valid_until is None:
-                return None
+                continue
 
             return TimeExpression(text=matched_text, valid_until=valid_until)
 
