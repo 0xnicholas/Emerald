@@ -173,6 +173,38 @@ async def test_derives_from_has_source_links(engine, graph):
     assert derived["is_latest"] is True
 
 
+# ---- Time-aware and numeric update rules ----
+
+
+def test_temporal_update_exam_finished(engine):
+    """A future event followed by a completion word should trigger UPDATES."""
+    rel_type = engine._rule_classify("我考完试了", "我明天有考试")
+    assert rel_type == RelationType.UPDATES
+
+
+def test_budget_cut_is_update_not_extends(engine):
+    """Changing a numeric value on the same subject should be UPDATES, not EXTENDS."""
+    rel_type = engine._rule_classify("项目预算 5 万", "项目预算 10 万")
+    assert rel_type == RelationType.UPDATES
+    assert rel_type != RelationType.EXTENDS
+
+
+def test_extends_requires_subject_overlap(engine):
+    """EXTENDS should require non-trivial subject/topic overlap.
+
+    Two facts that only share a generic verb bigram but have different
+    subjects/topics must not be linked as EXTENDS.
+    """
+    rel_type = engine._rule_classify("他喜欢北京", "用户喜欢 Python")
+    assert rel_type == RelationType.NONE
+
+
+def test_numeric_age_update(engine):
+    """Changing an age value should trigger UPDATES."""
+    rel_type = engine._rule_classify("用户 26 岁", "用户 25 岁")
+    assert rel_type == RelationType.UPDATES
+
+
 # ---- Entity isolation ----
 
 

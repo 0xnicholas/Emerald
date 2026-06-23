@@ -3,13 +3,14 @@
 Analyses new memories against the existing knowledge graph and automatically
 creates UPDATES, EXTENDS, and DERIVES_FROM relationships.
 
-AGENTS.md requirement: "图谱操作必须是原子的。一个事实更新取代旧事实时，必须在单次事务中设置 isLatest 和创建 Update 关系。"
+AGENTS.md requirement:
+"图谱操作必须是原子的。一个事实更新取代旧事实时，必须在单次事务中设置 isLatest 和创建 Update 关系。"
 """
 
 from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum
 
 import structlog
 
@@ -19,8 +20,19 @@ from emerald.core.vector import VectorStore
 
 logger = structlog.get_logger(__name__)
 
+# Rule-based classification patterns
+_FUTURE_TEMPORAL_RE = re.compile(
+    r"(明天|后天|下周|下个月|明年|未来|tomorrow|next\s+week|next\s+month|next\s+year)",
+    re.IGNORECASE,
+)
+_COMPLETION_RE = re.compile(
+    r"(考完|结束|取消|完成|过期|finished|cancelled|canceled|done|completed)",
+    re.IGNORECASE,
+)
+_NUMERIC_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(万|元|岁|%|kg|km|美元|欧元|rmb)", re.IGNORECASE)
 
-class RelationType(str, Enum):
+
+class RelationType(StrEnum):
     UPDATES = "updates"           # New fact replaces old fact
     EXTENDS = "extends"           # New fact enriches old fact
     DERIVES_FROM = "derives_from" # Inferred from multiple facts
@@ -146,6 +158,15 @@ class RelationshipEngine:
 
     def _rule_classify(self, new_content: str, old_content: str) -> RelationType:
         """Fast rule-based classification."""
+        # Time-aware update: a future event in the old fact followed by a
+        # completion/cancellation word in the new fact is an UPDATE.
+        if self._is_temporal_update(new_content, old_content):
+            return RelationType.UPDATES
+
+        # Numeric update: same unit with a different value is an UPDATE.
+        if self._is_numeric_update(new_content, old_content):
+            return RelationType.UPDATES
+
         # Extract structure patterns
         new_struct = self._extract_structure(new_content)
         old_struct = self._extract_structure(old_content)
@@ -161,8 +182,11 @@ class RelationshipEngine:
         if self._is_contradictory(new_content, old_content):
             return RelationType.UPDATES
 
-        # Check for extension patterns (complementary information)
-        if self._is_complementary(new_content, old_content):
+        # Check for extension patterns (complementary information).
+        # Guarded by subject/topic overlap to avoid accidental EXTENDS.
+        if self._has_text_overlap(new_content, old_content) and self._is_complementary(
+            new_content, old_content,
+        ):
             return RelationType.EXTENDS
 
         return RelationType.NONE
@@ -384,27 +408,88 @@ class RelationshipEngine:
 
         # Tense change indicators
         change_words = {"刚", "现在", "新", "换了", "搬到", "跳槽", "离职", "改用"}
-        for word in change_words:
-            if word in new_text:
-                return True
-
-        return False
+        return any(word in new_text for word in change_words)
 
     @staticmethod
     def _has_text_overlap(new_text: str, old_text: str) -> bool:
-        """Fast pre-filter: check if two texts share any bigrams.
+        """Check for non-trivial textual or subject/topic overlap.
 
-        Returns False for completely unrelated content — these pairs
-        can be skipped before the expensive LLM classification step.
-
-        This is intentionally lenient (low bar) — it only filters out
-        pairs with ZERO overlap.  Even a single shared bigram passes.
+        Returns True when two facts share enough context to be worth
+        classifying.  A single accidental bigram (e.g. a common verb) is
+        no longer sufficient; there must be either two shared bigrams or
+        a shared subject keyword.
         """
         new_bigrams = RelationshipEngine._extract_bigrams(new_text)
         old_bigrams = RelationshipEngine._extract_bigrams(old_text)
         if not new_bigrams or not old_bigrams:
             return False
-        return bool(new_bigrams & old_bigrams)
+
+        shared_bigrams = new_bigrams & old_bigrams
+        if len(shared_bigrams) >= 2:
+            return True
+
+        new_subjects = RelationshipEngine._extract_subject_keywords(new_text)
+        old_subjects = RelationshipEngine._extract_subject_keywords(old_text)
+        return bool(new_subjects and old_subjects and (new_subjects & old_subjects))
+
+    @staticmethod
+    def _extract_subject_keywords(text: str) -> set[str]:
+        """Extract subject/topic keywords for overlap checking.
+
+        Captures the leading Chinese subject (e.g. 用户, 我) and English
+        capitalized entities (e.g. Python, Stripe) so that facts about the
+        same entity pass the overlap guard while unrelated facts do not.
+        """
+        keywords: set[str] = set()
+
+        # Leading Chinese character and bigram — typically the grammatical subject.
+        leading_match = re.match(r"[\u4e00-\u9fff]+", text)
+        if leading_match:
+            leading = leading_match.group(0)
+            keywords.add(leading[0])
+            if len(leading) >= 2:
+                keywords.add(leading[:2])
+
+        # English capitalized entities / proper nouns.
+        keywords.update(re.findall(r"[A-Z][a-zA-Z]+", text))
+
+        return keywords
+
+    @staticmethod
+    def _is_temporal_update(new_text: str, old_text: str) -> bool:
+        """Detect time-aware updates: old fact had a future event, new fact completes it."""
+        if not _FUTURE_TEMPORAL_RE.search(old_text):
+            return False
+        if not _COMPLETION_RE.search(new_text):
+            return False
+        # Require some subject/topic overlap to avoid unrelated completions.
+        return RelationshipEngine._has_text_overlap(new_text, old_text)
+
+    @staticmethod
+    def _is_numeric_update(new_text: str, old_text: str) -> bool:
+        """Detect numeric value changes on the same subject/attribute."""
+        new_matches = _NUMERIC_UNIT_RE.findall(new_text)
+        old_matches = _NUMERIC_UNIT_RE.findall(old_text)
+        if not new_matches or not old_matches:
+            return False
+
+        new_units = {unit for _, unit in new_matches}
+        old_units = {unit for _, unit in old_matches}
+        shared_units = new_units & old_units
+        if not shared_units:
+            return False
+
+        # Guard against unrelated pairs that happen to share a unit.
+        if not RelationshipEngine._has_text_overlap(new_text, old_text):
+            return False
+
+        for unit in shared_units:
+            new_values = {num for num, u in new_matches if u == unit}
+            old_values = {num for num, u in old_matches if u == unit}
+            if new_values != old_values:
+                return True
+
+        return False
 
     @staticmethod
     def _is_complementary(new_text: str, old_text: str) -> bool:
