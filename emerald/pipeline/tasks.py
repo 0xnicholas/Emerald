@@ -3,20 +3,52 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from typing import Any
+
 import structlog
 from celery import shared_task
 
+from emerald.async_utils import run_async
 from emerald.core.metrics import pipeline_jobs_total
 from emerald.core.tracing import attach_traceparent, detach, get_traceparent, get_tracer
-
-from emerald.async_utils import run_async
+from emerald.pipeline.chunking.base import Chunk
 
 logger = structlog.get_logger(__name__)
 
 
+def _chunk_to_dict(c: Chunk) -> dict[str, Any]:
+    """Serialize a chunk to the JSON-safe dict stored in Redis."""
+
+    return {
+        "id": c.id,
+        "text": c.text,
+        "index": c.index,
+        "token_count": c.token_count,
+        "memory_type": c.memory_type,
+        "confidence": c.confidence,
+        "summary": c.summary,
+        "valid_until": c.valid_until.isoformat() if c.valid_until else None,
+    }
+
+
+def _deserialize_valid_until(raw: Any) -> datetime | None:
+    """Parse an ISO-8601 ``valid_until`` value, returning ``None`` on invalid input."""
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("pipeline.index.invalid_valid_until", value=raw)
+        return None
+
+
 async def _update_status(pipeline_id: str, status: str) -> None:
-    from emerald.db.session import session_factory
     from sqlalchemy import text
+
+    from emerald.db.session import session_factory
 
     async with session_factory.session() as session:
         await session.execute(
@@ -29,8 +61,9 @@ async def _update_status(pipeline_id: str, status: str) -> None:
 
 async def _update_error(pipeline_id: str, stage: str, error: str) -> None:
     pipeline_jobs_total.labels(status="failed").inc()
-    from emerald.db.session import session_factory
     from sqlalchemy import text
+
+    from emerald.db.session import session_factory
 
     async with session_factory.session() as session:
         await session.execute(
@@ -49,7 +82,7 @@ def extract_task(self, pipeline_id: str, content: str | bytes, content_type: str
         return run_async(_run_extract)(self, pipeline_id, content, content_type)
     except Exception as exc:
         run_async(_update_error)(pipeline_id, "extracting", str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 async def _run_extract(pipeline_id, content, content_type):
@@ -75,7 +108,7 @@ def chunk_task(self, prev_result: dict) -> dict:
         return run_async(_run_chunk)(self, prev_result)
     except Exception as exc:
         run_async(_update_error)(prev_result["pipeline_id"], "chunking", str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 async def _run_chunk(prev_result: dict) -> dict:
@@ -92,16 +125,7 @@ async def _run_chunk(prev_result: dict) -> dict:
     chunker = registry.get(prev_result.get("content_type", "text"))
     chunks = await chunker.chunk(text or "")
 
-    data = [
-        {
-            "id": c.id, "text": c.text, "index": c.index,
-            "token_count": c.token_count,
-            "memory_type": c.memory_type,
-            "confidence": c.confidence,
-            "summary": c.summary,
-        }
-        for c in chunks
-    ]
+    data = [_chunk_to_dict(c) for c in chunks]
     await redis.setex(f"pipeline:{pipeline_id}:chunks", 86400, json.dumps(data))
     prev_result["chunk_count"] = len(chunks)
     return prev_result
@@ -113,7 +137,7 @@ def embed_task(self, prev_result: dict) -> dict:
         return run_async(_run_embed)(self, prev_result)
     except Exception as exc:
         run_async(_update_error)(prev_result["pipeline_id"], "embedding", str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 async def _run_embed(prev_result: dict) -> dict:
@@ -175,7 +199,8 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
         vector = VectorStore(use_db=True)
 
         memory_ids = []
-        for chunk_data, embedding in zip(chunks_data, embeddings):
+        for chunk_data, embedding in zip(chunks_data, embeddings, strict=False):
+            valid_until = _deserialize_valid_until(chunk_data.get("valid_until"))
             mid = await graph.create_memory(
                 content=chunk_data["text"],
                 entity_id=entity_id,
@@ -183,6 +208,7 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
                 confidence=chunk_data.get("confidence", 0.8),
                 summary=chunk_data.get("summary") or None,
                 source_type="document",
+                valid_until=valid_until,
             )
             memory_ids.append(mid)
             await vector.store(
@@ -241,8 +267,6 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
 
 # ---- Scheduled tasks (Celery Beat) ----
 
-from celery import shared_task
-
 
 async def _locked_run(coro, lock_name: str, ttl: int = 600) -> dict | None:
     """Execute *coro* under a distributed lock; skip if lock is held by another instance."""
@@ -275,7 +299,11 @@ async def _run_forget_expired() -> dict:
         return {"strategy": "time_expiry", "count": count}
 
     result = await _locked_run(_work(), "task_forget_expired")
-    return result if result is not None else {"strategy": "time_expiry", "count": 0, "skipped": True}
+    return (
+        result
+        if result is not None
+        else {"strategy": "time_expiry", "count": 0, "skipped": True}
+    )
 
 
 @shared_task
@@ -295,7 +323,11 @@ async def _run_forget_noise() -> dict:
         return {"strategy": "noise_filter", "count": count}
 
     result = await _locked_run(_work(), "task_forget_noise", ttl=1800)
-    return result if result is not None else {"strategy": "noise_filter", "count": 0, "skipped": True}
+    return (
+        result
+        if result is not None
+        else {"strategy": "noise_filter", "count": 0, "skipped": True}
+    )
 
 
 @shared_task
@@ -315,7 +347,11 @@ async def _run_decay_episodic() -> dict:
         return {"strategy": "episodic_decay", "count": count}
 
     result = await _locked_run(_work(), "task_decay_episodic", ttl=1800)
-    return result if result is not None else {"strategy": "episodic_decay", "count": 0, "skipped": True}
+    return (
+        result
+        if result is not None
+        else {"strategy": "episodic_decay", "count": 0, "skipped": True}
+    )
 
 
 @shared_task
@@ -351,4 +387,8 @@ async def _run_reconcile() -> dict:
         return result
 
     result = await _locked_run(_work(), "task_reconcile_index", ttl=600)
-    return result if result is not None else {"found": 0, "repaired": 0, "failed": 0, "skipped": True}
+    return (
+        result
+        if result is not None
+        else {"found": 0, "repaired": 0, "failed": 0, "skipped": True}
+    )
