@@ -178,8 +178,12 @@ class RelationshipEngine:
             if new_fillers and old_fillers and new_fillers != old_fillers:
                 return RelationType.UPDATES
 
-        # Check for contradictory patterns
-        if self._is_contradictory(new_content, old_content):
+        # Check for contradictory patterns, guarded by subject/topic overlap
+        # to avoid classifying unrelated memories as updates just because the
+        # new text contains a negation or change word.
+        if self._has_text_overlap(new_content, old_content) and self._is_contradictory(
+            new_content, old_content,
+        ):
             return RelationType.UPDATES
 
         # Check for extension patterns (complementary information).

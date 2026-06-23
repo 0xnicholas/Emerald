@@ -52,9 +52,7 @@ async def _update_status(pipeline_id: str, status: str) -> None:
 
     async with session_factory.session() as session:
         await session.execute(
-            text(
-                "UPDATE pipeline_jobs SET status = :status, updated_at = NOW() WHERE id = :id"
-            ),
+            text("UPDATE pipeline_jobs SET status = :status, updated_at = NOW() WHERE id = :id"),
             {"status": status, "id": pipeline_id},
         )
 
@@ -155,9 +153,7 @@ async def _run_embed(prev_result: dict) -> dict:
     provider = get_embedding_provider()
     embeddings = await provider.embed(texts)
 
-    await redis.setex(
-        f"pipeline:{pipeline_id}:embeddings", 86400, json.dumps(embeddings)
-    )
+    await redis.setex(f"pipeline:{pipeline_id}:embeddings", 86400, json.dumps(embeddings))
     prev_result["__traceparent"] = get_traceparent()
     return prev_result
 
@@ -300,9 +296,7 @@ async def _run_forget_expired() -> dict:
 
     result = await _locked_run(_work(), "task_forget_expired")
     return (
-        result
-        if result is not None
-        else {"strategy": "time_expiry", "count": 0, "skipped": True}
+        result if result is not None else {"strategy": "time_expiry", "count": 0, "skipped": True}
     )
 
 
@@ -324,9 +318,7 @@ async def _run_forget_noise() -> dict:
 
     result = await _locked_run(_work(), "task_forget_noise", ttl=1800)
     return (
-        result
-        if result is not None
-        else {"strategy": "noise_filter", "count": 0, "skipped": True}
+        result if result is not None else {"strategy": "noise_filter", "count": 0, "skipped": True}
     )
 
 
@@ -388,7 +380,5 @@ async def _run_reconcile() -> dict:
 
     result = await _locked_run(_work(), "task_reconcile_index", ttl=600)
     return (
-        result
-        if result is not None
-        else {"found": 0, "repaired": 0, "failed": 0, "skipped": True}
+        result if result is not None else {"found": 0, "repaired": 0, "failed": 0, "skipped": True}
     )

@@ -155,10 +155,11 @@ class TextChunker(BaseChunker):
         self, chunks: list[tuple[str, int, str | None]], source_text: str
     ) -> list[Chunk]:
         """Build final Chunk objects with metadata."""
+        temporal_extractor = TemporalExtractor()
         results = []
         for i, (text, offset, _overlap) in enumerate(chunks):
             token_count = max(1, len(text) // self._chars_per_token)
-            temporal = TemporalExtractor().extract(text)
+            temporal = temporal_extractor.extract(text)
             valid_until = temporal.valid_until if temporal is not None else None
             results.append(
                 Chunk(
