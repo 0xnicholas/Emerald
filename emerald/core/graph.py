@@ -271,7 +271,10 @@ class GraphStore:
                     and created >= cutoff
                 ):
                     memories.append(m)
-        memories.sort(key=lambda m: m.get("created_at", datetime.min.replace(tzinfo=UTC)), reverse=True)
+        memories.sort(
+            key=lambda m: m.get("created_at", datetime.min.replace(tzinfo=UTC)),
+            reverse=True,
+        )
         return memories[:limit]
 
     async def list_forget_candidates(
@@ -398,6 +401,59 @@ class GraphStore:
                     m["updated_at"] = now
                     return
 
+    async def create_update_relation(
+        self,
+        new_memory_id: str,
+        old_memory_id: str,
+        properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Atomically mark old memory as replaced and create an UPDATES edge.
+
+        AGENTS.md: 图谱操作必须是原子的。一个事实更新取代旧事实时，
+        必须在单次事务中设置 is_latest=False 和创建 Update 关系。
+        """
+        self._init_driver()
+        props = properties or {}
+        now = datetime.now(UTC)
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (old:Memory {id: $old_id})
+                    MATCH (new:Memory {id: $new_id})
+                    WHERE old.is_latest = true
+                    SET old.is_latest = false,
+                        old.replaced_by = $new_id,
+                        old.updated_at = datetime()
+                    CREATE (new)-[r:UPDATES {
+                        created_at: datetime(),
+                        confidence: $confidence,
+                        reason: $reason
+                    }]->(old)
+                    """,
+                    old_id=old_memory_id,
+                    new_id=new_memory_id,
+                    confidence=props.get("confidence", 0.8),
+                    reason=props.get("reason", ""),
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == old_memory_id and m["is_latest"]:
+                    m["is_latest"] = False
+                    m["replaced_by"] = new_memory_id
+                    m["updated_at"] = now
+                    rels = m.setdefault("relationships", [])
+                    rels.append({
+                        "from_id": new_memory_id,
+                        "type": "UPDATES",
+                        "created_at": now,
+                        **props,
+                    })
+                    return
+
     async def create_relationship(
         self,
         from_id: str,
@@ -420,15 +476,15 @@ class GraphStore:
         if self._use_db and self._driver:
             async with self._driver.session() as session:
                 await session.run(
-                    """
-                    MATCH (from:Memory {id: $from_id})
-                    MATCH (to:Memory {id: $to_id})
-                    CREATE (from)-[r:%s {
+                    f"""
+                    MATCH (from:Memory {{id: $from_id}})
+                    MATCH (to:Memory {{id: $to_id}})
+                    CREATE (from)-[r:{rel_type.upper()} {{
                         created_at: datetime(),
                         confidence: $confidence,
                         reason: $reason
-                    }]->(to)
-                    """ % rel_type.upper(),
+                    }}]->(to)
+                    """,
                     from_id=from_id,
                     to_id=to_id,
                     confidence=props.get("confidence", 0.8),

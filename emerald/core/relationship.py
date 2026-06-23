@@ -286,9 +286,11 @@ class RelationshipEngine:
         if not old["is_latest"]:
             return
 
-        # Atomic: set is_latest=False and record replaced_by
-        await self.graph.update_is_latest(
-            old_memory_id, False, replaced_by=new_memory_id
+        # Atomic: set is_latest=False, record replaced_by, and create UPDATES edge
+        await self.graph.create_update_relation(
+            new_memory_id,
+            old_memory_id,
+            properties={"reason": reason, "confidence": confidence},
         )
         logger.info(
             "relationship.updates",

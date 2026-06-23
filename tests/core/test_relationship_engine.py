@@ -90,6 +90,20 @@ async def test_updates_replaced_by_field(engine, graph):
     assert old["replaced_by"] == new_id
 
 
+@pytest.mark.asyncio
+async def test_updates_creates_relationship_edge(engine, graph):
+    """An UPDATES relationship edge is created from new memory to old memory."""
+    entity_id = "user_123"
+
+    old_id = await graph.create_memory("用户在 Google", entity_id=entity_id)
+    new_id = await graph.create_memory("用户在 Stripe", entity_id=entity_id)
+
+    await engine.create_update_relation(new_id, old_id, reason="contradiction")
+
+    relationships = await graph.get_relationships_to([old_id])
+    assert relationships.get(old_id) == [new_id]
+
+
 # ---- EXTENDS relationship ----
 
 
