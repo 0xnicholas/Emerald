@@ -231,9 +231,7 @@ class _StubFactExtractor(FactExtractor):
     def __init__(self, facts: list[Fact]) -> None:
         self._facts = facts
 
-    async def extract(
-        self, text: str, *, entity_context: str | None = None
-    ) -> list[Fact]:
+    async def extract(self, text: str, *, entity_context: str | None = None) -> list[Fact]:
         return list(self._facts)
 
 
@@ -254,9 +252,7 @@ async def test_semantic_chunker_carries_valid_until_from_fact(
             ),
         ]
     )
-    chunker = SemanticTextChunker(
-        fact_extractor=fact_extractor, temporal_extractor=extractor
-    )
+    chunker = SemanticTextChunker(fact_extractor=fact_extractor, temporal_extractor=extractor)
     chunks = await chunker.chunk("我明天有考试")
     assert len(chunks) == 1
     assert chunks[0].valid_until == expected
@@ -270,9 +266,7 @@ async def test_semantic_chunker_falls_back_to_temporal_extractor(
     fact_extractor = _StubFactExtractor(
         [Fact(text="我明天有考试", memory_type="episodic", confidence=0.9, summary="考试")]
     )
-    chunker = SemanticTextChunker(
-        fact_extractor=fact_extractor, temporal_extractor=extractor
-    )
+    chunker = SemanticTextChunker(fact_extractor=fact_extractor, temporal_extractor=extractor)
     chunks = await chunker.chunk("我明天有考试")
     assert len(chunks) == 1
     assert chunks[0].valid_until == _end_of_day(datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC))
