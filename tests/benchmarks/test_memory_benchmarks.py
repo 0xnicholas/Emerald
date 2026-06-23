@@ -95,9 +95,16 @@ class TestTemporalFactTracking:
         entity = "user_temp"
         yesterday = datetime.now(UTC) - timedelta(days=1)
 
-        # Add a temporary fact and manually set its valid_until to yesterday
+        # Add a temporary fact. The engine should auto-extract valid_until from
+        # the temporal expression "明天" before any manual override.
         result = await engine.add("明天有考试", entity_id=entity)
         mid = result.memory_ids[0]
+        memory = await engine.graph.get_memory(mid)
+        assert memory["valid_until"] is not None, (
+            "Engine should auto-extract valid_until from temporal expression"
+        )
+
+        # Manually set its valid_until to yesterday for deterministic expiry verification.
         for memories in engine.graph._memories.values():
             for m in memories:
                 if m["id"] == mid:

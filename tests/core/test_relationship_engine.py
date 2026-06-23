@@ -199,10 +199,35 @@ def test_extends_requires_subject_overlap(engine):
     assert rel_type == RelationType.NONE
 
 
+def test_contradiction_requires_subject_overlap(engine):
+    """UPDATES from contradiction must require subject/topic overlap.
+
+    Unrelated facts that happen to contain contradiction words (negation,
+    change words) must not be classified as UPDATES.
+    """
+    rel_type = engine._rule_classify("我没有钱", "用户喜欢 Python")
+    assert rel_type != RelationType.UPDATES
+
+    rel_type = engine._rule_classify("我刚吃完饭", "用户喜欢 Python")
+    assert rel_type != RelationType.UPDATES
+
+
 def test_numeric_age_update(engine):
     """Changing an age value should trigger UPDATES."""
     rel_type = engine._rule_classify("用户 26 岁", "用户 25 岁")
     assert rel_type == RelationType.UPDATES
+
+
+def test_same_subject_different_attribute_extends(engine):
+    """Same subject with different, non-contradictory attributes → EXTENDS."""
+    rel_type = engine._rule_classify("用户是软件工程师", "用户 30 岁")
+    assert rel_type == RelationType.EXTENDS
+
+
+def test_different_subjects_accidental_overlap_none(engine):
+    """Different subjects sharing only a common verb accidentally → NONE."""
+    rel_type = engine._rule_classify("她喜欢 Python", "他喜欢北京")
+    assert rel_type == RelationType.NONE
 
 
 # ---- Entity isolation ----
