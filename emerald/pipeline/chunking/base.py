@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import uuid4
 
 
@@ -26,6 +27,7 @@ class Chunk:
     memory_type: str = "fact"
     confidence: float = 0.8
     summary: str = ""
+    valid_until: datetime | None = None
 
 
 class BaseChunker(ABC):

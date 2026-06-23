@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import re
 
+import structlog
+
+from emerald.core.temporal import TemporalExtractor
 from emerald.pipeline.chunking.base import BaseChunker, Chunk
+from emerald.pipeline.chunking.fact_extractor import FactExtractor
 
 # Sentence boundary regex (handles . ! ? in multiple languages)
 _SENTENCE_RE = re.compile(r"(?<=[.!?。！？\n])\s+")
-
-from emerald.pipeline.chunking.fact_extractor import FactExtractor
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -40,7 +41,6 @@ class TextChunker(BaseChunker):
 
         # Step 2: Split long paragraphs by sentence boundaries
         raw_chunks = []
-        current_offset = 0
         for para_text, para_start in paragraphs:
             if len(para_text) > target_chars:
                 raw_chunks.extend(
@@ -176,9 +176,15 @@ class TextChunker(BaseChunker):
 class SemanticTextChunker(TextChunker):
     """Text chunker with LLM fact extraction. Inherits TextChunker for fallback."""
 
-    def __init__(self, fact_extractor: FactExtractor | None = None, **kwargs):
+    def __init__(
+        self,
+        fact_extractor: FactExtractor | None = None,
+        temporal_extractor: TemporalExtractor | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.fact_extractor = fact_extractor
+        self.temporal_extractor = temporal_extractor
 
     async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         if not text.strip():
@@ -193,18 +199,31 @@ class SemanticTextChunker(TextChunker):
                     text, entity_context=entity_context
                 )
                 if facts:
-                    return [
-                        Chunk(
-                            text=f.text,
-                            index=i,
-                            content_type="text",
-                            memory_type=f.memory_type,
-                            confidence=f.confidence,
-                            summary=f.summary,
-                            metadata=metadata,
+                    temporal = (
+                        self.temporal_extractor
+                        if self.temporal_extractor is not None
+                        else TemporalExtractor()
+                    )
+                    chunks: list[Chunk] = []
+                    for i, f in enumerate(facts):
+                        valid_until = f.valid_until
+                        if valid_until is None:
+                            extracted = temporal.extract(f.text)
+                            if extracted is not None:
+                                valid_until = extracted.valid_until
+                        chunks.append(
+                            Chunk(
+                                text=f.text,
+                                index=i,
+                                content_type="text",
+                                memory_type=f.memory_type,
+                                confidence=f.confidence,
+                                summary=f.summary,
+                                valid_until=valid_until,
+                                metadata=metadata,
+                            )
                         )
-                        for i, f in enumerate(facts)
-                    ]
+                    return chunks
             except Exception:
                 logger.warning(
                     "fact_extraction_failed",

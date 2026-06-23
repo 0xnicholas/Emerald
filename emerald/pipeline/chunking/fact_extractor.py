@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -35,9 +36,14 @@ _SYSTEM_PROMPT_TEMPLATE = """你是事实提取引擎。从对话/文本中提�
 5. 新旧矛盾信息都提取——由关系引擎后续处理
 6. 最多 {max_facts} 条。无事实时返回空数组
 7. summary 字段为 1 句话简短摘要（与原文保持相同语言），用于搜索/画像展示
+8. 若事实有明确 temporal deadline（如 明天、下周、2025-06），
+   添加可选 valid_until 字段，ISO-8601 格式（如 2025-06-30T23:59:59Z）
 
 输出严格 JSON：
-{{"facts": [{{"text": "...", "type": "fact|preference|episodic", "confidence": 0.85, "summary": "..."}}]}}"""
+{{"facts": [
+  {{"text": "...", "type": "fact|preference|episodic", "confidence": 0.85,
+   "summary": "...", "valid_until": "..."}}
+]}}"""
 
 
 @dataclass
@@ -48,6 +54,7 @@ class Fact:
     memory_type: str  # "fact" | "preference" | "episodic"
     confidence: float  # 0.0 - 1.0
     summary: str  # Brief summary for search/profile display
+    valid_until: datetime | None = None  # Temporal expiry if known
 
 
 class FactExtractor:
@@ -190,12 +197,27 @@ class DeepSeekFactExtractor(FactExtractor):
 
             summary = str(item.get("summary", ""))[:200]
 
+            valid_until: datetime | None = None
+            raw_valid_until = item.get("valid_until")
+            if raw_valid_until:
+                iso_str = str(raw_valid_until)
+                if iso_str.endswith("Z"):
+                    iso_str = iso_str[:-1] + "+00:00"
+                try:
+                    valid_until = datetime.fromisoformat(iso_str)
+                except ValueError:
+                    logger.debug(
+                        "fact_extraction.invalid_valid_until",
+                        valid_until=raw_valid_until,
+                    )
+
             facts.append(
                 Fact(
                     text=text,
                     memory_type=memory_type,
                     confidence=confidence,
                     summary=summary,
+                    valid_until=valid_until,
                 )
             )
 

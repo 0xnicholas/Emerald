@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from emerald.pipeline.chunking.fact_extractor import DeepSeekFactExtractor, Fact
+from emerald.pipeline.chunking.fact_extractor import DeepSeekFactExtractor
 
 
 class TestDeepSeekFactExtractor:
@@ -41,8 +42,10 @@ class TestDeepSeekFactExtractor:
     @pytest.mark.asyncio
     async def test_extracts_facts_from_valid_response(self, extractor):
         mock_post = self._mock_api_response(
-            {"text": "Alex works at Stripe", "type": "fact", "confidence": 0.9, "summary": "Job at Stripe"},
-            {"text": "Alex prefers morning meetings", "type": "preference", "confidence": 0.85, "summary": "Meeting preference"},
+            {"text": "Alex works at Stripe", "type": "fact", "confidence": 0.9,
+             "summary": "Job at Stripe"},
+            {"text": "Alex prefers morning meetings", "type": "preference",
+             "confidence": 0.85, "summary": "Meeting preference"},
         )
 
         with patch("httpx.AsyncClient.post", new=mock_post):
@@ -167,7 +170,8 @@ class TestDeepSeekFactExtractor:
     @pytest.mark.asyncio
     async def test_episodic_type_preserved(self, extractor):
         mock_post = self._mock_api_response(
-            {"text": "Met Alex for coffee", "type": "episodic", "confidence": 0.7, "summary": "Coffee meeting"},
+            {"text": "Met Alex for coffee", "type": "episodic", "confidence": 0.7,
+             "summary": "Coffee meeting"},
         )
 
         with patch("httpx.AsyncClient.post", new=mock_post):
@@ -175,3 +179,57 @@ class TestDeepSeekFactExtractor:
 
         assert len(facts) == 1
         assert facts[0].memory_type == "episodic"
+
+    @pytest.mark.asyncio
+    async def test_valid_until_parsed_from_iso8601(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "Exam tomorrow",
+                "type": "episodic",
+                "confidence": 0.9,
+                "summary": "Exam",
+                "valid_until": "2026-06-24T23:59:59Z",
+            },
+        )
+
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("test")
+
+        assert len(facts) == 1
+        assert facts[0].valid_until == datetime(2026, 6, 24, 23, 59, 59, tzinfo=UTC)
+
+    @pytest.mark.asyncio
+    async def test_valid_until_parsed_without_z(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "Report due",
+                "type": "episodic",
+                "confidence": 0.85,
+                "summary": "Report",
+                "valid_until": "2026-07-01T12:00:00+08:00",
+            },
+        )
+
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("test")
+
+        assert len(facts) == 1
+        assert facts[0].valid_until == datetime(2026, 7, 1, 4, 0, 0, tzinfo=UTC)
+
+    @pytest.mark.asyncio
+    async def test_invalid_valid_until_ignored(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "Plain fact",
+                "type": "fact",
+                "confidence": 0.8,
+                "summary": "Plain",
+                "valid_until": "not-a-date",
+            },
+        )
+
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("test")
+
+        assert len(facts) == 1
+        assert facts[0].valid_until is None

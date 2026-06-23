@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 import pytest
 
 from emerald.core.temporal import TemporalExtractor, TimeExpression
+from emerald.pipeline.chunking.fact_extractor import Fact, FactExtractor
+from emerald.pipeline.chunking.text import SemanticTextChunker
 
 
 @pytest.fixture
@@ -198,3 +200,56 @@ def test_parse_next_year(extractor: TemporalExtractor) -> None:
     assert isinstance(result, TimeExpression)
     assert result.text == "明年"
     assert result.valid_until == _end_of_day(datetime(2027, 12, 31, 12, 0, 0, tzinfo=UTC))
+
+
+class _StubFactExtractor(FactExtractor):
+    """No-op fact extractor for testing SemanticTextChunker plumbing."""
+
+    def __init__(self, facts: list[Fact]) -> None:
+        self._facts = facts
+
+    async def extract(
+        self, text: str, *, entity_context: str | None = None
+    ) -> list[Fact]:
+        return list(self._facts)
+
+
+@pytest.mark.asyncio
+async def test_semantic_chunker_carries_valid_until_from_fact(
+    extractor: TemporalExtractor,
+) -> None:
+    """Facts with a valid_until must surface on the produced Chunk."""
+    expected = _end_of_day(datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC))
+    fact_extractor = _StubFactExtractor(
+        [
+            Fact(
+                text="我明天有考试",
+                memory_type="episodic",
+                confidence=0.9,
+                summary="考试",
+                valid_until=expected,
+            ),
+        ]
+    )
+    chunker = SemanticTextChunker(
+        fact_extractor=fact_extractor, temporal_extractor=extractor
+    )
+    chunks = await chunker.chunk("我明天有考试")
+    assert len(chunks) == 1
+    assert chunks[0].valid_until == expected
+
+
+@pytest.mark.asyncio
+async def test_semantic_chunker_falls_back_to_temporal_extractor(
+    extractor: TemporalExtractor,
+) -> None:
+    """If the LLM fact omits valid_until, SemanticTextChunker uses TemporalExtractor."""
+    fact_extractor = _StubFactExtractor(
+        [Fact(text="我明天有考试", memory_type="episodic", confidence=0.9, summary="考试")]
+    )
+    chunker = SemanticTextChunker(
+        fact_extractor=fact_extractor, temporal_extractor=extractor
+    )
+    chunks = await chunker.chunk("我明天有考试")
+    assert len(chunks) == 1
+    assert chunks[0].valid_until == _end_of_day(datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC))
