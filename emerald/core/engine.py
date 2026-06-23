@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 import structlog
 
@@ -90,7 +89,11 @@ class MemoryEngine:
                 if idempotency_key:
                     cached = await self._check_idempotency(entity_id, idempotency_key)
                     if cached:
-                        logger.info("memory.add.idempotent", entity_id=entity_id, key=idempotency_key)
+                        logger.info(
+                            "memory.add.idempotent",
+                            entity_id=entity_id,
+                            key=idempotency_key,
+                        )
                         return cached
 
                 logger.info(
@@ -251,10 +254,10 @@ class MemoryEngine:
             new_embeddings = await self.embedder.embed(to_embed)
             if redis:
                 pipe = redis.pipeline()
-                for idx, emb in zip(to_embed_indices, new_embeddings):
+                for idx, emb in zip(to_embed_indices, new_embeddings, strict=True):
                     pipe.setex(f"emb:{hashes[idx]}", 7 * 86400, json.dumps(emb))
                 await pipe.execute()
-            for idx, emb in zip(to_embed_indices, new_embeddings):
+            for idx, emb in zip(to_embed_indices, new_embeddings, strict=True):
                 embeddings[idx] = emb
 
         return [e for e in embeddings if e is not None]
@@ -278,7 +281,7 @@ class MemoryEngine:
         failed_chunks: list[tuple[str, str]] = []  # (memory_id, reason)
         model_name = getattr(self.embedder, "_model", "unknown")
 
-        for chunk, embedding in zip(chunks, embeddings):
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
             # 1. Store in Neo4j graph — memory_id becomes the canonical ID
             # Allow metadata overrides for memory_type, confidence, and valid_until
             # (the chunker provides defaults; callers may know better)
@@ -369,9 +372,9 @@ class MemoryEngine:
 
         Only applies to chunks with memory_type='preference'.
         """
-        THRESHOLD = 0.3  # bigram overlap threshold for "same preference"
+        threshold = 0.3  # bigram overlap threshold for "same preference"
 
-        for chunk, mid in zip(chunks, memory_ids):
+        for chunk, mid in zip(chunks, memory_ids, strict=True):
             # Check memory_type — prefer metadata override, then chunk default
             mem_type = (metadata or {}).get("memory_type") or chunk.memory_type
             if mem_type != "preference":
@@ -399,7 +402,7 @@ class MemoryEngine:
                     best_overlap = overlap
                     best_match = old
 
-            if best_overlap >= THRESHOLD and best_match:
+            if best_overlap >= threshold and best_match:
                 # Boost existing preference confidence
                 current_conf = best_match.get("confidence", 0.8)
                 new_conf = min(current_conf + 0.05, 0.95)

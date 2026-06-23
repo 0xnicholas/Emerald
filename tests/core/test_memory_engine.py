@@ -65,7 +65,7 @@ async def test_memory_stored_in_graph(engine):
 async def test_memory_searchable_in_vector_store(engine):
     """Memories are searchable via vector similarity after add()."""
     content = "TypeScript 是一种强类型编程语言"
-    result = await engine.add(content, entity_id="user_123")
+    _result = await engine.add(content, entity_id="user_123")
 
     # Get the embedding for the stored text and search for similar
     query_embedding = (await engine.embedder.embed([content]))[0]
