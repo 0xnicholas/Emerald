@@ -347,30 +347,38 @@ Set your OpenAI API key for real semantic embeddings:
 export OPENAI_API_KEY="sk-..."
 ```
 
+Or place it in `.env.local` (see Development Setup below). It will override `.env` and is never committed to git.
+
 If not set, the system falls back to `MockEmbeddingProvider` (deterministic but not semantic).
 
 ## Development Setup
 
 ```bash
-# 1. Start infrastructure
+# 1. Copy local secrets template and fill in real keys (never commit .env.local)
+cp .env.local.example .env.local
+# Edit .env.local with your OPENAI_API_KEY, DEEPSEEK_API_KEY, OAuth credentials, etc.
+
+# 2. Start infrastructure
 docker compose up -d
 
-# 2. Run migrations
+# 3. Run migrations
 alembic upgrade head
 
-# 3. Seed dev API key
+# 4. Seed dev API key
 python scripts/seed_dev_api_key.py
 
-# 4. Run tests
+# 5. Run tests
 pytest tests/unit/ -x
 
-# 5. (可选) 启动测试基础设施，运行集成测试
+# 6. (可选) 启动测试基础设施，运行集成测试
 docker compose -f docker-compose.test.yml up -d
 cp .env.test .env.test.local  # 按需修改
 set -a && source .env.test && set +a
 alembic upgrade head
 pytest  # 601 test functions; ~548 passed, 9 skipped (some parametrize expanded)
 ```
+
+> **Note:** `.env` provides default development values. `.env.local` overrides it for your machine and is ignored by git. Keep real API keys in `.env.local` only.
 
 ---
 

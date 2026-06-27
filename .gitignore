@@ -9,3 +9,10 @@ __pycache__/
 
 _references/
 reports/
+
+# Local backups
+backups/*
+!backups/.gitkeep
+
+# Local secrets
+.env.local

@@ -25,7 +25,8 @@ class EmbeddingProvider(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # .env 提供默认值，.env.local 覆盖真实密钥（不提交到 git）
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
