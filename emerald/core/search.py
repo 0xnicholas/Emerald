@@ -15,9 +15,11 @@ import structlog
 
 from emerald.config import get_settings
 from emerald.core.embedder import EmbeddingProvider
+from emerald.core.fast_lane import FastLaneStore
 from emerald.core.graph import GraphStore
 from emerald.core.metrics import search_latency_seconds, timed
 from emerald.core.tracing import get_tracer
+from emerald.core.trust import compute_trust_score
 from emerald.core.vector import VectorStore
 
 logger = structlog.get_logger(__name__)
@@ -56,11 +58,13 @@ class SearchOrchestrator:
         self,
         graph: GraphStore | None = None,
         vector: VectorStore | None = None,
+        fast_lane_store: FastLaneStore | None = None,
         embedder: EmbeddingProvider | None = None,
         rag_min_score: float = 0.0,
     ) -> None:
         self.graph = graph or GraphStore(use_db=False)
         self.vector = vector or VectorStore(use_db=False)
+        self.fast_lane_store = fast_lane_store or FastLaneStore(use_db=False)
         self.embedder = embedder
         self.rag_min_score = rag_min_score
 
@@ -70,23 +74,38 @@ class SearchOrchestrator:
         *,
         entity_id: str,
         search_mode: SearchMode = SearchMode.HYBRID,
-        top_k: int = 10,
+        top_k: int | None = None,
         rerank: bool = False,
         rewrite_query: bool = False,
         filters: dict | None = None,
+        min_confidence: float | None = None,
+        dynamic_truncation: bool = True,
     ) -> SearchResponse:
         """Execute a hybrid search query."""
+        settings = get_settings()
+        resolved_top_k = min(
+            top_k if top_k is not None else settings.search_default_top_k,
+            settings.search_max_top_k,
+        )
+
         tracer = get_tracer()
         with tracer.start_as_current_span("search") as span:
             span.set_attribute("entity_id", entity_id)
             span.set_attribute("search_mode", search_mode.value)
-            span.set_attribute("top_k", top_k)
+            span.set_attribute("top_k", resolved_top_k)
+            span.set_attribute(
+                "min_confidence", min_confidence if min_confidence is not None else -1.0
+            )
+            span.set_attribute("dynamic_truncation", dynamic_truncation)
             rewritten_q = await self._rewrite_query(q) if rewrite_query else q
 
         logger.info(
             "search.start",
             entity_id=entity_id,
             search_mode=search_mode,
+            top_k=resolved_top_k,
+            min_confidence=min_confidence,
+            dynamic_truncation=dynamic_truncation,
             q=q[:100],
             rewritten=rewritten_q[:100] if rewrite_query else None,
         )
@@ -96,28 +115,56 @@ class SearchOrchestrator:
 
             # Memory search
             if search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
-                memory_results = await self._search_memory(rewritten_q, entity_id, top_k, filters)
+                memory_results = await self._search_memory(
+                    rewritten_q, entity_id, resolved_top_k, filters, min_confidence
+                )
 
                 # Expand via graph relationships (EXTENDS, DERIVES_FROM)
                 memory_results = await self._expand_relationships(
-                    memory_results, entity_id, top_k
+                    memory_results, entity_id, resolved_top_k
                 )
 
                 results.extend(memory_results)
 
             # RAG search
             if search_mode in (SearchMode.HYBRID, SearchMode.RAG):
-                rag_results = await self._search_rag(rewritten_q, entity_id, top_k, filters)
+                rag_results = await self._search_rag(
+                    rewritten_q, entity_id, resolved_top_k, filters
+                )
                 results.extend(rag_results)
 
-            # Merge, deduplicate, sort
-            results = self._merge_results(results, top_k)
+            # Fast-lane search: raw, coarse chunks that are searchable before the
+            # full pipeline has finished. Included in memory/hybrid modes.
+            if search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
+                fast_lane_results = await self._search_fast_lane(
+                    rewritten_q, entity_id, resolved_top_k
+                )
+                results.extend(fast_lane_results)
+
+            # Dynamic truncation is designed for dense semantic scores. Keyword
+            # fallback scores are sparse (often 0 vs 1), so large gaps are normal
+            # and should not truncate useful partial matches.
+            apply_dynamic_truncation = (
+                dynamic_truncation and self.embedder is not None
+            )
+
+            # Merge, deduplicate, sort, and optionally truncate on score gap
+            results = self._merge_results(
+                results,
+                resolved_top_k,
+                dynamic_truncation=apply_dynamic_truncation,
+            )
 
             # Optional rerank: boost results with direct keyword matches
             if rerank:
                 results = await self._rerank_results(results, rewritten_q)
 
-            logger.info("search.complete", result_count=len(results), mode=search_mode, reranked=rerank)
+            logger.info(
+                "search.complete",
+                result_count=len(results),
+                mode=search_mode,
+                reranked=rerank,
+            )
 
             return SearchResponse(
                 results=results,
@@ -133,13 +180,16 @@ class SearchOrchestrator:
         entity_id: str,
         top_k: int,
         filters: dict | None,
+        min_confidence: float | None = None,
     ) -> list[SearchResult]:
         if not self.embedder:
             # Fallback to keyword search when embedder is unavailable
-            return await self._search_memory_keyword(q, entity_id, top_k, filters)
+            return await self._search_memory_keyword(
+                q, entity_id, top_k, filters, min_confidence
+            )
 
         query_embedding = (await self.embedder.embed([q]))[0]
-        candidate_limit = min(top_k * 5, 100)
+        candidate_limit = min(top_k * 5, 200)
         candidates = await self.vector.search(
             query_embedding, entity_id=entity_id, top_k=candidate_limit
         )
@@ -162,8 +212,11 @@ class SearchOrchestrator:
                     continue
             if filters and not self._passes_filters(memory, filters):
                 continue
+            if min_confidence is not None and memory.get("confidence", 0.0) < min_confidence:
+                continue
 
-            score = vec_score * memory.get("confidence", 0.5)
+            trust = compute_trust_score(memory)
+            score = vec_score * trust
             results.append(
                 SearchResult(
                     id=memory["id"],
@@ -185,6 +238,7 @@ class SearchOrchestrator:
         entity_id: str,
         top_k: int,
         filters: dict | None,
+        min_confidence: float | None = None,
     ) -> list[SearchResult]:
         """Fallback keyword-based memory search.
 
@@ -206,12 +260,17 @@ class SearchOrchestrator:
                         continue
                     if filters and not self._passes_filters(memory, filters):
                         continue
+                    if min_confidence is not None and memory.get(
+                        "confidence", 0.0
+                    ) < min_confidence:
+                        continue
+                    trust = compute_trust_score(memory)
                     results.append(
                         SearchResult(
                             id=chunk_id,
                             content=text,
                             summary=memory.get("summary", "")[:200],
-                            score=score * memory.get("confidence", 0.5),
+                            score=score * trust,
                             source="memory",
                             memory_type=memory.get("memory_type", "fact"),
                             is_latest=memory.get("is_latest", True),
@@ -236,6 +295,8 @@ class SearchOrchestrator:
                 memories = [m for m in memories if m.get("memory_type") == mtype]
             if min_conf is not None:
                 memories = [m for m in memories if m.get("confidence", 0) >= min_conf]
+        if min_confidence is not None:
+            memories = [m for m in memories if m.get("confidence", 0) >= min_confidence]
 
         # Score: keyword overlap + confidence
         results = []
@@ -245,12 +306,13 @@ class SearchOrchestrator:
             content = m.get("content", "")
             score = self._keyword_score(content, query_terms)
             if score > 0:
+                trust = compute_trust_score(m)
                 results.append(
                     SearchResult(
                         id=m["id"],
                         content=content,
                         summary=m.get("summary", "")[:200],
-                        score=score * m.get("confidence", 0.5),
+                        score=score * trust,
                         source="memory",
                         memory_type=m.get("memory_type", "fact"),
                         is_latest=m.get("is_latest", True),
@@ -369,13 +431,14 @@ class SearchOrchestrator:
                 if not memory.get("is_latest", True):
                     continue
 
+                trust = compute_trust_score(memory)
                 seen_ids.add(rid)
                 expanded.append(
                     SearchResult(
                         id=rid,
                         content=memory["content"],
                         summary=memory.get("summary", "")[:200],
-                        score=src_score * expansion_factor,
+                        score=src_score * expansion_factor * trust,
                         source="memory_expanded",
                         memory_type=memory.get("memory_type", "fact"),
                     )
@@ -414,7 +477,7 @@ class SearchOrchestrator:
             return []
 
         hits = await self.vector.search(
-            query_embedding, entity_id=entity_id, top_k=top_k,
+            query_embedding, entity_id=entity_id, top_k=top_k, require_document_id=True
         )
 
         # Filter out low-quality matches
@@ -437,24 +500,93 @@ class SearchOrchestrator:
 
         return results
 
+    async def _search_fast_lane(
+        self,
+        q: str,
+        entity_id: str,
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Search raw fast-lane chunks that are not yet fully indexed."""
+        if not self.embedder:
+            return []
+
+        try:
+            query_embedding = (await self.embedder.embed([q]))[0]
+        except Exception:
+            logger.warning("search.fast_lane.embed_failed", q=q[:50])
+            return []
+
+        settings = get_settings()
+        if not settings.fast_lane_enabled:
+            return []
+
+        hits = await self.fast_lane_store.search(
+            query_embedding, entity_id=entity_id, top_k=top_k
+        )
+        discount = settings.fast_lane_score_discount
+
+        results = []
+        for hit in hits:
+            results.append(
+                SearchResult(
+                    id=hit.fast_lane_id,
+                    content=hit.text,
+                    score=hit.score * discount,
+                    source="fast_lane",
+                    memory_type="raw",
+                    is_latest=True,
+                )
+            )
+
+        return results
+
     # ---- Merge helpers ----
 
     def _merge_results(
-        self, results: list[SearchResult], top_k: int
+        self,
+        results: list[SearchResult],
+        top_k: int,
+        *,
+        dynamic_truncation: bool = True,
     ) -> list[SearchResult]:
-        """Deduplicate by content and sort by score descending."""
+        """Deduplicate by content, sort by score descending, and optionally truncate.
+
+        Truncation happens on a score gap when enabled.
+        """
+        settings = get_settings()
         seen_contents: set[str] = set()
         merged = []
 
         # Sort by score desc
         results.sort(key=lambda r: r.score, reverse=True)
 
+        # Avoid over-truncating tiny result sets (common with mock/deterministic
+        # embedders in tests). Require a small floor of results before a score-gap
+        # cut can fire; this preserves recall for small candidate pools while still
+        # dropping low-quality tails in production-scale result sets.
+        min_before_truncate = min(top_k, 3 if top_k <= 5 else 2)
+
+        prev_score: float | None = None
         for r in results:
             # Normalize for dedup
             key = r.content.strip().lower()
             if key not in seen_contents:
+                # Dynamic truncation: stop when the score drop from the previous
+                # result exceeds the configured gap threshold. This avoids
+                # including low-relevance tail results when there is a clear
+                # separation, while still respecting top_k as a hard cap.
+                if (
+                    dynamic_truncation
+                    and len(merged) >= min_before_truncate
+                    and prev_score is not None
+                    and settings.search_dynamic_truncation_enabled
+                    and (prev_score - r.score) > settings.search_score_gap_threshold
+                ):
+                    break
+
                 seen_contents.add(key)
                 merged.append(r)
+                prev_score = r.score
                 if len(merged) >= top_k:
                     break
 

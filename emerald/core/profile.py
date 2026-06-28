@@ -26,6 +26,7 @@ from emerald.core.metrics import (
     timed,
 )
 from emerald.core.tracing import get_tracer
+from emerald.core.trust import compute_trust_score
 
 logger = structlog.get_logger(__name__)
 
@@ -281,30 +282,40 @@ class ProfileManager:
 
                 for m in all_memories:
                     memory_type = m.get("memory_type", "fact")
-                    confidence = m.get("confidence", 0.5)
                     created_at = m.get("created_at", now)
                     content = m.get("content", "")
                     mid = m.get("id", "")
+                    trust = compute_trust_score(m)
 
                     # Compute multi-factor importance score
                     importance = ProfileManager._compute_importance(
-                        m, now=now, cutoff=cutoff
+                        m, now=now, cutoff=cutoff, trust=trust
                     )
 
-                    # Static: fact or preference with high confidence
-                    if memory_type in ("fact", "preference") and confidence >= config.min_confidence_static:
+                    acquired_at = (
+                        created_at.isoformat()
+                        if hasattr(created_at, "isoformat")
+                        else str(created_at)
+                    )
+
+                    # Static: fact or preference with high trust
+                    is_static = (
+                        memory_type in ("fact", "preference")
+                        and trust >= config.min_confidence_static
+                    )
+                    if is_static:
                         static_facts.append(
                             ProfileFact(
                                 content=content,
                                 importance=importance,
-                                acquired_at=created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                                acquired_at=acquired_at,
                                 memory_id=mid,
                             )
                         )
                         source_ids.append(mid)
 
                     # Dynamic: episodic and recent
-                    if memory_type == "episodic" and confidence >= config.min_confidence_dynamic:
+                    if memory_type == "episodic" and trust >= config.min_confidence_dynamic:
                         if hasattr(created_at, "isoformat"):
                             if created_at >= cutoff:
                                 dynamic_facts.append(
@@ -312,7 +323,7 @@ class ProfileManager:
                                         content=content,
                                         relevance=importance,
                                         source="最近对话",
-                                        acquired_at=created_at.isoformat(),
+                                        acquired_at=acquired_at,
                                         memory_id=mid,
                                     )
                                 )
@@ -378,19 +389,20 @@ class ProfileManager:
         memory: dict,
         now: datetime | None = None,
         cutoff: datetime | None = None,
+        trust: float | None = None,
     ) -> float:
         """Compute a multi-factor importance score for a memory.
 
         Combines:
-        - Confidence (from chunker/LLM)              — 35%
-        - Recency (newer = higher, exponential decay) — 25%
-        - Memory type weight                          — 20%
-        - Relationship count (linked memories)        — 20%
+        - Trust (provenance + validation + age + contradictions) — 35%
+        - Recency (newer = higher, exponential decay)             — 25%
+        - Memory type weight                                      — 20%
+        - Relationship count (linked memories)                    — 20%
         """
         if now is None:
             now = datetime.now(UTC)
 
-        confidence = memory.get("confidence", 0.5)
+        trust_score = trust if trust is not None else compute_trust_score(memory)
         mem_type = memory.get("memory_type", "fact")
         created_at = memory.get("created_at", now)
         rels = memory.get("relationships", [])
@@ -414,7 +426,7 @@ class ProfileManager:
         rel_score = min(rel_count / 10.0, 1.0)
 
         score = (
-            cls.WEIGHT_CONFIDENCE * confidence
+            cls.WEIGHT_CONFIDENCE * trust_score
             + cls.WEIGHT_RECENCY * recency
             + cls.WEIGHT_TYPE * type_weight
             + cls.WEIGHT_RELATIONSHIPS * rel_score
@@ -455,21 +467,27 @@ class ProfileManager:
             if not m:
                 continue
             memory_type = m.get("memory_type", "fact")
-            confidence = m.get("confidence", 0.5)
+            trust = compute_trust_score(m)
             created_at = m.get("created_at", now)
             content = m.get("content", "")
 
-            if memory_type in ("fact", "preference") and confidence >= config.min_confidence_static:
+            acquired_at = (
+                created_at.isoformat()
+                if hasattr(created_at, "isoformat")
+                else str(created_at)
+            )
+
+            if memory_type in ("fact", "preference") and trust >= config.min_confidence_static:
                 profile.static.append(
                     ProfileFact(
                         content=content,
-                        importance=confidence,
-                        acquired_at=created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                        importance=trust,
+                        acquired_at=acquired_at,
                         memory_id=mid,
                     )
                 )
 
-            if memory_type == "episodic" and confidence >= config.min_confidence_dynamic:
+            if memory_type == "episodic" and trust >= config.min_confidence_dynamic:
                 is_recent = True
                 if hasattr(created_at, "isoformat"):
                     is_recent = created_at >= cutoff
@@ -477,9 +495,9 @@ class ProfileManager:
                     profile.dynamic.append(
                         ProfileFact(
                             content=content,
-                            relevance=confidence,
+                            relevance=trust,
                             source="最近对话",
-                            acquired_at=created_at.isoformat() if hasattr(created_at, "isoformat") else "",
+                            acquired_at=acquired_at,
                             memory_id=mid,
                         )
                     )

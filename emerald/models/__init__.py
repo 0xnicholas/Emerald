@@ -6,6 +6,7 @@ from emerald.models.connector import Connector
 from emerald.models.document import Document
 from emerald.models.embedding import Embedding
 from emerald.models.entity import Entity
+from emerald.models.fast_lane_chunk import FastLaneChunk
 from emerald.models.pipeline_job import PipelineJob
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "Document",
     "Connector",
     "Embedding",
+    "FastLaneChunk",
     "PipelineJob",
 ]

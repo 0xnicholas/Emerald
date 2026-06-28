@@ -25,7 +25,9 @@ class Chunk:
     id: str = field(default_factory=lambda: uuid4().hex)
     # LLM fact extraction metadata
     memory_type: str = "fact"
+    internal_type: str | None = None
     confidence: float = 0.8
+    provenance: str = "explicit_statement"
     summary: str = ""
     valid_until: datetime | None = None
 

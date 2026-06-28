@@ -22,11 +22,12 @@ logger = structlog.get_logger(__name__)
 # Template prompt — format with max_facts before sending.
 # The braces {{ and }} are literal JSON braces; .format() renders them as { and }.
 _SYSTEM_PROMPT_TEMPLATE = """你是事实提取引擎。从对话/文本中提取细粒度、独立的事实。
-每条事实归入以下类型之一：
 
-- fact：实体属性（工作、地点、技能、关系等）
-- preference：偏好、习惯、倾向
-- episodic：事件/互动记录（临时性）
+每条事实需要两个类型字段：
+- ``type``（对外类型）: fact | preference | episodic
+- ``internal_type``（内部细类型，不暴露给用户）:
+  decision, commitment, goal, instruction, learning, error,
+  observation, relationship, context, artifact
 
 规则：
 1. 每条事实 1-2 句话，脱离上下文可独立理解
@@ -41,7 +42,8 @@ _SYSTEM_PROMPT_TEMPLATE = """你是事实提取引擎。从对话/文本中提�
 
 输出严格 JSON：
 {{"facts": [
-  {{"text": "...", "type": "fact|preference|episodic", "confidence": 0.85,
+  {{"text": "...", "type": "fact|preference|episodic",
+   "internal_type": "...", "confidence": 0.85,
    "summary": "...", "valid_until": "..."}}
 ]}}"""
 
@@ -55,6 +57,7 @@ class Fact:
     confidence: float  # 0.0 - 1.0
     summary: str  # Brief summary for search/profile display
     valid_until: datetime | None = None  # Temporal expiry if known
+    internal_type: str | None = None  # Fine-grained internal tag (not exposed publicly)
 
 
 class FactExtractor:
@@ -70,6 +73,10 @@ class DeepSeekFactExtractor(FactExtractor):
     """Fact extraction via DeepSeek V4-Flash (OpenAI-compatible API)."""
 
     VALID_TYPES = frozenset({"fact", "preference", "episodic"})
+    VALID_INTERNAL_TYPES = frozenset({
+        "decision", "commitment", "goal", "instruction", "learning",
+        "error", "observation", "relationship", "context", "artifact",
+    })
 
     def __init__(
         self,
@@ -185,11 +192,21 @@ class DeepSeekFactExtractor(FactExtractor):
                 continue
             seen_texts.add(normalized)
 
-            # Validate type
+            # Validate public type
             memory_type = str(item.get("type", "fact")).lower()
             if memory_type not in self.VALID_TYPES:
                 logger.warning("fact_extraction.invalid_type", type=memory_type)
                 memory_type = "fact"
+
+            # Validate internal type (not exposed publicly)
+            internal_type = str(item.get("internal_type", "")).lower().strip()
+            if internal_type and internal_type not in self.VALID_INTERNAL_TYPES:
+                logger.warning(
+                    "fact_extraction.invalid_internal_type", internal_type=internal_type
+                )
+                internal_type = None
+            if not internal_type:
+                internal_type = None
 
             # Clamp confidence to [0.0, 1.0]
             confidence = float(item.get("confidence", 0.8))
@@ -215,6 +232,7 @@ class DeepSeekFactExtractor(FactExtractor):
                 Fact(
                     text=text,
                     memory_type=memory_type,
+                    internal_type=internal_type,
                     confidence=confidence,
                     summary=summary,
                     valid_until=valid_until,

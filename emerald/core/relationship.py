@@ -14,6 +14,7 @@ from enum import StrEnum
 
 import structlog
 
+from emerald.core.conflict import ConflictEngine
 from emerald.core.graph import GraphStore
 from emerald.core.metrics import relationship_infer_total
 from emerald.core.vector import VectorStore
@@ -54,10 +55,12 @@ class RelationshipEngine:
         self,
         graph: GraphStore | None = None,
         vector: VectorStore | None = None,
+        conflict_engine: ConflictEngine | None = None,
         use_llm: bool = True,
     ) -> None:
         self.graph = graph or GraphStore(use_db=False)
         self.vector = vector or VectorStore(use_db=False)
+        self.conflict_engine = conflict_engine or ConflictEngine(graph=self.graph)
         self.use_llm = use_llm
 
     async def infer(self, memory_ids: list[str], entity_id: str) -> int:
@@ -65,7 +68,24 @@ class RelationshipEngine:
 
         Returns the number of relationships created.
         """
+        result = await self.infer_with_conflicts(memory_ids, entity_id)
+        return result["relationships_created"]
+
+    async def infer_with_conflicts(
+        self,
+        memory_ids: list[str],
+        entity_id: str,
+        *,
+        require_confirmation_for_high_impact: bool = False,
+    ) -> dict:
+        """Infer relationships and optionally flag high-impact conflicts.
+
+        Returns a dict with:
+        - ``relationships_created``: number of automatic relationships created
+        - ``pending_conflicts``: list of {conflict_id, new_memory_id, old_memory_id}
+        """
         created = 0
+        pending_conflicts: list[dict] = []
 
         for new_id in memory_ids:
             new_memory = await self.graph.get_memory(new_id)
@@ -87,6 +107,29 @@ class RelationshipEngine:
                 )
 
                 if rel_type == RelationType.UPDATES:
+                    if (
+                        require_confirmation_for_high_impact
+                        and self.conflict_engine.requires_confirmation(
+                            new_memory, old_memory
+                        )
+                    ):
+                        impact = self.conflict_engine.impact_score(new_memory, old_memory)
+                        conflict_id = await self.conflict_engine.create_pending_conflict(
+                            new_id,
+                            old_memory["id"],
+                            reason="high_impact_contradiction",
+                            impact_score=impact,
+                        )
+                        pending_conflicts.append(
+                            {
+                                "conflict_id": conflict_id,
+                                "new_memory_id": new_id,
+                                "old_memory_id": old_memory["id"],
+                                "impact_score": impact,
+                            }
+                        )
+                        continue
+
                     await self.create_update_relation(
                         new_id, old_memory["id"], reason="contradiction",
                     )
@@ -115,8 +158,12 @@ class RelationshipEngine:
             entity_id=entity_id,
             memory_count=len(memory_ids),
             relationships_created=created,
+            pending_conflicts=len(pending_conflicts),
         )
-        return created
+        return {
+            "relationships_created": created,
+            "pending_conflicts": pending_conflicts,
+        }
 
     async def classify_relation(
         self,

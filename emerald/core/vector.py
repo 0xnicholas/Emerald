@@ -43,6 +43,7 @@ class VectorStore:
         self._memory_store: dict[str, list[float]] = {}
         self._memory_texts: dict[str, str] = {}
         self._memory_entities: dict[str, str] = {}
+        self._memory_document_ids: dict[str, str | None] = {}
 
     async def store(
         self,
@@ -93,6 +94,7 @@ class VectorStore:
             self._memory_store[chunk_id] = embedding
             self._memory_texts[chunk_id] = text
             self._memory_entities[chunk_id] = entity_id
+            self._memory_document_ids[chunk_id] = document_id
 
         logger.debug("vector.store", chunk_id=chunk_id, dims=len(embedding))
 
@@ -118,10 +120,15 @@ class VectorStore:
         *,
         entity_id: str | None = None,
         top_k: int = 10,
+        require_document_id: bool = False,
     ) -> list[tuple[str, str, float]]:
         """Search for similar embeddings.
 
         Returns list of (chunk_id, text, score) sorted by descending similarity.
+
+        Args:
+            require_document_id: If True, only return embeddings that belong to
+                a document (RAG chunks). Memory embeddings have ``document_id=None``.
 
         Architecture note: There is no ``offset`` parameter.  Callers that need
         more candidates than ``top_k`` should request a larger ``top_k`` value.
@@ -129,12 +136,14 @@ class VectorStore:
         """
         if self._use_db and self._session_factory:
             from sqlalchemy import text as sql_text
+            doc_filter = "AND document_id IS NOT NULL" if require_document_id else ""
             async with self._session_factory.session() as session:
                 result = await session.execute(
-                    sql_text("""
+                    sql_text(f"""
                         SELECT chunk_id, text, 1 - (embedding <=> :query_embedding) AS score
                         FROM embeddings
                         WHERE entity_id = :entity_id
+                        {doc_filter}
                         ORDER BY embedding <=> :query_embedding
                         LIMIT :top_k
                     """),
@@ -147,18 +156,21 @@ class VectorStore:
                 rows = result.fetchall()
                 return [(row.chunk_id, row.text, float(row.score)) for row in rows]
         else:
-            return self._memory_search(query_embedding, entity_id, top_k)
+            return self._memory_search(query_embedding, entity_id, top_k, require_document_id)
 
     def _memory_search(
         self,
         query_embedding: list[float],
         entity_id: str | None,
         top_k: int,
+        require_document_id: bool = False,
     ) -> list[tuple[str, str, float]]:
         """In-memory cosine similarity search."""
         results = []
         for chunk_id, emb in self._memory_store.items():
             if entity_id and self._memory_entities.get(chunk_id) != entity_id:
+                continue
+            if require_document_id and not self._memory_document_ids.get(chunk_id):
                 continue
             score = self._cosine_similarity(query_embedding, emb)
             results.append((chunk_id, self._memory_texts[chunk_id], score))

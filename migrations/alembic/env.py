@@ -19,6 +19,7 @@ import emerald.models.api_key  # noqa: F401
 import emerald.models.document  # noqa: F401
 import emerald.models.connector  # noqa: F401
 import emerald.models.embedding  # noqa: F401
+import emerald.models.fast_lane_chunk  # noqa: F401
 import emerald.models.pipeline_job  # noqa: F401
 
 # Alembic Config object

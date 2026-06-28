@@ -147,6 +147,20 @@ def test_get_profile_empty_entity(client):
     assert data["data"]["memory_count"] == 0
 
 
+# ---- MEMORY.md export ----
+
+def test_export_memory_markdown(client):
+    client.post(
+        "/v1/memories",
+        json={"content": "用户喜欢 Vim", "entity_id": "user_md"},
+    )
+
+    response = client.get("/v1/profiles/user_md/memory.md")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/markdown; charset=utf-8"
+    assert "# Memory Summary: user_md" in response.text
+
+
 # ---- Unified response format ----
 
 def test_response_has_meta(client):
@@ -177,11 +191,62 @@ def test_search_get_supports_rewrite_query(client):
     assert "took_ms" in data["meta"]
 
 
+# ---- Session tokens ----
+
+def test_create_session_token(client):
+    response = client.post(
+        "/v1/sessions?entity_id=user_123&project_id=proj_456&session_id=sess_789"
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert "token" in data
+    assert data["entity_id"] == "user_123"
+    assert data["project_id"] == "proj_456"
+
+
+def test_verify_session_token(client):
+    create_resp = client.post("/v1/sessions?entity_id=user_123")
+    token = create_resp.json()["data"]["token"]
+
+    response = client.get(
+        "/v1/sessions/verify", headers={"X-Session-Token": token}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["valid"] is True
+    assert response.json()["data"]["claims"]["entity_id"] == "user_123"
+
+
+def test_verify_missing_session_token(client):
+    response = client.get("/v1/sessions/verify")
+    assert response.status_code == 422
+
+
 # ---- 404 handling ----
 
 def test_404_unknown_route(client):
     response = client.get("/v1/nonexistent")
     assert response.status_code == 404
+
+
+# ---- Validate memory ----
+
+def test_validate_memory(client):
+    add_resp = client.post(
+        "/v1/memories",
+        json={"content": "用户喜欢 TypeScript", "entity_id": "user_123"},
+    )
+    memory_id = add_resp.json()["data"]["memory_ids"][0]
+
+    response = client.post(f"/v1/memories/{memory_id}/validate")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"]["validated"] is True
+    assert data["data"]["memory_id"] == memory_id
+
+    # Trust score should increase after validation
+    mem_resp = client.get(f"/v1/memories/{memory_id}")
+    memory = mem_resp.json()["data"]
+    assert memory["validation_count"] >= 1
 
 
 # ---- Delete memory ----

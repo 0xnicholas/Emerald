@@ -16,7 +16,17 @@ class AddMemoryRequest(BaseModel):
     async_mode: bool = False
     idempotency_key: str | None = Field(
         default=None,
-        description="Client-provided idempotency key. Same key + entity yields same result for 1 hour.",
+        description=(
+            "Client-provided idempotency key. "
+            "Same key + entity yields same result for 1 hour."
+        ),
+    )
+    require_confirmation_for_high_impact: bool = Field(
+        default=False,
+        description=(
+            "When true, high-impact contradictions are flagged for confirmation "
+            "instead of auto-resolved."
+        ),
     )
 
 
@@ -24,6 +34,7 @@ class AddMemoryResponse(BaseModel):
     memory_ids: list[str]
     pipeline_status: str = "done"
     extracted_count: int = 0
+    conflicts_pending: list[dict] = Field(default_factory=list)
 
 
 class RelationshipItem(BaseModel):
@@ -42,6 +53,7 @@ class MemoryResponse(BaseModel):
     valid_from: datetime | None = None
     valid_until: datetime | None = None
     entity_id: str
+    validation_count: int = 0
     relationships: list[RelationshipItem] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None

@@ -26,6 +26,7 @@ def _chunk_to_dict(c: Chunk) -> dict[str, Any]:
         "index": c.index,
         "token_count": c.token_count,
         "memory_type": c.memory_type,
+        "internal_type": c.internal_type,
         "confidence": c.confidence,
         "summary": c.summary,
         "valid_until": c.valid_until.isoformat() if c.valid_until else None,
@@ -201,6 +202,7 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
                 content=chunk_data["text"],
                 entity_id=entity_id,
                 memory_type=chunk_data.get("memory_type", "fact"),
+                internal_type=chunk_data.get("internal_type"),
                 confidence=chunk_data.get("confidence", 0.8),
                 summary=chunk_data.get("summary") or None,
                 source_type="document",
@@ -254,7 +256,18 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
     from emerald.db.redis import get_redis_client
 
     redis = get_redis_client()
-    for key in ["text", "chunks", "embeddings"]:
+
+    # Archive the fast-lane chunk that was created when the pipeline was queued.
+    try:
+        fast_lane_id = await redis.get(f"pipeline:{pipeline_id}:fast_lane_id")
+        if fast_lane_id:
+            from emerald.core.fast_lane import FastLaneStore
+
+            await FastLaneStore(use_db=True).archive(str(fast_lane_id))
+    except Exception:
+        logger.warning("pipeline.postprocess.fast_lane_archive_failed", pipeline_id=pipeline_id)
+
+    for key in ["text", "chunks", "embeddings", "fast_lane_id"]:
         await redis.delete(f"pipeline:{pipeline_id}:{key}")
 
     await _update_status(pipeline_id, "done")
@@ -262,6 +275,29 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
 
 
 # ---- Scheduled tasks (Celery Beat) ----
+
+
+@shared_task
+def cleanup_fast_lane_task() -> dict:
+    """Celery Beat: hourly - archive stale fast-lane chunks."""
+    return run_async(_run_cleanup_fast_lane)()
+
+
+async def _run_cleanup_fast_lane() -> dict:
+    from emerald.core.fast_lane import FastLaneStore
+
+    async def _work():
+        store = FastLaneStore(use_db=True)
+        count = await store.cleanup()
+        logger.info("pipeline.task.cleanup_fast_lane", count=count)
+        return {"strategy": "fast_lane_cleanup", "count": count}
+
+    result = await _locked_run(_work(), "task_cleanup_fast_lane")
+    return (
+        result
+        if result is not None
+        else {"strategy": "fast_lane_cleanup", "count": 0, "skipped": True}
+    )
 
 
 async def _locked_run(coro, lock_name: str, ttl: int = 600) -> dict | None:

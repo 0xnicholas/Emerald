@@ -221,6 +221,7 @@ class SemanticTextChunker(TextChunker):
                                 index=i,
                                 content_type="text",
                                 memory_type=f.memory_type,
+                                internal_type=f.internal_type,
                                 confidence=f.confidence,
                                 summary=f.summary,
                                 valid_until=valid_until,

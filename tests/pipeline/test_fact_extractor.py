@@ -199,6 +199,42 @@ class TestDeepSeekFactExtractor:
         assert facts[0].valid_until == datetime(2026, 6, 24, 23, 59, 59, tzinfo=UTC)
 
     @pytest.mark.asyncio
+    async def test_internal_type_preserved(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "Decided to migrate the database to PostgreSQL 16",
+                "type": "fact",
+                "internal_type": "decision",
+                "confidence": 0.9,
+                "summary": "Database migration decision",
+            },
+        )
+
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("test")
+
+        assert len(facts) == 1
+        assert facts[0].internal_type == "decision"
+
+    @pytest.mark.asyncio
+    async def test_invalid_internal_type_coerced_to_none(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "Some fact",
+                "type": "fact",
+                "internal_type": "invalid_type",
+                "confidence": 0.8,
+                "summary": "s",
+            },
+        )
+
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("test")
+
+        assert len(facts) == 1
+        assert facts[0].internal_type is None
+
+    @pytest.mark.asyncio
     async def test_valid_until_parsed_without_z(self, extractor):
         mock_post = self._mock_api_response(
             {

@@ -27,7 +27,6 @@ def _init_engine() -> MemoryEngine:
     from emerald.pipeline.chunking.conversation import ConversationChunker
     from emerald.pipeline.chunking.markdown import MarkdownChunker
     from emerald.pipeline.chunking.registry import ChunkerRegistry
-    from emerald.pipeline.chunking.text import TextChunker
     from emerald.pipeline.extraction.registry import ExtractorRegistry
     from emerald.pipeline.extraction.text import TextExtractor
 
@@ -247,11 +246,13 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
 
     # Register V1 routes
     from emerald.api.routes.v1 import (
+        conflicts as v1_conflicts,
         connectors as v1_connectors,
         memories as v1_memories,
         pipelines as v1_pipelines,
         profiles as v1_profiles,
         search as v1_search,
+        sessions as v1_sessions,
         system as v1_system,
         upload as v1_upload,
     )
@@ -261,6 +262,8 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v1_profiles.router, prefix="/v1")
     app.include_router(v1_upload.router, prefix="/v1")
     app.include_router(v1_pipelines.router, prefix="/v1")
+    app.include_router(v1_conflicts.router, prefix="/v1")
+    app.include_router(v1_sessions.router, prefix="/v1")
     app.include_router(v1_connectors.router, prefix="/v1")
     app.include_router(v1_system.router, prefix="/v1")
 

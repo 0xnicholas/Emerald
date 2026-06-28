@@ -16,6 +16,7 @@ class AddResult:
     pipeline_status: str = "done"
     extracted_count: int = 0
     pipeline_id: str | None = None  # Set for async (file) uploads
+    conflicts_pending: list[dict] = field(default_factory=list)
 
 
 @dataclass

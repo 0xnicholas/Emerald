@@ -77,6 +77,7 @@ class EmeraldClient:
         content_type: str = "text",
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
+        require_confirmation_for_high_impact: bool = False,
     ) -> AddResult:
         """Add content to the memory graph.
 
@@ -86,15 +87,18 @@ class EmeraldClient:
             content_type: Content type hint (auto-detected if omitted).
             title: Optional content title.
             metadata: Optional key-value metadata.
+            require_confirmation_for_high_impact: Flag high-impact contradictions
+                for confirmation instead of auto-resolving.
 
         Returns:
-            AddResult with memory IDs and pipeline status.
+            AddResult with memory IDs, pipeline status, and any pending conflicts.
         """
         client = await self._get_client()
         body: dict[str, Any] = {
             "content": content,
             "entity_id": entity_id,
             "content_type": content_type,
+            "require_confirmation_for_high_impact": require_confirmation_for_high_impact,
         }
         if title:
             body["title"] = title
@@ -109,6 +113,7 @@ class EmeraldClient:
             pipeline_status=data.get("pipeline_status", "done"),
             extracted_count=data.get("extracted_count", 0),
             pipeline_id=data.get("pipeline_id"),
+            conflicts_pending=data.get("conflicts_pending", []),
         )
 
     async def search(
@@ -117,10 +122,12 @@ class EmeraldClient:
         *,
         entity_id: str,
         search_mode: str = "hybrid",
-        top_k: int = 10,
+        top_k: int = 30,
         rerank: bool = False,
         rewrite_query: bool = False,
         filters: dict[str, Any] | None = None,
+        min_confidence: float | None = None,
+        dynamic_truncation: bool = True,
     ) -> SearchResults:
         """Hybrid search across memory (graph) and RAG (vector).
 
@@ -132,6 +139,8 @@ class EmeraldClient:
             rerank: Enable cross-encoder re-ranking.
             rewrite_query: Enable LLM query expansion.
             filters: Metadata filters (e.g., {"memory_type": "preference"}).
+            min_confidence: Minimum memory confidence (0-1).
+            dynamic_truncation: Stop returning results when score gap exceeds threshold.
 
         Returns:
             SearchResults with scored, deduplicated hits.
@@ -144,9 +153,12 @@ class EmeraldClient:
             "top_k": top_k,
             "rerank": rerank,
             "rewrite_query": rewrite_query,
+            "dynamic_truncation": dynamic_truncation,
         }
         if filters:
             body["filters"] = filters
+        if min_confidence is not None:
+            body["min_confidence"] = min_confidence
 
         response = await client.post(f"/{self.api_version}/search", json=body)
         response.raise_for_status()

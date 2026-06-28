@@ -6,10 +6,12 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 
 from emerald.api.dependencies import api_key_auth, rate_limit
 from emerald.api.schemas.profiles import ProfileConfig as ProfileConfigSchema
-from emerald.core.profile import ProfileConfig, ProfileManager
+from emerald.core.profile import ProfileConfig
+from emerald.core.summary import MemorySummaryBuilder
 
 router = APIRouter(tags=["Profiles"])
 
@@ -21,15 +23,22 @@ def _get_engine(request: Request):
     return engine
 
 
+def _authorize_entity(request: Request, entity_id: str) -> None:
+    """Ensure the API key is scoped to the target entity."""
+    allowed = getattr(request.state, "entity_id", None)
+    if allowed and allowed != entity_id:
+        raise HTTPException(status_code=403, detail="Entity not authorized for this API key")
+
+
 @router.get("/profiles/{entity_id}", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def get_profile(entity_id: str, request: Request) -> dict:
     """Get entity profile (static + dynamic facts)."""
     start = time.perf_counter()
+    _authorize_entity(request, entity_id)
     engine = _get_engine(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
-    manager = ProfileManager(graph=engine.graph)
-    profile = await manager.get(entity_id)
+    profile = await engine.profile_manager.get(entity_id)
 
     return {
         "data": {
@@ -53,15 +62,34 @@ async def get_profile(entity_id: str, request: Request) -> dict:
     }
 
 
-@router.get("/profiles/{entity_id}/config", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
+@router.get(
+    "/profiles/{entity_id}/memory.md",
+    dependencies=[Depends(api_key_auth), Depends(rate_limit)],
+    response_class=PlainTextResponse,
+)
+async def get_memory_markdown(entity_id: str, request: Request) -> PlainTextResponse:
+    """Export entity memory as a MEMORY.md-style Markdown document."""
+    _authorize_entity(request, entity_id)
+    engine = _get_engine(request)
+    builder = MemorySummaryBuilder(
+        graph=engine.graph, profile_manager=engine.profile_manager
+    )
+    markdown = await builder.build(entity_id)
+    return PlainTextResponse(markdown, media_type="text/markdown")
+
+
+@router.get(
+    "/profiles/{entity_id}/config",
+    dependencies=[Depends(api_key_auth), Depends(rate_limit)],
+)
 async def get_profile_config(entity_id: str, request: Request) -> dict:
     """Get per-entity profile configuration overrides."""
     start = time.perf_counter()
+    _authorize_entity(request, entity_id)
     engine = _get_engine(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
-    manager = ProfileManager(graph=engine.graph)
-    config = await manager.get_config(entity_id)
+    config = await engine.profile_manager.get_config(entity_id)
 
     return {
         "data": {
@@ -81,7 +109,10 @@ async def get_profile_config(entity_id: str, request: Request) -> dict:
     }
 
 
-@router.put("/profiles/{entity_id}/config", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
+@router.put(
+    "/profiles/{entity_id}/config",
+    dependencies=[Depends(api_key_auth), Depends(rate_limit)],
+)
 async def update_profile_config(
     entity_id: str,
     body: ProfileConfigSchema,
@@ -94,6 +125,7 @@ async def update_profile_config(
     next GET returns a profile computed with the new config.
     """
     start = time.perf_counter()
+    _authorize_entity(request, entity_id)
     engine = _get_engine(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
@@ -105,8 +137,7 @@ async def update_profile_config(
         min_confidence_dynamic=body.min_confidence_dynamic,
     )
 
-    manager = ProfileManager(graph=engine.graph)
-    await manager.set_config(entity_id, config)
+    await engine.profile_manager.set_config(entity_id, config)
 
     return {
         "data": {
@@ -126,15 +157,18 @@ async def update_profile_config(
     }
 
 
-@router.delete("/profiles/{entity_id}/config", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
+@router.delete(
+    "/profiles/{entity_id}/config",
+    dependencies=[Depends(api_key_auth), Depends(rate_limit)],
+)
 async def delete_profile_config(entity_id: str, request: Request) -> dict:
     """Reset profile config to class defaults."""
     start = time.perf_counter()
+    _authorize_entity(request, entity_id)
     engine = _get_engine(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
-    manager = ProfileManager(graph=engine.graph)
-    deleted = await manager.delete_config(entity_id)
+    deleted = await engine.profile_manager.delete_config(entity_id)
 
     return {
         "data": {

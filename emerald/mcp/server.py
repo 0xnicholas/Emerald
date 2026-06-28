@@ -82,7 +82,9 @@ async def emerald_search(
     q: str,
     entity_id: str,
     search_mode: str = "hybrid",
-    top_k: int = 10,
+    top_k: int = 30,
+    min_confidence: float | None = None,
+    dynamic_truncation: bool = True,
 ) -> dict:
     """Search memories and documents in Emerald.
 
@@ -91,6 +93,8 @@ async def emerald_search(
         entity_id: The entity to search within.
         search_mode: One of "hybrid" (default), "memory", or "rag".
         top_k: Maximum number of results to return (1–100).
+        min_confidence: Minimum memory confidence (0-1).
+        dynamic_truncation: Stop when score gap exceeds threshold.
     """
     client = _get_client()
     result = await client.search(
@@ -98,6 +102,8 @@ async def emerald_search(
         entity_id=entity_id,
         search_mode=search_mode,
         top_k=top_k,
+        min_confidence=min_confidence,
+        dynamic_truncation=dynamic_truncation,
     )
     return {
         "results": [

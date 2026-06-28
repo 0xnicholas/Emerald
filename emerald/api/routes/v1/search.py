@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from emerald.api.dependencies import rate_limit
+from emerald.api.dependencies import api_key_auth, rate_limit
 from emerald.api.schemas import SearchRequest
 from emerald.core.search import SearchMode, SearchOrchestrator
 
@@ -27,14 +27,23 @@ def _get_search_orchestrator(request: Request, engine=None) -> SearchOrchestrato
     return SearchOrchestrator(
         graph=engine.graph,
         vector=engine.vector,
+        fast_lane_store=engine.fast_lane_store,
         embedder=engine.embedder,
     )
 
 
-@router.post("/search", dependencies=[Depends(rate_limit)])
+def _authorize_entity(request: Request, entity_id: str) -> None:
+    """Ensure the request's API key is scoped to the target entity."""
+    allowed = getattr(request.state, "entity_id", None)
+    if allowed and allowed != entity_id:
+        raise HTTPException(status_code=403, detail="Entity not authorized for this API key")
+
+
+@router.post("/search", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def search(body: SearchRequest, request: Request) -> dict:
     """Hybrid search across memory (graph) and RAG (vector)."""
     start = time.perf_counter()
+    _authorize_entity(request, body.entity_id)
     engine = _get_engine(request)
     orchestrator = _get_search_orchestrator(request, engine)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
@@ -47,6 +56,8 @@ async def search(body: SearchRequest, request: Request) -> dict:
         rerank=body.rerank,
         rewrite_query=body.rewrite_query,
         filters=body.filters,
+        min_confidence=body.min_confidence,
+        dynamic_truncation=body.dynamic_truncation,
     )
 
     return {
@@ -75,17 +86,20 @@ async def search(body: SearchRequest, request: Request) -> dict:
     }
 
 
-@router.get("/search", dependencies=[Depends(rate_limit)])
+@router.get("/search", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def search_get(
     q: str = Query(...),
     entity_id: str = Query(...),
     search_mode: str = Query("hybrid"),
-    top_k: int = Query(10, ge=1, le=100),
+    top_k: int = Query(30, ge=1, le=100),
     rewrite_query: bool = Query(False),
+    min_confidence: float | None = Query(None, ge=0.0, le=1.0),
+    dynamic_truncation: bool = Query(True),
     request: Request = None,  # type: ignore
 ) -> dict:
     """GET variant of search."""
     start = time.perf_counter()
+    _authorize_entity(request, entity_id)
     engine = _get_engine(request)
     orchestrator = _get_search_orchestrator(request, engine)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
@@ -96,6 +110,8 @@ async def search_get(
         search_mode=SearchMode(search_mode),
         top_k=top_k,
         rewrite_query=rewrite_query,
+        min_confidence=min_confidence,
+        dynamic_truncation=dynamic_truncation,
     )
 
     return {

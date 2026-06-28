@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     api_key_secret: str = "change-me"
     encryption_key: str = "0" * 64  # 64 hex chars = 32 bytes
 
+    # ---- Session JWT ----
+    # Must be >= 32 bytes in production. Falls back to api_key_secret if not set,
+    # but a dedicated secret is strongly recommended.
+    session_jwt_secret: str = "change-me-change-me-change-me-change-me"
+
     # ---- PostgreSQL ----
     database_url: str = "postgresql+asyncpg://emerald:emerald_dev@localhost:5432/emerald"
     database_url_sync: str = "postgresql://emerald:emerald_dev@localhost:5432/emerald"
@@ -97,6 +102,20 @@ class Settings(BaseSettings):
     otel_service_name: str = "emerald"
     otel_traces_sampler: str = "parentbased_traceidratio"
     otel_traces_sampler_arg: float = 1.0
+
+    # ---- Search / Recall ----
+    search_default_top_k: int = 30
+    search_max_top_k: int = 100
+    search_dynamic_truncation_enabled: bool = True
+    search_score_gap_threshold: float = 0.15
+    search_min_confidence_default: float | None = None
+    search_relationship_expansion_factor: float = 0.85
+
+    # ---- Fast Lane ----
+    fast_lane_enabled: bool = True
+    fast_lane_max_age_hours: float = 24.0
+    fast_lane_score_discount: float = 0.9
+    fast_lane_max_chars_per_chunk: int = 1024
 
     # ---- DeepSeek / Fact Extraction ----
     deepseek_api_key: str = ""

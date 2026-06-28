@@ -127,6 +127,25 @@ class PipelineOrchestrator:
             )
             await session.commit()
 
+        # Fast lane: for textual content, store a coarse searchable chunk
+        # immediately so the upload is retrievable before the pipeline finishes.
+        fast_lane_id: str | None = None
+        if get_settings().fast_lane_enabled and isinstance(content, str):
+            fast_lane_ids = await self._engine._fast_lane_index(content, entity_id)
+            fast_lane_id = fast_lane_ids[0] if fast_lane_ids else None
+            if fast_lane_id:
+                try:
+                    from emerald.db.redis import get_redis_client
+
+                    redis = get_redis_client()
+                    await redis.setex(
+                        f"pipeline:{pipeline_id}:fast_lane_id",
+                        2 * 86400,
+                        fast_lane_id,
+                    )
+                except Exception:
+                    pass
+
         chain(
             extract_task.s(pipeline_id, content, content_type),
             chunk_task.s(),
@@ -140,5 +159,6 @@ class PipelineOrchestrator:
             pipeline_id=pipeline_id,
             entity_id=entity_id,
             content_type=content_type,
+            fast_lane_id=fast_lane_id,
         )
         return pipeline_id

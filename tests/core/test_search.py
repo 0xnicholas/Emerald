@@ -62,12 +62,40 @@ async def test_search_memory_mode(populated):
         assert r.source == "memory"
 
 
+class _KeywordEmbeddingProvider:
+    """Test-only embedder: returns the same vector for any text containing a keyword."""
+
+    def __init__(self, keyword: str, dimension: int = 128) -> None:
+        self.keyword = keyword
+        self._dimension = dimension
+        self._match_vec = [1.0] + [0.0] * (dimension - 1)
+        self._miss_vec = [0.0] * dimension
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [
+            self._match_vec if self.keyword in t else self._miss_vec for t in texts
+        ]
+
+    def dimension(self) -> int:
+        return self._dimension
+
+
 @pytest.mark.asyncio
-async def test_search_rag_mode(populated):
-    """search_mode=rag returns only vector results."""
-    # Exact match query for mock embeddings
-    results = await populated.search(
-        "Alice 是一名资深前端工程师",
+async def test_search_rag_mode(populated, vector):
+    """search_mode=rag returns only document (RAG) vector results."""
+    # RAG chunks are identified by document_id; memory embeddings are not.
+    rag_text = "Alice 是一名资深前端工程师"
+    embedder = _KeywordEmbeddingProvider("前端")
+    rag_emb = (await embedder.embed([rag_text]))[0]
+    await vector.store(
+        "rag-doc-1", rag_text, rag_emb, entity_id="alice", document_id="doc-1"
+    )
+
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=embedder
+    )
+    results = await orchestrator.search(
+        "前端工程师",
         entity_id="alice",
         search_mode=SearchMode.RAG,
     )
@@ -77,18 +105,38 @@ async def test_search_rag_mode(populated):
 
 
 @pytest.mark.asyncio
-async def test_search_hybrid_mode(populated):
+async def test_search_hybrid_mode(populated, graph, vector):
     """search_mode=hybrid returns both memory and rag results.
 
-    Uses exact-match queries because mock embeddings are hash-based
-    and don't capture semantic similarity. Real embeddings would match
-    semantically related queries too.
+    We intentionally keep memory and RAG contents distinct so that
+    cross-source deduplication does not hide one of the sources.
     """
-    # Query with text that exactly matches stored content
-    results = await populated.search(
-        "Alice 喜欢 TypeScript 和函数式编程",
+    keyword = "Vim"
+    embedder = _KeywordEmbeddingProvider(keyword)
+
+    # Memory fact stored in both graph and vector
+    memory_text = "Alice 使用 Vim 编辑器"
+    memory_id = await graph.create_memory(
+        memory_text, entity_id="alice", memory_type="fact"
+    )
+    mem_emb = (await embedder.embed([memory_text]))[0]
+    await vector.store(memory_id, memory_text, mem_emb, entity_id="alice")
+
+    # RAG-only document chunk (document_id marks it as RAG)
+    rag_text = "Vim 编辑器快捷键大全"
+    rag_emb = (await embedder.embed([rag_text]))[0]
+    await vector.store(
+        "rag-chunk-1", rag_text, rag_emb, entity_id="alice", document_id="doc-vim"
+    )
+
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=embedder
+    )
+    results = await orchestrator.search(
+        keyword,
         entity_id="alice",
         search_mode=SearchMode.HYBRID,
+        dynamic_truncation=False,
     )
     sources = {r.source for r in results.results}
     assert "memory" in sources
@@ -146,6 +194,85 @@ async def test_top_k_respected(populated):
         "工程师", entity_id="alice", search_mode=SearchMode.HYBRID, top_k=1,
     )
     assert len(results.results) <= 1
+
+
+@pytest.mark.asyncio
+async def test_default_top_k_increased(populated):
+    """Default top_k is now 30 to improve recall (MEMANTO insight)."""
+    results = await populated.search(
+        "工程师", entity_id="alice", search_mode=SearchMode.HYBRID,
+    )
+    # Default should be 30; with only a few test memories we get all of them.
+    assert len(results.results) <= 30
+
+
+# ---- Min-confidence filter ----
+
+@pytest.mark.asyncio
+async def test_min_confidence_filters_low_confidence_memories(populated, graph, vector, embedder):
+    """min_confidence excludes memories below the threshold."""
+    content = "低置信度记忆"
+    mid = await graph.create_memory(
+        content, entity_id="alice", memory_type="fact", confidence=0.3
+    )
+    emb = (await embedder.embed([content]))[0]
+    await vector.store(mid, content, emb, entity_id="alice")
+
+    results_filtered = await populated.search(
+        "低置信度记忆",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+        min_confidence=0.5,
+    )
+    filtered_ids = {r.id for r in results_filtered.results}
+    assert mid not in filtered_ids
+
+    results_no_filter = await populated.search(
+        "低置信度记忆",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+    )
+    no_filter_ids = {r.id for r in results_no_filter.results}
+    assert mid in no_filter_ids
+
+
+# ---- Dynamic truncation ----
+
+@pytest.mark.asyncio
+async def test_dynamic_truncation_stops_at_score_gap():
+    """Dynamic truncation drops tail results when a large score gap appears.
+
+    We provide more than the minimum-floor results so the gap rule can fire.
+    """
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="A", score=0.95, source="memory"),
+        SearchResult(id="2", content="B", score=0.80, source="memory"),
+        SearchResult(id="3", content="C", score=0.78, source="memory"),
+        SearchResult(id="4", content="D", score=0.40, source="memory"),
+        SearchResult(id="5", content="E", score=0.38, source="memory"),
+    ]
+    merged = orchestrator._merge_results(results, top_k=10, dynamic_truncation=True)
+    ids = [r.id for r in merged]
+    assert "1" in ids
+    assert "2" in ids
+    assert "3" in ids
+    assert "4" not in ids  # gap 0.38 > default 0.15
+    assert "5" not in ids
+
+
+@pytest.mark.asyncio
+async def test_dynamic_truncation_disabled_returns_all():
+    """When dynamic truncation is disabled, top_k is the only limit."""
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="A", score=0.95, source="memory"),
+        SearchResult(id="2", content="B", score=0.40, source="memory"),
+    ]
+    merged = orchestrator._merge_results(results, top_k=10, dynamic_truncation=False)
+    ids = [r.id for r in merged]
+    assert "1" in ids
+    assert "2" in ids
 
 
 # ---- Empty results ----

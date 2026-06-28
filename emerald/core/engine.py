@@ -10,12 +10,14 @@ from typing import Any
 
 import structlog
 
+from emerald.config import get_settings
 from emerald.core.chunker import Chunk, ChunkerRegistry
 from emerald.core.chunker import get_default_registry as get_default_chunker_registry
 from emerald.core.embedder import EmbeddingProvider, get_embedding_provider
 from emerald.core.exceptions import IndexingError
 from emerald.core.extractor import ExtractedContent, ExtractorRegistry
 from emerald.core.extractor import get_default_registry as get_default_extractor_registry
+from emerald.core.fast_lane import FastLaneStore
 from emerald.core.graph import GraphStore
 from emerald.core.metrics import memory_add_latency_seconds, memory_add_total, timed
 from emerald.core.profile import ProfileManager
@@ -34,10 +36,12 @@ class AddResult:
         memory_ids: list[str],
         pipeline_status: str = "done",
         extracted_count: int = 0,
+        conflicts_pending: list[dict] | None = None,
     ) -> None:
         self.memory_ids = memory_ids
         self.pipeline_status = pipeline_status
         self.extracted_count = extracted_count
+        self.conflicts_pending = conflicts_pending or []
 
 
 class MemoryEngine:
@@ -55,6 +59,7 @@ class MemoryEngine:
         embedder: EmbeddingProvider | None = None,
         graph: GraphStore | None = None,
         vector: VectorStore | None = None,
+        fast_lane_store: FastLaneStore | None = None,
         relationships: RelationshipEngine | None = None,
         profile_manager: ProfileManager | None = None,
         use_db: bool = False,
@@ -64,8 +69,9 @@ class MemoryEngine:
         self.embedder = embedder or get_embedding_provider()
         self.graph = graph or GraphStore(use_db=use_db)
         self.vector = vector or VectorStore(use_db=use_db)
-        self.relationships = relationships or RelationshipEngine()
-        self.profile_manager = profile_manager or ProfileManager()
+        self.fast_lane_store = fast_lane_store or FastLaneStore(use_db=use_db)
+        self.relationships = relationships or RelationshipEngine(graph=self.graph)
+        self.profile_manager = profile_manager or ProfileManager(graph=self.graph)
 
     async def add(
         self,
@@ -75,6 +81,7 @@ class MemoryEngine:
         content_type: str = "text",
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        require_confirmation_for_high_impact: bool = False,
     ) -> AddResult:
         """Add content to the memory graph (synchronous path).
 
@@ -114,6 +121,14 @@ class MemoryEngine:
                     return AddResult(memory_ids=[], pipeline_status="duplicate",
                                      extracted_count=0)
 
+                # 1.6 Fast lane: make a coarse raw chunk searchable immediately,
+                #     before the heavier extraction/relationship pipeline finishes.
+                fast_lane_ids: list[str] = []
+                if get_settings().fast_lane_enabled:
+                    fast_lane_ids = await self._fast_lane_index(
+                        extracted.text, entity_id
+                    )
+
                 # 2. Chunk
                 chunks = await self._chunk(extracted, content_type)
 
@@ -131,8 +146,25 @@ class MemoryEngine:
                     chunks, memory_ids, entity_id, metadata
                 )
 
-                # 5. Infer relationships
-                await self.relationships.infer(memory_ids, entity_id)
+                # 5. Infer relationships (automatic + optional high-impact confirmation)
+                infer_result = await self.relationships.infer_with_conflicts(
+                    memory_ids,
+                    entity_id,
+                    require_confirmation_for_high_impact=require_confirmation_for_high_impact,
+                )
+
+                # 5.5 Archive fast-lane chunks now that indexed memories exist.
+                #     Archiving is best-effort; failures are logged but don't fail add().
+                for fl_id in fast_lane_ids:
+                    try:
+                        await self.fast_lane_store.archive(fl_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "fast_lane.archive_failed",
+                            fast_lane_id=fl_id,
+                            entity_id=entity_id,
+                            error=str(exc),
+                        )
 
                 # 6. Invalidate profile cache
                 await self.profile_manager.invalidate(entity_id)
@@ -141,6 +173,7 @@ class MemoryEngine:
                     memory_ids=memory_ids,
                     pipeline_status="done",
                     extracted_count=len(chunks),
+                    conflicts_pending=infer_result.get("pending_conflicts", []),
                 )
 
                 # Cache result for idempotency
@@ -303,7 +336,9 @@ class MemoryEngine:
                 content=chunk.text,
                 entity_id=entity_id,
                 memory_type=overridden_type,
+                internal_type=chunk.internal_type,
                 confidence=overridden_confidence,
+                provenance=chunk.provenance,
                 summary=chunk.summary or None,
                 source_type="conversation" if content_type == "conversation" else "document",
                 valid_until=overridden_valid_until,
@@ -516,6 +551,88 @@ class MemoryEngine:
         except Exception:
             return False
 
+    async def _fast_lane_index(
+        self, text: str, entity_id: str
+    ) -> list[str]:
+        """Create coarse fast-lane chunks and store them for immediate search.
+
+        Returns the list of fast-lane IDs. Failures are logged and skipped so
+        the main pipeline can continue.
+        """
+        settings = get_settings()
+        if not settings.fast_lane_enabled or not text.strip():
+            return []
+
+        chunks = self._fast_lane_split(text, settings.fast_lane_max_chars_per_chunk)
+        if not chunks:
+            return []
+
+        try:
+            embeddings = await self.embedder.embed(chunks)
+        except Exception as exc:
+            logger.warning(
+                "fast_lane.embed_failed", entity_id=entity_id, error=str(exc)
+            )
+            return []
+
+        model_name = getattr(self.embedder, "_model", "unknown")
+        fast_lane_ids: list[str] = []
+        for chunk_text, embedding in zip(chunks, embeddings, strict=False):
+            try:
+                fl_id = await self.fast_lane_store.store(
+                    text=chunk_text,
+                    embedding=embedding,
+                    entity_id=entity_id,
+                    model_name=model_name,
+                )
+                fast_lane_ids.append(fl_id)
+            except Exception as exc:
+                logger.warning(
+                    "fast_lane.store_failed",
+                    entity_id=entity_id,
+                    error=str(exc),
+                )
+
+        if fast_lane_ids:
+            logger.info(
+                "fast_lane.indexed",
+                entity_id=entity_id,
+                chunk_count=len(fast_lane_ids),
+            )
+        return fast_lane_ids
+
+    @staticmethod
+    def _fast_lane_split(text: str, max_chars: int) -> list[str]:
+        """Split text into coarse chunks for the fast lane.
+
+        Splits on blank lines first, then hard-truncates any chunk that is
+        still too long. This is intentionally simple: the goal is speed, not
+        semantic perfection.
+        """
+        import re
+
+        # Normalize line endings and split on blank lines
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        if not paragraphs:
+            paragraphs = [text.strip()]
+
+        chunks: list[str] = []
+        for para in paragraphs:
+            while len(para) > max_chars:
+                # Try to break at the last sentence boundary within the limit
+                cutoff = para.rfind("。", max_chars // 2, max_chars)
+                if cutoff == -1:
+                    cutoff = para.rfind(".", max_chars // 2, max_chars)
+                if cutoff == -1:
+                    cutoff = max_chars
+                chunk = para[:cutoff].strip()
+                if chunk:
+                    chunks.append(chunk)
+                para = para[cutoff:].strip()
+            if para:
+                chunks.append(para)
+        return chunks
+
     async def process_async(
         self,
         content: str | bytes,
@@ -526,7 +643,8 @@ class MemoryEngine:
     ) -> str:
         """Submit content for async pipeline processing (files, batch).
 
-        Delegates to PipelineOrchestrator for full Celery chain execution.
+        Delegates to PipelineOrchestrator, which stores a fast-lane chunk
+        before the full Celery chain and archives it once indexing completes.
         Returns pipeline_id for status tracking.
         """
         # Dedup check for async path too

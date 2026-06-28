@@ -46,7 +46,12 @@ class GraphStore:
         *,
         entity_id: str,
         memory_type: str = "fact",
+        internal_type: str | None = None,
         confidence: float = 0.8,
+        provenance: str = "explicit_statement",
+        validation_count: int = 0,
+        validated_at: datetime | None = None,
+        contradiction_detected: bool = False,
         summary: str | None = None,
         source_type: str = "conversation",
         document_id: str | None = None,
@@ -72,8 +77,13 @@ class GraphStore:
                     MERGE (e:Entity {id: $entity_id})
                     ON CREATE SET e.created_at = datetime(), e.type = "user"
                     CREATE (m:Memory {
-                        id: $id, content: $content, summary: $summary,
-                        memory_type: $memory_type, confidence: $confidence,
+                        id: $id, entity_id: $entity_id, content: $content,
+                        summary: $summary,
+                        memory_type: $memory_type, internal_type: $internal_type,
+                        confidence: $confidence,
+                        provenance: $provenance, validation_count: $validation_count,
+                        validated_at: datetime($validated_at),
+                        contradiction_detected: $contradiction_detected,
                         is_latest: true, valid_from: datetime(),
                         valid_until: datetime($valid_until),
                         replaced_by: null,
@@ -93,7 +103,12 @@ class GraphStore:
                     entity_id=entity_id,
                     summary=summary or content[:200],
                     memory_type=memory_type,
+                    internal_type=internal_type,
                     confidence=confidence,
+                    provenance=provenance,
+                    validation_count=validation_count,
+                    validated_at=validated_at.isoformat() if validated_at else None,
+                    contradiction_detected=contradiction_detected,
                     valid_until=valid_until.isoformat() if valid_until else None,
                     document_id=document_id,
                     source_type=source_type,
@@ -103,10 +118,16 @@ class GraphStore:
         else:
             memory = {
                 "id": memory_id,
+                "entity_id": entity_id,
                 "content": content,
                 "summary": summary or content[:200],
                 "memory_type": memory_type,
+                "internal_type": internal_type,
                 "confidence": confidence,
+                "provenance": provenance,
+                "validation_count": validation_count,
+                "validated_at": validated_at,
+                "contradiction_detected": contradiction_detected,
                 "is_latest": True,
                 "valid_from": now,
                 "valid_until": valid_until,
@@ -128,6 +149,7 @@ class GraphStore:
             memory_id=memory_id,
             entity_id=entity_id,
             memory_type=memory_type,
+            provenance=provenance,
         )
         return memory_id
 
@@ -137,11 +159,17 @@ class GraphStore:
         if self._use_db and self._driver:
             async with self._driver.session() as session:
                 result = await session.run(
-                    "MATCH (m:Memory {id: $id}) RETURN m", id=memory_id
+                    """
+                    MATCH (e:Entity)-[:HAS_MEMORY]->(m:Memory {id: $id})
+                    RETURN m, e.id AS entity_id
+                    """,
+                    id=memory_id,
                 )
                 record = await result.single()
                 if record:
-                    return dict(record["m"])
+                    memory = dict(record["m"])
+                    memory["entity_id"] = record["entity_id"]
+                    return memory
                 return None
 
         for entity_memories in self._memories.values():
@@ -370,6 +398,55 @@ class GraphStore:
                     m["updated_at"] = datetime.now(UTC)
                     return
 
+    async def validate_memory(self, memory_id: str) -> None:
+        """Increment validation_count and update validated_at timestamp."""
+        self._init_driver()
+        now = datetime.now(UTC)
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (m:Memory {id: $id})
+                    SET m.validation_count = coalesce(m.validation_count, 0) + 1,
+                        m.validated_at = datetime(),
+                        m.updated_at = datetime()
+                    """,
+                    id=memory_id,
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == memory_id:
+                    m["validation_count"] = (m.get("validation_count", 0) or 0) + 1
+                    m["validated_at"] = now
+                    m["updated_at"] = now
+                    return
+
+    async def mark_contradiction(self, memory_id: str, detected: bool = True) -> None:
+        """Set the contradiction_detected flag on a memory."""
+        self._init_driver()
+        now = datetime.now(UTC)
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (m:Memory {id: $id})
+                    SET m.contradiction_detected = $detected,
+                        m.updated_at = datetime()
+                    """,
+                    id=memory_id,
+                    detected=detected,
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == memory_id:
+                    m["contradiction_detected"] = detected
+                    m["updated_at"] = now
+                    return
+
     async def mark_expired(self, memory_id: str, reason: str = "expired") -> None:
         """Mark a memory as expired: is_latest=False + expired_at=now.
 
@@ -479,16 +556,13 @@ class GraphStore:
                     f"""
                     MATCH (from:Memory {{id: $from_id}})
                     MATCH (to:Memory {{id: $to_id}})
-                    CREATE (from)-[r:{rel_type.upper()} {{
-                        created_at: datetime(),
-                        confidence: $confidence,
-                        reason: $reason
-                    }}]->(to)
+                    CREATE (from)-[r:{rel_type.upper()}]->(to)
+                    SET r.created_at = datetime()
+                    SET r += $props
                     """,
                     from_id=from_id,
                     to_id=to_id,
-                    confidence=props.get("confidence", 0.8),
-                    reason=props.get("reason", ""),
+                    props=props,
                 )
             return
 
@@ -499,6 +573,7 @@ class GraphStore:
                     rels = m.setdefault("relationships", [])
                     rels.append({
                         "from_id": from_id,
+                        "to_id": to_id,
                         "type": rel_type,
                         "created_at": now,
                         **props,
@@ -664,3 +739,72 @@ class GraphStore:
                 results.append((m["id"], content, score))
         results.sort(key=lambda x: x[2], reverse=True)
         return results[:top_k]
+
+    async def get_relationship_by_property(
+        self, rel_type: str, key: str, value: str
+    ) -> dict[str, Any] | None:
+        """Find a single relationship of ``rel_type`` with ``key=value``.
+
+        Returns a dict with ``from_id``, ``to_id``, and the relationship
+        properties, or ``None`` if not found.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (from:Memory)-[r:{rel_type.upper()}]->(to:Memory)
+                    WHERE r.{key} = $value
+                    RETURN from.id AS from_id, to.id AS to_id, r AS rel
+                    LIMIT 1
+                    """,
+                    value=value,
+                )
+                record = await result.single()
+                if record:
+                    rel_props = dict(record["rel"])
+                    rel_props["from_id"] = record["from_id"]
+                    rel_props["to_id"] = record["to_id"]
+                    return rel_props
+                return None
+
+        for memories in self._memories.values():
+            for m in memories:
+                for rel in m.get("relationships", []):
+                    if rel.get("type") == rel_type and rel.get(key) == value:
+                        return rel
+        return None
+
+    async def update_relationship_property(
+        self,
+        rel_type: str,
+        from_id: str,
+        to_id: str,
+        key: str,
+        value: Any,
+    ) -> bool:
+        """Update a property on a relationship identified by type and endpoints."""
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    f"""
+                    MATCH (from:Memory {{id: $from_id}})-[r:{rel_type.upper()}]
+                          ->(to:Memory {{id: $to_id}})
+                    SET r.{key} = $value
+                    """,
+                    from_id=from_id,
+                    to_id=to_id,
+                    value=value,
+                )
+                return True
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m.get("id") != to_id:
+                    continue
+                for rel in m.get("relationships", []):
+                    if rel.get("type") == rel_type and rel.get("from_id") == from_id:
+                        rel[key] = value
+                        return True
+        return False

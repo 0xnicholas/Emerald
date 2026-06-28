@@ -7,9 +7,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request
 
 from emerald.config import get_settings
+from emerald.core.session import SessionManager
 from emerald.db.session import session_factory
 from emerald.models.api_key import ApiKey
 
@@ -65,6 +66,26 @@ def _get_endpoint_limit(endpoint: str) -> int:
     if "/upload" in endpoint:
         return settings.rate_limit_upload
     return 60  # default
+
+
+async def session_scope(request: Request) -> dict | None:
+    """Optional session scope from ``X-Session-Token`` header.
+
+    If the header is present, the token is validated and its claims (entity_id,
+    project_id, session_id) are stored on ``request.state.session_claims``.
+    Missing or invalid tokens raise 401.
+    """
+    token = request.headers.get("X-Session-Token")
+    if not token:
+        return None
+
+    try:
+        claims = SessionManager().decode_token(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    request.state.session_claims = claims
+    return claims
 
 
 async def rate_limit(request: Request) -> None:
