@@ -49,6 +49,9 @@ async def _probe_minio() -> None:
 
 @router.get("/health", response_model=dict)
 async def health_check() -> dict:
+    """Probe all backing services (Postgres, Neo4j, Redis, MinIO) and return
+    a structured health report. Does not require authentication.
+    """
     start = time.perf_counter()
     checks = {}
     overall = "ok"
