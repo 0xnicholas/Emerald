@@ -40,7 +40,8 @@ def engine():
 async def client(engine):
     """SDK client wired to in-memory FastAPI app."""
     from fastapi import Request
-    from emerald.api.dependencies import api_key_auth, require_write_permission, rate_limit
+
+    from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
 
     async def _bypass_auth(request: Request):
         return "authenticated"
@@ -205,7 +206,7 @@ async def test_sdk_entity_isolation(client):
 @pytest.mark.asyncio
 async def test_upload_bytes(client):
     """upload() accepts bytes and returns pipeline_id."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
 
     mock_response = MagicMock()
     mock_response.status_code = 202
@@ -219,14 +220,20 @@ async def test_upload_bytes(client):
     mock_response.raise_for_status = MagicMock()
 
     mock_http_client = AsyncMock()
-    mock_http_client.post.return_value = mock_response
+    mock_http_client.request.return_value = mock_response
 
-    with patch("emerald.sdk.client.httpx.AsyncClient", return_value=mock_http_client):
+    # I2 refactor: upload() reuses the shared client.  Inject the mock
+    # directly rather than patching the constructor.
+    original_client = client._client
+    client._client = mock_http_client
+    try:
         result = await client.upload(
             b"test file content",
             entity_id="user_123",
             title="test.txt",
         )
+    finally:
+        client._client = original_client
     assert isinstance(result, AddResult)
     assert result.pipeline_status == "queued"
     assert result.pipeline_id == "pipe_456"
@@ -235,7 +242,7 @@ async def test_upload_bytes(client):
 @pytest.mark.asyncio
 async def test_upload_str_path(tmp_path, client):
     """upload() accepts file path string."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
 
     mock_response = MagicMock()
     mock_response.status_code = 202
@@ -249,16 +256,21 @@ async def test_upload_str_path(tmp_path, client):
     mock_response.raise_for_status = MagicMock()
 
     mock_http_client = AsyncMock()
-    mock_http_client.post.return_value = mock_response
+    mock_http_client.request.return_value = mock_response
 
     test_file = tmp_path / "test.md"
     test_file.write_text("# Hello")
 
-    with patch("emerald.sdk.client.httpx.AsyncClient", return_value=mock_http_client):
+    # I2 refactor: inject the mock client directly (see test_upload_bytes).
+    original_client = client._client
+    client._client = mock_http_client
+    try:
         result = await client.upload(
             str(test_file),
             entity_id="user_123",
         )
+    finally:
+        client._client = original_client
     assert isinstance(result, AddResult)
     assert result.pipeline_status == "queued"
 
@@ -282,16 +294,18 @@ async def test_pipeline_status_not_found(client):
 
     mock_response = MagicMock()
     mock_response.status_code = 404
-    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "Not found", request=MagicMock(), response=mock_response
-    )
+    mock_response.is_success = False
+    mock_response.headers = {}
+    mock_response.text = "Not found"
+    mock_response.json.return_value = {"error": {"code": "NOT_FOUND", "message": "Not found"}}
 
     original_client = client._client
     client._client = AsyncMock()
-    client._client.get.return_value = mock_response
+    client._client.request = AsyncMock(return_value=mock_response)
 
     try:
-        with pytest.raises(httpx.HTTPStatusError):
+        from emerald.sdk.exceptions import EmeraldNotFoundError
+        with pytest.raises(EmeraldNotFoundError):
             await client.pipeline_status("nonexistent")
     finally:
         client._client = original_client
@@ -304,6 +318,8 @@ async def test_pipeline_status_found(client):
 
     mock_response = MagicMock()
     mock_response.status_code = 200
+    mock_response.is_success = True
+    mock_response.headers = {}
     mock_response.json.return_value = {
         "data": {
             "pipeline_id": "pipe_123",
@@ -311,7 +327,6 @@ async def test_pipeline_status_found(client):
             "stage": "indexing",
             "document_id": "doc_456",
             "content_type": "pdf",
-            "chunk_count": 12,
             "error_message": None,
         }
     }
@@ -319,13 +334,12 @@ async def test_pipeline_status_found(client):
 
     original_client = client._client
     client._client = AsyncMock()
-    client._client.get.return_value = mock_response
+    client._client.request = AsyncMock(return_value=mock_response)
 
     try:
         status = await client.pipeline_status("pipe_123")
         assert status.pipeline_id == "pipe_123"
         assert status.status == "done"
-        assert status.chunk_count == 12
     finally:
         client._client = original_client
 

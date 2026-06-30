@@ -12,11 +12,18 @@ AGENTS.md: "SDK 不得暴露内部图谱操作。公共 API 仅限 add/search/pr
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 
 import httpx
 
+from emerald.sdk.exceptions import (
+    EmeraldNetworkError,
+    EmeraldRateLimitError,
+    EmeraldValidationError,
+    exception_for_status,
+)
 from emerald.sdk.models import (
     AddResult,
     HealthStatus,
@@ -27,6 +34,75 @@ from emerald.sdk.models import (
     SearchResults,
 )
 
+# ---------- response parsing (I3 refactor) ----------
+
+
+def _extract_error_message(body: Any, response: httpx.Response) -> str:
+    """Best human-readable error message from a response body.
+
+    Prefers the structured ``error.message`` field, falls back to the raw
+    body text, then to a status-code-only placeholder.
+    """
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            msg = err.get("message")
+            if msg:
+                return str(msg)
+    return response.text or f"HTTP {response.status_code}"
+
+
+def _extract_retry_after(response: httpx.Response) -> int | None:
+    """Parse the ``Retry-After`` header.  Returns None if missing or unparseable."""
+    raw = response.headers.get("Retry-After") or response.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_field_errors(body: Any) -> dict[str, str] | None:
+    """Pull ``error.details.field_errors`` from the response body when present."""
+    if not isinstance(body, dict):
+        return None
+    err = body.get("error")
+    if not isinstance(err, dict):
+        return None
+    details = err.get("details")
+    if not isinstance(details, dict):
+        return None
+    fe = details.get("field_errors")
+    if not isinstance(fe, dict):
+        return None
+    return {str(k): str(v) for k, v in fe.items()}
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    """Map an HTTP error response to a typed SDK exception.
+
+    Replaces raw ``response.raise_for_status()`` so callers can catch
+    ``EmeraldAuthError`` / ``EmeraldNotFoundError`` etc. (per sdk-guide.md).
+    """
+    if response.is_success:
+        return
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+
+    msg = _extract_error_message(body, response)
+    retry_after = _extract_retry_after(response)
+    field_errors = _extract_field_errors(body)
+
+    exc = exception_for_status(response.status_code, msg, response=response)
+    if isinstance(exc, EmeraldRateLimitError) and retry_after is not None:
+        exc.retry_after = retry_after
+    if isinstance(exc, EmeraldValidationError) and field_errors:
+        exc.field_errors = field_errors
+    raise exc
+
 
 class EmeraldClient:
     """Async client for the Emerald memory API.
@@ -36,6 +112,12 @@ class EmeraldClient:
         result = await client.add("用户喜欢 TypeScript", entity_id="user_123")
         profile = await client.profile("user_123")
         results = await client.search("TypeScript", entity_id="user_123")
+
+    Or as an async context manager (auto-closes on exit):
+        async with EmeraldClient(api_key="em_xxx") as client:
+            ...
+
+    Errors are surfaced as typed exceptions — see ``emerald.sdk.exceptions``.
     """
 
     def __init__(
@@ -53,6 +135,22 @@ class EmeraldClient:
         }
         self._client: httpx.AsyncClient | None = None
 
+    async def __aenter__(self) -> EmeraldClient:
+        """Enter the async context: returns the client itself.
+
+        Use as ``async with EmeraldClient(...) as client:``.  The underlying
+        httpx client is created lazily on first use; ``__aexit__`` calls
+        ``close()`` so connections are released.
+        """
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        """Exit the async context: closes the underlying httpx client.
+
+        Always runs (even on exception) so callers don't leak connections.
+        """
+        await self.close()
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -61,6 +159,43 @@ class EmeraldClient:
                 timeout=30.0,
             )
         return self._client
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any | None = None,
+        files: Any | None = None,
+        data: Any | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> httpx.Response:
+        """Issue an HTTP request and translate network/HTTP errors to typed SDK exceptions.
+
+        - ``httpx.TransportError`` → ``EmeraldNetworkError`` (connect timeout, DNS, etc.)
+        - non-2xx response → typed exception via ``_raise_for_status``
+        - 2xx response → returned unchanged for the caller to parse
+
+        The shared httpx client carries the base URL and default headers
+        (Authorization, Content-Type).  Per-request ``headers`` and
+        ``timeout`` are layered on top — useful for multipart upload which
+        must NOT send ``Content-Type: application/json`` and may need a
+        longer read timeout.
+        """
+        client = await self._get_client()
+        try:
+            response = await client.request(
+                method, path,
+                json=json, files=files, data=data,
+                headers=headers, timeout=timeout,
+            )
+        except httpx.TransportError as exc:
+            raise EmeraldNetworkError(
+                f"Network error contacting Emerald API: {exc}",
+            ) from exc
+        _raise_for_status(response)
+        return response
 
     async def close(self) -> None:
         if self._client:
@@ -78,6 +213,9 @@ class EmeraldClient:
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
         require_confirmation_for_high_impact: bool = False,
+        memory_type: str | None = None,
+        confidence: float | None = None,
+        valid_until: datetime | None = None,
     ) -> AddResult:
         """Add content to the memory graph.
 
@@ -89,11 +227,22 @@ class EmeraldClient:
             metadata: Optional key-value metadata.
             require_confirmation_for_high_impact: Flag high-impact contradictions
                 for confirmation instead of auto-resolving.
+            memory_type: Optional override for the LLM-extracted memory type.
+                One of 'fact', 'preference', or 'episodic'. When set, takes
+                precedence over both the chunker default and ``metadata``.
+                **Passing None leaves the lower priority (``metadata`` then
+                chunker default) to decide.**
+            confidence: Optional override for the LLM-assigned confidence
+                score (0.0-1.0).  When set, the engine skips re-scoring.
+                **Passing None defers to lower-priority values.**
+            valid_until: Optional expiry datetime (UTC or timezone-aware).
+                After this point, the ForgetEngine will mark the memory
+                ``is_latest=False``. **None means "use the lower priority,
+                which may itself be None for no expiry".**
 
         Returns:
             AddResult with memory IDs, pipeline status, and any pending conflicts.
         """
-        client = await self._get_client()
         body: dict[str, Any] = {
             "content": content,
             "entity_id": entity_id,
@@ -104,9 +253,16 @@ class EmeraldClient:
             body["title"] = title
         if metadata:
             body["metadata"] = metadata
+        if memory_type is not None:
+            body["memory_type"] = memory_type
+        if confidence is not None:
+            body["confidence"] = confidence
+        if valid_until is not None:
+            # Pydantic will accept either datetime or ISO string; sending
+            # ISO 8601 keeps the wire format stable and timezone-explicit.
+            body["valid_until"] = valid_until.isoformat()
 
-        response = await client.post(f"/{self.api_version}/memories", json=body)
-        response.raise_for_status()
+        response = await self._request("POST", f"/{self.api_version}/memories", json=body)
         data = response.json()["data"]
         return AddResult(
             memory_ids=data["memory_ids"],
@@ -145,7 +301,6 @@ class EmeraldClient:
         Returns:
             SearchResults with scored, deduplicated hits.
         """
-        client = await self._get_client()
         body: dict[str, Any] = {
             "q": q,
             "entity_id": entity_id,
@@ -160,8 +315,7 @@ class EmeraldClient:
         if min_confidence is not None:
             body["min_confidence"] = min_confidence
 
-        response = await client.post(f"/{self.api_version}/search", json=body)
-        response.raise_for_status()
+        response = await self._request("POST", f"/{self.api_version}/search", json=body)
         data = response.json()["data"]
 
         return SearchResults(
@@ -194,9 +348,7 @@ class EmeraldClient:
         Returns:
             Profile with static facts (always relevant) and dynamic facts (recent, episodic).
         """
-        client = await self._get_client()
-        response = await client.get(f"/{self.api_version}/profiles/{entity_id}")
-        response.raise_for_status()
+        response = await self._request("GET", f"/{self.api_version}/profiles/{entity_id}")
         data = response.json()["data"]
 
         return Profile(
@@ -243,8 +395,6 @@ class EmeraldClient:
         Returns:
             AddResult with pipeline_id for status tracking.
         """
-        client = await self._get_client()
-
         # Resolve file to (filename, content, content_type)
         if isinstance(file, str):
             path = Path(file)
@@ -262,33 +412,28 @@ class EmeraldClient:
         if title:
             data["title"] = title
 
-        # Temporarily remove JSON content-type for multipart upload
-        upload_headers = {k: v for k, v in self._headers.items() if k != "Content-Type"}
-        upload_client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=upload_headers,
-            timeout=120.0,
+        # I2: use the shared httpx client.  Override the default
+        # ``Content-Type: application/json`` header for this one request —
+        # httpx will auto-set the multipart boundary instead.  And extend
+        # the timeout to 120s (large files take longer to upload).
+        headers = {k: v for k, v in self._headers.items() if k != "Content-Type"}
+        response = await self._request(
+            "POST", f"/{self.api_version}/upload",
+            files=files, data=data,
+            headers=headers, timeout=120.0,
         )
-
-        try:
-            response = await upload_client.post(f"/{self.api_version}/upload", files=files, data=data)
-            response.raise_for_status()
-            resp_data = response.json()["data"]
-            return AddResult(
-                memory_ids=[],
-                pipeline_status=resp_data.get("pipeline_status", "queued"),
-                pipeline_id=resp_data.get("pipeline_id"),
-            )
-        finally:
-            await upload_client.aclose()
+        resp_data = response.json()["data"]
+        return AddResult(
+            memory_ids=[],
+            pipeline_status=resp_data.get("pipeline_status", "queued"),
+            pipeline_id=resp_data.get("pipeline_id"),
+        )
 
     # ---- Utility methods ----
 
     async def health(self) -> HealthStatus:
         """Check API health."""
-        client = await self._get_client()
-        response = await client.get(f"/{self.api_version}/health")
-        response.raise_for_status()
+        response = await self._request("GET", f"/{self.api_version}/health")
         data = response.json()
         return HealthStatus(
             status=data["status"],
@@ -298,9 +443,7 @@ class EmeraldClient:
 
     async def pipeline_status(self, pipeline_id: str) -> PipelineStatus:
         """Check async pipeline processing status."""
-        client = await self._get_client()
-        response = await client.get(f"/{self.api_version}/pipelines/{pipeline_id}")
-        response.raise_for_status()
+        response = await self._request("GET", f"/{self.api_version}/pipelines/{pipeline_id}")
         data = response.json()["data"]
         return PipelineStatus(
             pipeline_id=data["pipeline_id"],
@@ -308,13 +451,12 @@ class EmeraldClient:
             stage=data.get("stage", ""),
             document_id=data.get("document_id"),
             content_type=data.get("content_type", ""),
-            chunk_count=data.get("chunk_count", 0),
             error_message=data.get("error_message"),
+            fact_extraction_status=data.get("fact_extraction_status"),
+            memory_count=data.get("memory_count", 0),
         )
 
     async def get_memory(self, memory_id: str) -> dict:
         """Get a single memory by ID."""
-        client = await self._get_client()
-        response = await client.get(f"/{self.api_version}/memories/{memory_id}")
-        response.raise_for_status()
+        response = await self._request("GET", f"/{self.api_version}/memories/{memory_id}")
         return response.json()["data"]
