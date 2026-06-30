@@ -84,5 +84,9 @@ class PipelineStatus:
     stage: str = ""
     document_id: str | None = None
     content_type: str = ""
-    chunk_count: int = 0
     error_message: str | None = None
+    # P1.2b: surface LLM fact-extraction outcome + final memory count.
+    fact_extraction_status: str | None = None  # "success" | "failed" | "skipped" | None
+    memory_count: int = 0  # number of memory nodes actually created in the graph
+    # NOTE: ``chunk_count`` was removed from the schema; re-add here in the
+    # same commit that re-introduces it on the server side.

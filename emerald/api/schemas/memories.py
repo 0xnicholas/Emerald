@@ -28,6 +28,35 @@ class AddMemoryRequest(BaseModel):
             "instead of auto-resolved."
         ),
     )
+    # ---- Per-memory overrides (P1.2a) ----
+    # Callers who know better than the LLM extractor (e.g. an onboarding
+    # flow that has just collected a structured preference) can set these
+    # directly.  When set, they take precedence over both the chunker's
+    # default and any value tucked into ``metadata``.
+    memory_type: str | None = Field(
+        default=None,
+        description=(
+            "Override the LLM-extracted memory type. Must be one of "
+            "'fact', 'preference', or 'episodic' if provided."
+        ),
+    )
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Override the LLM-assigned confidence score (0.0-1.0). "
+            "Useful for human-verified or operator-curated entries."
+        ),
+    )
+    valid_until: datetime | None = Field(
+        default=None,
+        description=(
+            "When this memory should be considered expired (e.g. "
+            "'I have an exam tomorrow'). The ForgetEngine will mark it "
+            "not_latest after this time. None means no expiry."
+        ),
+    )
 
 
 class AddMemoryResponse(BaseModel):

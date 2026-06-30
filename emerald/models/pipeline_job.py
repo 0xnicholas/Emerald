@@ -31,3 +31,16 @@ class PipelineJob(Base, UUIDMixin, TimestampMixin):
     max_retries: Mapped[int] = mapped_column(Integer, default=3)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # P1.2b: surface fact-extraction + final memory count in pipeline_status
+    fact_extraction_status: Mapped[str | None] = mapped_column(
+        String(20),
+        doc=(
+            "Status of the LLM-based fact extraction stage. "
+            "One of: 'success', 'failed', 'skipped' (e.g. for plain text where "
+            "no LLM extraction is needed). NULL until the chunking stage runs."
+        ),
+    )
+    memory_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False,
+        doc="Number of memory nodes actually created in the graph at the end of the pipeline.",
+    )

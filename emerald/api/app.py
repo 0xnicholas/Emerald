@@ -269,11 +269,13 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
 
     # Register V2 routes (currently re-export V1)
     from emerald.api.routes.v2 import (
+        conflicts as v2_conflicts,
         connectors as v2_connectors,
         memories as v2_memories,
         pipelines as v2_pipelines,
         profiles as v2_profiles,
         search as v2_search,
+        sessions as v2_sessions,
         system as v2_system,
         upload as v2_upload,
     )
@@ -285,6 +287,8 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v2_pipelines.router, prefix="/v2")
     app.include_router(v2_connectors.router, prefix="/v2")
     app.include_router(v2_system.router, prefix="/v2")
+    app.include_router(v2_sessions.router, prefix="/v2")
+    app.include_router(v2_conflicts.router, prefix="/v2")
 
     return app
 

@@ -13,7 +13,12 @@ class PipelineStatusResponse(BaseModel):
     stage: str = ""
     document_id: str | None = None
     content_type: str = ""
-    chunk_count: int = 0
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    # P1.2b: surface fact-extraction + memory count in the public schema
+    fact_extraction_status: str | None = None  # success | failed | skipped
+    memory_count: int = 0
+    # NOTE: ``chunk_count`` was removed because the pipeline_jobs table
+    # doesn't track it.  If/when chunk counting is added, reintroduce the
+    # field here AND in PipelineStatus dataclass in the same commit.

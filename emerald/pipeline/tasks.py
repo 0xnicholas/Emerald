@@ -58,6 +58,33 @@ async def _update_status(pipeline_id: str, status: str) -> None:
         )
 
 
+async def _update_fact_extraction_status(
+    pipeline_id: str, status: str, memory_count: int | None = None
+) -> None:
+    """Record the outcome of the chunking/fact-extraction stage.
+
+    P1.2b: surfaces this in ``GET /v1/pipelines/{id}`` so clients can
+    distinguish "extractor ran but found nothing" from "pipeline still
+    running" from "extractor crashed".
+    """
+    from sqlalchemy import text
+
+    from emerald.db.session import session_factory
+
+    set_clauses = "fact_extraction_status = :status, updated_at = NOW()"
+    params: dict[str, object] = {"status": status, "id": pipeline_id}
+    if memory_count is not None:
+        set_clauses += ", memory_count = :memory_count"
+        params["memory_count"] = memory_count
+    async with session_factory.session() as session:
+        await session.execute(
+            text(
+                f"UPDATE pipeline_jobs SET {set_clauses} WHERE id = :id"
+            ),
+            params,
+        )
+
+
 async def _update_error(pipeline_id: str, stage: str, error: str) -> None:
     pipeline_jobs_total.labels(status="failed").inc()
     from sqlalchemy import text
@@ -127,6 +154,10 @@ async def _run_chunk(prev_result: dict) -> dict:
     data = [_chunk_to_dict(c) for c in chunks]
     await redis.setex(f"pipeline:{pipeline_id}:chunks", 86400, json.dumps(data))
     prev_result["chunk_count"] = len(chunks)
+    # P1.2b: fact_extraction_status is set exclusively by the index_task's
+    # finally block (it has authoritative knowledge of how many memories
+    # were actually created). Writing it here would be dead code — the
+    # downstream update would overwrite this value unconditionally.
     return prev_result
 
 
@@ -179,6 +210,7 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
     from emerald.db.neo4j import close_neo4j, init_neo4j
 
     await init_neo4j()
+    memory_ids: list[str] = []
     try:
         await _update_status(pipeline_id, "indexing")
         from emerald.db.redis import get_redis_client
@@ -194,8 +226,6 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
 
         graph = GraphStore(use_db=True)
         vector = VectorStore(use_db=True)
-
-        memory_ids = []
         for chunk_data, embedding in zip(chunks_data, embeddings, strict=False):
             valid_until = _deserialize_valid_until(chunk_data.get("valid_until"))
             mid = await graph.create_memory(
@@ -221,6 +251,14 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
         await _update_error(pipeline_id, "indexing", str(exc))
         raise
     finally:
+        # P1.2b: record the number of memories actually created so clients
+        # can show "extracted 5 facts" etc. via GET /v1/pipelines/{id}.
+        try:
+            await _update_fact_extraction_status(
+                pipeline_id, "success", memory_count=len(memory_ids)
+            )
+        except Exception:  # never let status update mask the real error
+            pass
         await close_neo4j()
 
 

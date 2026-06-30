@@ -28,6 +28,44 @@ from emerald.core.vector import VectorStore
 logger = structlog.get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# I5 refactor: override precedence helpers
+# ---------------------------------------------------------------------------
+# Per-field resolution: explicit add() arg > metadata dict > chunker default.
+# Extracted so the per-chunk loop in _index() reads as a 3-line dispatch
+# instead of 3 nested if-blocks.  None means "use the next lower priority".
+def _resolve_override(
+    explicit: Any,
+    from_metadata: Any,
+    from_chunker: Any,
+) -> Any:
+    """Pick the highest-priority non-None value among the three sources."""
+    if explicit is not None:
+        return explicit
+    if from_metadata is not None:
+        return from_metadata
+    return from_chunker
+
+
+def _resolve_override_valid_until(
+    explicit: datetime | None,
+    from_metadata: datetime | str | None,
+    from_chunker: datetime | None,
+) -> datetime | None:
+    """Same precedence as _resolve_override, but parses ISO strings.
+
+    ``valid_until`` may arrive as a datetime (from the SDK) or as an ISO
+    8601 string (from the REST body via the metadata dict).
+    """
+    if explicit is not None:
+        return explicit
+    if from_metadata is not None:
+        if isinstance(from_metadata, str):
+            return datetime.fromisoformat(from_metadata.replace("Z", "+00:00"))
+        return from_metadata
+    return from_chunker
+
+
 class AddResult:
     """Result of a memory add operation."""
 
@@ -82,10 +120,20 @@ class MemoryEngine:
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
         require_confirmation_for_high_impact: bool = False,
+        memory_type: str | None = None,
+        confidence: float | None = None,
+        valid_until: datetime | None = None,
     ) -> AddResult:
         """Add content to the memory graph (synchronous path).
 
         Returns AddResult with memory IDs.
+
+        Optional per-memory overrides (P1.2a): when provided, ``memory_type``,
+        ``confidence`` and ``valid_until`` take precedence over the chunker's
+        defaults and any value tucked into ``metadata``.  This is the
+        supported path for callers that know the semantic class of the
+        memory (e.g. an onboarding form that just captured a preference)
+        and want to skip the LLM classification step.
         """
         tracer = get_tracer()
         with tracer.start_as_current_span("memory.add") as span:
@@ -137,7 +185,12 @@ class MemoryEngine:
 
                 # 4. Index — store in graph + vector
                 memory_ids = await self._index(
-                    chunks, embeddings, entity_id, content_type, metadata
+                    chunks, embeddings, entity_id, content_type, metadata,
+                    overrides={
+                        "memory_type": memory_type,
+                        "confidence": confidence,
+                        "valid_until": valid_until,
+                    },
                 )
 
                 # 4.5 Strengthen preferences: if similar preference already exists,
@@ -302,6 +355,7 @@ class MemoryEngine:
         entity_id: str,
         content_type: str,
         metadata: dict[str, Any] | None,
+        overrides: dict[str, Any] | None = None,
     ) -> list[str]:
         """Store chunks in Neo4j and pgvector, return memory IDs.
 
@@ -316,22 +370,24 @@ class MemoryEngine:
 
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             # 1. Store in Neo4j graph — memory_id becomes the canonical ID
-            # Allow metadata overrides for memory_type, confidence, and valid_until
-            # (the chunker provides defaults; callers may know better)
-            overridden_type = chunk.memory_type
-            overridden_confidence = chunk.confidence
-            overridden_valid_until = chunk.valid_until
-            if metadata:
-                if "memory_type" in metadata:
-                    overridden_type = metadata["memory_type"]
-                if "confidence" in metadata:
-                    overridden_confidence = metadata["confidence"]
-                if "valid_until" in metadata:
-                    raw = metadata["valid_until"]
-                    if isinstance(raw, str):
-                        overridden_valid_until = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                    elif isinstance(raw, datetime):
-                        overridden_valid_until = raw
+            # Apply override precedence (I5): explicit add() args >
+            # metadata dict > chunker default.  Helper resolves one field
+            # at a time so the per-field rules are obvious.
+            overridden_type = _resolve_override(
+                (overrides or {}).get("memory_type"),
+                (metadata or {}).get("memory_type"),
+                chunk.memory_type,
+            )
+            overridden_confidence = _resolve_override(
+                (overrides or {}).get("confidence"),
+                (metadata or {}).get("confidence"),
+                chunk.confidence,
+            )
+            overridden_valid_until = _resolve_override_valid_until(
+                (overrides or {}).get("valid_until"),
+                (metadata or {}).get("valid_until"),
+                chunk.valid_until,
+            )
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,

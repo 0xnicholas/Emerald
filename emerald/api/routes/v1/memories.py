@@ -7,7 +7,12 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
+from emerald.api.dependencies import (
+    api_key_auth,
+    authorize_entity,
+    rate_limit,
+    require_write_permission,
+)
 from emerald.api.schemas import AddMemoryRequest, BatchAddMemoryRequest, MemoryResponse
 
 router = APIRouter(tags=["Memories"])
@@ -23,11 +28,8 @@ def _get_engine(request: Request):
     return engine
 
 
-def _authorize_entity(request: Request, entity_id: str) -> None:
-    """Ensure the API key is scoped to the target entity."""
-    allowed = getattr(request.state, "entity_id", None)
-    if allowed and allowed != entity_id:
-        raise HTTPException(status_code=403, detail="Entity not authorized for this API key")
+# Local alias preserves the existing call-site signature (N5 refactor).
+_authorize_entity = authorize_entity
 
 
 async def _get_authorized_memory(engine, request: Request, memory_id: str) -> dict:
@@ -58,6 +60,9 @@ async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
         metadata=body.metadata,
         idempotency_key=body.idempotency_key,
         require_confirmation_for_high_impact=body.require_confirmation_for_high_impact,
+        memory_type=body.memory_type,
+        confidence=body.confidence,
+        valid_until=body.valid_until,
     )
 
     return {
@@ -165,6 +170,9 @@ async def add_memories_batch(body: BatchAddMemoryRequest, request: Request) -> d
                 metadata=mem.metadata,
                 idempotency_key=mem.idempotency_key,
                 require_confirmation_for_high_impact=mem.require_confirmation_for_high_impact,
+                memory_type=mem.memory_type,
+                confidence=mem.confidence,
+                valid_until=mem.valid_until,
             )
             results.append({
                 "memory_ids": result.memory_ids,
