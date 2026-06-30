@@ -9,10 +9,21 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 
-from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
+from emerald.api.dependencies import (
+    api_key_auth,
+    authorize_entity,
+    rate_limit,
+    require_write_permission,
+)
 from emerald.config import get_settings
 
 router = APIRouter(tags=["Upload"])
+
+
+# Local alias (N5 refactor: helper centralised in api.dependencies).
+# This re-export is required so that tests can patch ``upload._authorize_entity``
+# (see tests/api/test_upload_authorization.py).
+_authorize_entity = authorize_entity
 
 
 @router.post(
@@ -25,13 +36,25 @@ router = APIRouter(tags=["Upload"])
     ],
 )
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     entity_id: str = Form(...),
     content_type: str | None = Form(default=None),
     title: str | None = Form(default=None),
 ) -> dict:
+    """Upload a file (PDF, image, audio, video, code, etc.) for async
+    extraction, chunking, embedding, and indexing. Returns 202 Accepted
+    with a pipeline_id to poll via ``GET /v1/pipelines/{id}``.
+
+    File size limit: 50MB.
+    """
     start = time.perf_counter()
     settings = get_settings()
+
+    # 0. Entity authorization — must happen before any I/O so an attacker
+    #    holding a valid write-permission key scoped to entity A cannot
+    #    pollute entity B's document namespace.
+    _authorize_entity(request, entity_id)
 
     # 1. Read and validate size
     contents = await file.read()
@@ -57,10 +80,11 @@ async def upload_file(
     )
 
     # 4. Resolve external entity_id → internal UUID, then create Document
+    from sqlalchemy import select
+
     from emerald.db.session import session_factory
     from emerald.models.document import Document
     from emerald.models.entity import Entity
-    from sqlalchemy import select
 
     async with session_factory.session() as session:
         result = await session.execute(
@@ -123,10 +147,11 @@ async def list_files(
     """List uploaded files for an entity."""
     start = time.perf_counter()
 
+    from sqlalchemy import func, select
+
     from emerald.db.session import session_factory
     from emerald.models.document import Document
     from emerald.models.entity import Entity
-    from sqlalchemy import func, select
 
     async with session_factory.session() as session:
         # Resolve external entity_id → internal UUID
