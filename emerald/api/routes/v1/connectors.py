@@ -2,29 +2,48 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from redis.asyncio import Redis
 from sqlalchemy import select
 
+from emerald.api._state_store import OAuthStateStore
 from emerald.api.dependencies import api_key_auth, require_write_permission
 from emerald.connectors.auth import encrypt_credentials
 from emerald.connectors.registry import get_connector_registry
 from emerald.db.session import session_factory
 from emerald.models.connector import Connector
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/connectors", tags=["Connectors"])
 
-# In-memory state store for OAuth callbacks.
-# Production should use Redis with TTL (e.g. 10 minutes).
-_oauth_state_store: dict[str, str] = {}
+
+# Single shared instance.  TTL is read from settings (see I8 fix).
+_oauth_state_store = OAuthStateStore()
 
 
 # ---- Helper: resolve entity from request state ----
 
 def _get_entity_id(request: Request) -> str:
     return getattr(request.state, "entity_id", "")
+
+
+def _get_oauth_redis() -> Redis:
+    """Get the Redis client used for OAuth state.  Raises 503 if unavailable."""
+    try:
+        from emerald.db.redis import get_redis_client
+        return get_redis_client()
+    except RuntimeError as exc:
+        # Redis not initialised — fail loudly rather than fall back to the
+        # broken in-memory dict.  See P2.1 fix.
+        raise HTTPException(
+            status_code=503,
+            detail="OAuth state store unavailable (Redis not initialised)",
+        ) from exc
 
 
 # ---- OAuth Connect ----
@@ -64,7 +83,8 @@ async def connect_provider(
         redirect_uri = f"{base}/v1/connectors/{provider}/callback"
 
     auth_url, state_token = await connector.get_auth_url(redirect_uri)
-    _oauth_state_store[state_token] = entity_id
+    redis = _get_oauth_redis()
+    await _oauth_state_store.put(redis, state_token, entity_id)
 
     return {
         "data": {
@@ -98,8 +118,9 @@ async def handle_oauth_callback(
     connector_cls = registry.get(provider)
 
     # Resolve entity_id from the state token stored during connect_provider.
-    # In production this should be a Redis lookup with TTL.
-    entity_id = _oauth_state_store.pop(state, "")
+    # P2.1: read from Redis (multi-worker safe) and delete after use.
+    redis = _get_oauth_redis()
+    entity_id = await _oauth_state_store.consume(redis, state)
     if not entity_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

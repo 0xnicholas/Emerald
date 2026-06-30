@@ -7,7 +7,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from emerald.api.dependencies import api_key_auth, rate_limit
+from emerald.api.dependencies import (
+    api_key_auth,
+    authorize_entity,
+    rate_limit,
+)
 from emerald.api.schemas import SearchRequest
 from emerald.core.search import SearchMode, SearchOrchestrator
 
@@ -32,11 +36,8 @@ def _get_search_orchestrator(request: Request, engine=None) -> SearchOrchestrato
     )
 
 
-def _authorize_entity(request: Request, entity_id: str) -> None:
-    """Ensure the request's API key is scoped to the target entity."""
-    allowed = getattr(request.state, "entity_id", None)
-    if allowed and allowed != entity_id:
-        raise HTTPException(status_code=403, detail="Entity not authorized for this API key")
+# Local alias (N5 refactor: helper centralised in api.dependencies).
+_authorize_entity = authorize_entity
 
 
 @router.post("/search", dependencies=[Depends(api_key_auth), Depends(rate_limit)])

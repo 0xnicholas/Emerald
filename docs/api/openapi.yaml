@@ -1,1347 +1,2088 @@
-openapi: "3.0.3"
+openapi: 3.1.0
 info:
   title: Emerald
+  description: Memory and context infrastructure for AI agents
   version: 0.3.0
-  description: |
-    Memory and context infrastructure for AI agents.
-
-    Emerald provides long-term and short-term memory through a knowledge
-    graph architecture. It supports automatic fact extraction, temporal
-    tracking, context updates, and intelligent forgetting — all through
-    a minimal, declarative API.
-
-    ## Core Concepts
-
-    | Concept | Description |
-    |---|---|
-    | **Entity** | A user, project, or organization that owns memories |
-    | **Memory** | An extracted, structured fact linked to an entity |
-    | **Profile** | Two-tier summary: static facts + dynamic context |
-    | **Hybrid Search** | Single query returns both memory and RAG results |
-
-    ## Authentication
-
-    All endpoints require an API key via `Authorization: Bearer em_<key>`.
-
-    ## Content Types
-
-    `text` | `conversation` | `url` | `pdf` | `image` | `audio` | `video` | `code` | `markdown`
-
   contact:
     name: Emerald
+    url: https://emerald.ai
   license:
     name: MIT
-
-servers:
-  - url: http://localhost:8000/v1
-    description: Local development
-  - url: https://api.emerald.ai/v1
-    description: Production
-
-tags:
-  - name: Memories
-    description: Ingest and retrieve memories
-  - name: Search
-    description: Hybrid search across memory and RAG
-  - name: Profiles
-    description: Entity profiles and context
-  - name: Upload
-    description: File upload and pipeline tracking
-  - name: Connectors
-    description: External data source integrations
-  - name: System
-    description: Health and metrics
-
-# ============================================================
-# Security
-# ============================================================
-security:
-  - ApiKeyAuth: []
-
-components:
-  securitySchemes:
-    ApiKeyAuth:
-      type: http
-      scheme: bearer
-      description: |
-        API key in format `em_` + 32 random characters.
-        Example: `em_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
-
-  # ---- Schemas ----
-
-  schemas:
-    # Common
-    Meta:
-      type: object
-      properties:
-        request_id:
-          type: string
-          example: "req_abc123"
-          description: Unique request identifier for tracing
-        took_ms:
-          type: integer
-          example: 45
-          description: Request processing time in milliseconds
-
-    ErrorDetail:
-      type: object
-      required: [code, message]
-      properties:
-        code:
-          type: string
-          example: "INVALID_CONTENT_TYPE"
-          enum:
-            - INVALID_REQUEST
-            - INVALID_CONTENT_TYPE
-            - CONTENT_TOO_LARGE
-            - INVALID_ENTITY_ID
-            - EMPTY_CONTENT
-            - UNAUTHORIZED
-            - API_KEY_EXPIRED
-            - FORBIDDEN
-            - NOT_FOUND
-            - ALREADY_EXISTS
-            - PAYLOAD_TOO_LARGE
-            - RATE_LIMITED
-            - INTERNAL_ERROR
-            - PIPELINE_UNAVAILABLE
-        message:
-          type: string
-          example: "Unsupported content type: application/octet-stream"
-        details:
-          type: object
-          additionalProperties: true
-
-    ErrorResponse:
-      type: object
-      properties:
-        error:
-          $ref: "#/components/schemas/ErrorDetail"
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    # Memories
-    AddMemoryRequest:
-      type: object
-      required: [content, entity_id]
-      properties:
-        content:
-          type: string
-          description: Text content or base64-encoded file
-          example: "用户偏好 TypeScript 和函数式编程风格"
-        entity_id:
-          type: string
-          description: Entity this content belongs to
-          example: "user_123"
-        content_type:
-          type: string
-          description: |
-            Content type hint. Auto-detected if omitted.
-            Supported: text, conversation, url, pdf, image, audio, video, code, markdown
-          example: "text"
-          default: "text"
-        title:
-          type: string
-          description: Optional content title
-          example: "编程偏好"
-        metadata:
-          type: object
-          description: Custom key-value metadata
-          additionalProperties: true
-          example:
-            source: "chat"
-            session_id: "sess_456"
-        async_mode:
-          type: boolean
-          description: "Force async processing (default: auto-detect based on content type)"
-          default: false
-
-    AddMemoryResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            memory_ids:
-              type: array
-              items:
-                type: string
-              description: Created memory IDs (sync mode)
-              example: ["mem_abc123", "mem_def456"]
-            pipeline_status:
-              type: string
-              enum: [done, queued]
-              example: "done"
-            extracted_count:
-              type: integer
-              example: 2
-            pipeline_id:
-              type: string
-              description: Pipeline ID for status tracking (async mode only)
-              example: "pipe_xyz789"
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    RelationshipItem:
-      type: object
-      properties:
-        type:
-          type: string
-          enum: [updates, extends, derives_from]
-          description: |
-            - `updates`: New fact replaces old fact
-            - `extends`: New fact enriches old fact
-            - `derives_from`: Inferred from multiple existing facts
-          example: "extends"
-        target_id:
-          type: string
-          description: ID of the related memory
-        target_summary:
-          type: string
-          description: Brief summary of the related memory
-
-    MemoryResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            id:
-              type: string
-              example: "mem_abc123"
-            content:
-              type: string
-              example: "用户偏好 TypeScript 和函数式编程风格"
-            summary:
-              type: string
-              example: "用户是 TypeScript 开发者，偏好函数式范式"
-            memory_type:
-              type: string
-              enum: [fact, preference, episodic]
-              example: "preference"
-            is_latest:
-              type: boolean
-              description: Whether this is the current version of the fact
-              example: true
-            confidence:
-              type: number
-              format: float
-              minimum: 0
-              maximum: 1
-              example: 0.85
-            valid_from:
-              type: string
-              format: date-time
-              example: "2026-05-22T10:30:00Z"
-            valid_until:
-              type: string
-              format: date-time
-              nullable: true
-              description: Expiry time for temporary facts
-              example: null
-            entity_id:
-              type: string
-              example: "user_123"
-            relationships:
-              type: array
-              items:
-                $ref: "#/components/schemas/RelationshipItem"
-            created_at:
-              type: string
-              format: date-time
-            updated_at:
-              type: string
-              format: date-time
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    # Search
-    SearchRequest:
-      type: object
-      required: [q, entity_id]
-      properties:
-        q:
-          type: string
-          description: Search query
-          example: "用户偏好什么编程语言？"
-        entity_id:
-          type: string
-          description: Entity scope
-          example: "user_123"
-        search_mode:
-          type: string
-          enum: [hybrid, memory, rag]
-          default: hybrid
-          description: |
-            - `hybrid`: Both memory (graph) and RAG (vector) results
-            - `memory`: Only personal memories from the knowledge graph
-            - `rag`: Only document chunks from vector similarity
-          example: "hybrid"
-        top_k:
-          type: integer
-          minimum: 1
-          maximum: 100
-          default: 10
-          description: Maximum results to return
-        rerank:
-          type: boolean
-          default: false
-          description: Enable cross-encoder re-ranking for higher precision
-        rewrite_query:
-          type: boolean
-          default: false
-          description: Enable LLM query expansion for higher recall
-        filters:
-          type: object
-          description: Metadata filters
-          properties:
-            memory_type:
-              type: string
-              example: "preference"
-            min_confidence:
-              type: number
-              example: 0.5
-
-    SearchResultItem:
-      type: object
-      properties:
-        id:
-          type: string
-        content:
-          type: string
-        summary:
-          type: string
-        score:
-          type: number
-          format: float
-          description: Relevance score (0-1 for RAG, weighted for memory)
-        source:
-          type: string
-          enum: [memory, rag]
-          description: Whether result came from personal memory or document RAG
-        memory_type:
-          type: string
-          enum: [fact, preference, episodic]
-          description: Only set for memory sources
-        is_latest:
-          type: boolean
-          description: Only set for memory sources
-        document_id:
-          type: string
-          nullable: true
-          description: Only set for RAG sources
-        document_title:
-          type: string
-          nullable: true
-          description: Only set for RAG sources
-        created_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    SearchResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            results:
-              type: array
-              items:
-                $ref: "#/components/schemas/SearchResultItem"
-            search_mode:
-              type: string
-              example: "hybrid"
-            query_rewritten:
-              type: string
-              nullable: true
-              description: Expanded query if rewrite_query was enabled
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    # Profiles
-    ProfileFact:
-      type: object
-      properties:
-        content:
-          type: string
-          example: "资深前端工程师"
-        importance:
-          type: number
-          description: Static fact importance (0-1)
-          example: 0.95
-        relevance:
-          type: number
-          description: Dynamic fact relevance (0-1)
-          example: 0.90
-        source:
-          type: string
-          description: Source of the dynamic fact
-          example: "最近对话"
-        acquired_at:
-          type: string
-          format: date-time
-
-    ProfileResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            entity_id:
-              type: string
-              example: "user_123"
-            static:
-              type: array
-              description: Always-relevant stable facts (preferences, attributes)
-              items:
-                $ref: "#/components/schemas/ProfileFact"
-            dynamic:
-              type: array
-              description: Recent episodic context (current projects, recent topics)
-              items:
-                $ref: "#/components/schemas/ProfileFact"
-            memory_count:
-              type: integer
-              description: Total memories for this entity
-              example: 128
-            computed_at:
-              type: string
-              format: date-time
-            version:
-              type: integer
-              description: Monotonically increasing profile version
-              example: 12
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    ProfileConfig:
-      type: object
-      properties:
-        static_max_items:
-          type: integer
-          minimum: 1
-          maximum: 50
-          default: 10
-          example: 10
-        dynamic_max_items:
-          type: integer
-          minimum: 1
-          maximum: 20
-          default: 5
-          example: 5
-        dynamic_lookback_days:
-          type: integer
-          minimum: 1
-          maximum: 90
-          default: 7
-          example: 7
-        min_confidence_static:
-          type: number
-          minimum: 0
-          maximum: 1
-          default: 0.5
-          example: 0.5
-        min_confidence_dynamic:
-          type: number
-          minimum: 0
-          maximum: 1
-          default: 0.3
-          example: 0.3
-
-    # Upload
-    UploadResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            document_id:
-              type: string
-              example: "doc_xyz789"
-            pipeline_id:
-              type: string
-              example: "pipe_abc123"
-            pipeline_status:
-              type: string
-              enum: [queued]
-              example: "queued"
-            file_size_bytes:
-              type: integer
-              example: 204800
-            content_type:
-              type: string
-              example: "pdf"
-            title:
-              type: string
-              example: "架构设计文档.pdf"
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    # Pipeline
-    PipelineStatusResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            pipeline_id:
-              type: string
-              example: "pipe_abc123"
-            status:
-              type: string
-              enum: [queued, extracting, chunking, embedding, indexing, done, failed]
-              example: "embedding"
-            entity_id:
-              type: string
-              description: Entity that owns this pipeline job
-              example: "user_123"
-            document_id:
-              type: string
-              nullable: true
-              example: "doc_xyz789"
-            content_type:
-              type: string
-              example: "pdf"
-            chunk_count:
-              type: integer
-              example: 34
-            error_message:
-              type: string
-              nullable: true
-            retry_count:
-              type: integer
-              example: 0
-            created_at:
-              type: string
-              format: date-time
-            started_at:
-              type: string
-              format: date-time
-            completed_at:
-              type: string
-              format: date-time
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    FileListItem:
-      type: object
-      properties:
-        id:
-          type: string
-        title:
-          type: string
-        content_type:
-          type: string
-        file_size_bytes:
-          type: integer
-        page_count:
-          type: integer
-          nullable: true
-        chunk_count:
-          type: integer
-        status:
-          type: string
-          enum: [queued, processing, done, failed]
-        created_at:
-          type: string
-          format: date-time
-
-    FileListResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/FileListItem"
-            total:
-              type: integer
-            page:
-              type: integer
-            page_size:
-              type: integer
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    # Connectors
-    ConnectorConnectResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            provider:
-              type: string
-              enum: [google_drive, gmail, notion, github]
-            auth_url:
-              type: string
-              description: OAuth authorization URL for the user to visit
-            state_token:
-              type: string
-              description: CSRF state token
-            expires_in:
-              type: integer
-              description: Seconds until the auth URL expires
-              example: 600
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    ConnectorStatusResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            provider:
-              type: string
-            sync_status:
-              type: string
-              enum: [active, paused, revoked, error, inactive]
-            last_synced_at:
-              type: string
-              format: date-time
-              nullable: true
-            error_message:
-              type: string
-              nullable: true
-            connected_at:
-              type: string
-              format: date-time
-              nullable: true
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    # Health
-    HealthResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          example: "ok"
-        version:
-          type: string
-          example: "0.3.0"
-        checks:
-          type: object
-          properties:
-            database:
-              type: string
-              example: "ok"
-            neo4j:
-              type: string
-              example: "ok"
-            redis:
-              type: string
-              example: "ok"
-            minio:
-              type: string
-              example: "ok"
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-  # ---- Parameters ----
-
-  parameters:
-    EntityIdQuery:
-      name: entity_id
-      in: query
-      required: true
-      schema:
-        type: string
-      description: Entity scope
-
-# ============================================================
-# Paths
-# ============================================================
-
 paths:
-  # ---- Memories ----
-
-  /memories:
+  /v1/memories:
     post:
-      tags: [Memories]
-      summary: Add content to memory
-      description: |
-        Ingests text, conversation, URL, or file content into the memory graph.
-        Returns memory IDs immediately for lightweight content (text/conversation).
-        Returns a `pipeline_id` with HTTP 202 for file/batch content.
-      operationId: addMemory
+      tags:
+      - Memories
+      summary: Add Memory
+      description: Add content to the memory graph.
+      operationId: add_memory_v1_memories_post
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AddMemoryRequest"
+              $ref: '#/components/schemas/AddMemoryRequest'
+        required: true
       responses:
-        "200":
-          description: Content processed synchronously
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AddMemoryResponse"
-        "202":
-          description: Content queued for async processing
+                additionalProperties: true
+                type: object
+                title: Response Add Memory V1 Memories Post
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AddMemoryResponse"
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Missing or invalid API key
-        "413":
-          description: Content too large
-        "429":
-          description: Rate limited
-
-  /memories/{memory_id}:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/memories/{memory_id}:
     get:
-      tags: [Memories]
-      summary: Get a single memory
-      operationId: getMemory
+      tags:
+      - Memories
+      summary: Get Memory
+      description: Get a single memory by ID.
+      operationId: get_memory_v1_memories__memory_id__get
       parameters:
-        - name: memory_id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Memory ID
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
       responses:
-        "200":
-          description: Memory found
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MemoryResponse"
-        "404":
-          description: Memory not found
+                type: object
+                additionalProperties: true
+                title: Response Get Memory V1 Memories  Memory Id  Get
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/HTTPValidationError'
     delete:
-      tags: [Memories]
-      summary: Delete a memory (soft delete)
-      description: |
-        Soft delete — marks the memory as `is_latest=false`. Memory
-        remains in the database for temporal history queries. Hard
-        delete requires manual DB intervention (for GDPR etc.).
-
-        **Added in Post-v0.3.0.**
-      operationId: deleteMemory
+      tags:
+      - Memories
+      summary: Delete Memory
+      description: Delete a memory by ID (soft delete — mark as not latest).
+      operationId: delete_memory_v1_memories__memory_id__delete
       parameters:
-        - name: memory_id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
       responses:
-        "200":
-          description: Memory marked as deleted
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      memory_id:
-                        type: string
-                      is_latest:
-                        type: boolean
-                        example: false
-                      deleted_at:
-                        type: string
-                        format: date-time
-                  meta:
-                    $ref: "#/components/schemas/Meta"
-        "404":
-          description: Memory not found
+                additionalProperties: true
+                title: Response Delete Memory V1 Memories  Memory Id  Delete
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /memories/batch:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/memories/{memory_id}/validate:
     post:
-      tags: [Memories]
-      summary: Batch add memories (up to 50 per request)
-      description: |
-        Add multiple memories in a single request. Each memory is processed
-        independently by the pipeline; partial failures are returned in the
-        response with per-item status.
-
-        **Added in Post-v0.3.0.**
-      operationId: addMemoriesBatch
+      tags:
+      - Memories
+      summary: Validate Memory
+      description: Increment a memory's validation_count (signals higher trust).
+      operationId: validate_memory_v1_memories__memory_id__validate_post
+      parameters:
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Validate Memory V1 Memories  Memory Id  Validate Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/memories/batch:
+    post:
+      tags:
+      - Memories
+      summary: Add Memories Batch
+      description: Add multiple memories in a single request (up to 50).
+      operationId: add_memories_batch_v1_memories_batch_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchAddMemoryRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Add Memories Batch V1 Memories Batch Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/search:
+    post:
+      tags:
+      - Search
+      summary: Search
+      description: Hybrid search across memory (graph) and RAG (vector).
+      operationId: search_v1_search_post
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [memories]
-              properties:
-                memories:
-                  type: array
-                  minItems: 1
-                  maxItems: 50
-                  items:
-                    type: object
-                    required: [content, entity_id]
-                    properties:
-                      content:
-                        type: string
-                        description: Memory content
-                      entity_id:
-                        type: string
-                        description: Target entity ID
-                      memory_type:
-                        type: string
-                        enum: [fact, preference, episodic]
-                        description: Override LLM extraction
-                      confidence:
-                        type: number
-                        minimum: 0.0
-                        maximum: 1.0
-                      valid_until:
-                        type: string
-                        format: date-time
-                      metadata:
-                        type: object
-                        additionalProperties: true
+              $ref: '#/components/schemas/SearchRequest'
       responses:
-        "200":
-          description: Batch processed (may include partial failures)
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            memory_ids:
-                              type: array
-                              items: {type: string}
-                            status:
-                              type: string
-                              enum: [completed, failed]
-                            error:
-                              type: string
-                      total: {type: integer}
-                      successful: {type: integer}
-                      failed: {type: integer}
-                  meta:
-                    $ref: "#/components/schemas/Meta"
-        "422":
-          description: Validation error (e.g., > 50 memories)
+                additionalProperties: true
+                title: Response Search V1 Search Post
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /memories/graph:
+                $ref: '#/components/schemas/HTTPValidationError'
     get:
-      tags: [Memories]
-      summary: Get graph viewport for visualization
-      description: |
-        Return nodes and edges for the entity's graph, suitable for D3.js /
-        vis-network force-directed rendering.
-
-        **Added in Post-v0.3.0.**
-      operationId: getMemoryGraph
+      tags:
+      - Search
+      summary: Search Get
+      description: GET variant of search.
+      operationId: search_get_v1_search_get
       parameters:
-        - name: entity_id
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 100
-            maximum: 500
-      responses:
-        "200":
-          description: Graph data
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      nodes:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            id: {type: string}
-                            label: {type: string}
-                            memory_type:
-                              type: string
-                              enum: [fact, preference, episodic]
-                            is_latest: {type: boolean}
-                      edges:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            source: {type: string}
-                            target: {type: string}
-                            type:
-                              type: string
-                              enum: [UPDATES, EXTENDS, DERIVES_FROM]
-                  meta:
-                    $ref: "#/components/schemas/Meta"
-        "401":
-          description: Missing or invalid API key
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-
-  # ---- Search ----
-
-  /search:
-    post:
-      tags: [Search]
-      summary: Hybrid search across memory and RAG
-      description: |
-        Single query returns both personal memory results (graph)
-        and document RAG results (vector). Results are merged,
-        deduplicated, and sorted by relevance score.
-
-        **Modes:**
-        - `hybrid` (default): Both memory + RAG
-        - `memory`: Only personal memories from the knowledge graph
-        - `rag`: Only document chunks from vector similarity
-
-        **Enhancements:**
-        - `rerank=true`: Cross-encoder re-ranking for complex queries
-        - `rewrite_query=true`: LLM query expansion for short queries
-      operationId: search
-      requestBody:
+      - name: q
+        in: query
         required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SearchRequest"
-      responses:
-        "200":
-          description: Search results
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SearchResponse"
-        "429":
-          description: Rate limited
-
-    get:
-      tags: [Search]
-      summary: Quick search (GET)
-      description: Simplified GET variant for debugging and simple queries.
-      operationId: searchGet
-      parameters:
-        - name: q
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Search query
-        - name: entity_id
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Entity scope
-        - name: search_mode
-          in: query
-          schema:
-            type: string
-            enum: [hybrid, memory, rag]
-            default: hybrid
-        - name: top_k
-          in: query
-          schema:
-            type: integer
-            default: 10
-        - name: rewrite_query
-          in: query
-          schema:
-            type: boolean
-            default: false
-      responses:
-        "200":
-          description: Search results
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SearchResponse"
-
-  # ---- Profiles ----
-
-  /profiles/{entity_id}:
-    get:
-      tags: [Profiles]
-      summary: Get entity profile
-      description: |
-        Returns a two-tier profile for the entity:
-        - **static**: Always-relevant stable facts (preferences, attributes)
-        - **dynamic**: Recent episodic context (current projects, topics)
-
-        Target latency: ~50ms from Redis cache.
-        Profiles are updated on ingestion, not on read.
-      operationId: getProfile
-      parameters:
-        - name: entity_id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Entity ID
-      responses:
-        "200":
-          description: Entity profile
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProfileResponse"
-        "404":
-          description: Entity not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  # ---- Upload ----
-
-  /upload:
-    post:
-      tags: [Upload]
-      summary: Upload a file for processing
-      description: |
-        Upload files up to 50MB. Returns HTTP 202 immediately
-        with a `pipeline_id` for async status tracking.
-
-        Content type is auto-detected. Manually specify via
-        `content_type` if needed.
-      operationId: uploadFile
-      requestBody:
+        schema:
+          type: string
+          title: Q
+      - name: entity_id
+        in: query
         required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [file, entity_id]
-              properties:
-                file:
-                  type: string
-                  format: binary
-                  description: File to upload (max 50MB)
-                entity_id:
-                  type: string
-                  description: Entity this file belongs to
-                content_type:
-                  type: string
-                  description: Content type hint (auto-detected if omitted)
-                title:
-                  type: string
-                  description: Optional file title
-                metadata:
-                  type: string
-                  description: JSON-encoded custom metadata
+        schema:
+          type: string
+          title: Entity Id
+      - name: search_mode
+        in: query
+        required: false
+        schema:
+          type: string
+          default: hybrid
+          title: Search Mode
+      - name: top_k
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 30
+          title: Top K
+      - name: rewrite_query
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Rewrite Query
+      - name: min_confidence
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Min Confidence
+      - name: dynamic_truncation
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Dynamic Truncation
       responses:
-        "202":
-          description: File queued for processing
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UploadResponse"
-        "401":
-          description: Missing or invalid API key
-        "413":
-          description: File too large (max 50MB)
-
-  /pipelines/{pipeline_id}:
-    get:
-      tags: [Upload]
-      summary: Check pipeline processing status
-      operationId: getPipelineStatus
-      parameters:
-        - name: pipeline_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Pipeline status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PipelineStatusResponse"
-        "404":
-          description: Pipeline not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /files:
-    get:
-      tags: [Upload]
-      summary: List uploaded files
-      description: |
-        List uploaded files for an entity. Currently returns an empty
-        list (stub — full implementation pending).
-      operationId: listFiles
-      parameters:
-        - name: entity_id
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [queued, processing, done, failed]
-            default: done
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: page_size
-          in: query
-          schema:
-            type: integer
-            default: 20
-      responses:
-        "200":
-          description: File list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileListResponse"
-
-  # ---- Connectors ----
-
-  /connectors/{provider}/connect:
-    post:
-      tags: [Connectors]
-      summary: Initiate OAuth connection
-      description: |
-        Start OAuth flow for an external data source.
-
-        Supported providers: `google_drive`, `gmail`, `notion`, `github`
-      operationId: connectProvider
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [google_drive, gmail, notion, github]
-        - name: redirect_uri
-          in: query
-          schema:
-            type: string
-          description: Optional custom OAuth redirect URI
-      responses:
-        "200":
-          description: OAuth URL generated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConnectorConnectResponse"
-        "400":
-          description: Unknown provider
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /connectors/{provider}/callback:
-    get:
-      tags: [Connectors]
-      summary: OAuth callback
-      description: Exchange authorization code for access token.
-      operationId: oauthCallback
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: code
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: state
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Connection established
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      provider:
-                        type: string
-                      status:
-                        type: string
-                        example: "connected"
-                      entity_id:
-                        type: string
-                  meta:
-                    $ref: "#/components/schemas/Meta"
-        "400":
-          description: Invalid or expired state token
+                additionalProperties: true
+                title: Response Search Get V1 Search Get
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /connectors/{provider}/webhook:
-    post:
-      tags: [Connectors]
-      summary: Receive webhook from provider
-      description: |
-        Webhook endpoint for external providers to push change notifications.
-        Validates signature, deduplicates events, triggers incremental sync.
-      operationId: handleWebhook
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/profiles/{entity_id}:
+    get:
+      tags:
+      - Profiles
+      summary: Get Profile
+      description: Get entity profile (static + dynamic facts).
+      operationId: get_profile_v1_profiles__entity_id__get
       parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [google_drive, gmail, notion, github]
-      requestBody:
+      - name: entity_id
+        in: path
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
+        schema:
+          type: string
+          title: Entity Id
       responses:
-        "200":
-          description: Webhook accepted
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      status:
-                        type: string
-                        example: "accepted"
-                      sync_triggered:
-                        type: boolean
-                  meta:
-                    $ref: "#/components/schemas/Meta"
-        "401":
-          description: Invalid signature
-
-  /connectors/{provider}:
-    get:
-      tags: [Connectors]
-      summary: Get connector status
-      operationId: getConnectorStatus
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Connector status
+                additionalProperties: true
+                title: Response Get Profile V1 Profiles  Entity Id  Get
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ConnectorStatusResponse"
-
-    delete:
-      tags: [Connectors]
-      summary: Revoke OAuth connection
-      description: Revoke OAuth grant and delete stored credentials
-      operationId: revokeConnector
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/profiles/{entity_id}/memory.md:
+    get:
+      tags:
+      - Profiles
+      summary: Get Memory Markdown
+      description: Export entity memory as a MEMORY.md-style Markdown document.
+      operationId: get_memory_markdown_v1_profiles__entity_id__memory_md_get
       parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
       responses:
-        "204":
-          description: Connection revoked
-
-  # ---- System ----
-
-  /health:
-    get:
-      tags: [System]
-      summary: Health check
-      description: Returns status of all dependent services
-      operationId: healthCheck
-      security: []
-      responses:
-        "200":
-          description: All services healthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-
-  /metrics:
-    get:
-      tags: [System]
-      summary: Prometheus metrics
-      description: |
-        Returns metrics in Prometheus format.
-
-        Key metrics:
-        - `http_requests_total` (by method, endpoint, status)
-        - `http_request_duration_seconds` (histogram)
-        - `pipeline_jobs_total` (by status)
-        - `profile_cache_hit_ratio`
-      operationId: getMetrics
-      responses:
-        "200":
-          description: Prometheus metrics
+        '200':
+          description: Successful Response
           content:
             text/plain:
               schema:
                 type: string
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/profiles/{entity_id}/config:
+    get:
+      tags:
+      - Profiles
+      summary: Get Profile Config
+      description: Get per-entity profile configuration overrides.
+      operationId: get_profile_config_v1_profiles__entity_id__config_get
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Profile Config V1 Profiles  Entity Id  Config Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - Profiles
+      summary: Update Profile Config
+      description: 'Set per-entity profile configuration overrides.
+
+
+        Overrides are stored in Redis and take effect on the next profile
+
+        computation.  The cached profile is invalidated immediately so the
+
+        next GET returns a profile computed with the new config.'
+      operationId: update_profile_config_v1_profiles__entity_id__config_put
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileConfig'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Update Profile Config V1 Profiles  Entity Id  Config Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Profiles
+      summary: Delete Profile Config
+      description: Reset profile config to class defaults.
+      operationId: delete_profile_config_v1_profiles__entity_id__config_delete
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Delete Profile Config V1 Profiles  Entity Id  Config Delete
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/upload:
+    post:
+      tags:
+      - Upload
+      summary: Upload File
+      description: 'Upload a file (PDF, image, audio, video, code, etc.) for async
+
+        extraction, chunking, embedding, and indexing. Returns 202 Accepted
+
+        with a pipeline_id to poll via ``GET /v1/pipelines/{id}``.
+
+
+        File size limit: 50MB.'
+      operationId: upload_file_v1_upload_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_file_v1_upload_post'
+        required: true
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Upload File V1 Upload Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/files:
+    get:
+      tags:
+      - Upload
+      summary: List Files
+      description: List uploaded files for an entity.
+      operationId: list_files_v1_files_get
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: status_filter
+        in: query
+        required: false
+        schema:
+          type: string
+          default: done
+          title: Status Filter
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 1
+          title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+          title: Page Size
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Files V1 Files Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/pipelines/{pipeline_id}:
+    get:
+      tags:
+      - Pipelines
+      summary: Get Pipeline Status
+      description: 'Look up the current status of an async pipeline job (file upload,
+
+        large-document extraction, embedding indexing).
+
+
+        Status values: queued | extracting | chunking | embedding | indexing | done | failed.'
+      operationId: get_pipeline_status_v1_pipelines__pipeline_id__get
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Pipeline Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/conflicts/{conflict_id}/resolve:
+    post:
+      tags:
+      - Conflicts
+      summary: Resolve Conflict
+      description: Resolve a pending high-impact conflict.
+      operationId: resolve_conflict_v1_conflicts__conflict_id__resolve_post
+      parameters:
+      - name: conflict_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conflict Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveConflictRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Resolve Conflict V1 Conflicts  Conflict Id  Resolve Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sessions:
+    post:
+      tags:
+      - Sessions
+      summary: Create Session
+      description: Issue a short-lived JWT session token scoped to an entity/project.
+      operationId: create_session_v1_sessions_post
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Project Id
+      - name: session_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+      - name: ttl_hours
+        in: query
+        required: false
+        schema:
+          type: number
+          default: 24
+          title: Ttl Hours
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Create Session V1 Sessions Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sessions/verify:
+    get:
+      tags:
+      - Sessions
+      summary: Verify Session
+      description: Verify a session token and return its claims.
+      operationId: verify_session_v1_sessions_verify_get
+      parameters:
+      - name: X-Session-Token
+        in: header
+        required: true
+        schema:
+          type: string
+          title: X-Session-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Verify Session V1 Sessions Verify Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/connectors/{provider}/connect:
+    post:
+      tags:
+      - Connectors
+      summary: Connect Provider
+      description: 'Initiate OAuth connection to an external data source.
+
+
+        Providers: google_drive, gmail, notion, github.
+
+        Returns the OAuth authorization URL for the user to visit.'
+      operationId: connect_provider_v1_connectors__provider__connect_post
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      - name: redirect_uri
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Redirect Uri
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Connect Provider V1 Connectors  Provider  Connect Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/connectors/{provider}/callback:
+    get:
+      tags:
+      - Connectors
+      summary: Handle Oauth Callback
+      description: OAuth callback - exchange code for token and store credentials.
+      operationId: handle_oauth_callback_v1_connectors__provider__callback_get
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Code
+      - name: state
+        in: query
+        required: true
+        schema:
+          type: string
+          title: State
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Handle Oauth Callback V1 Connectors  Provider  Callback Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/connectors/{provider}/webhook:
+    post:
+      tags:
+      - Connectors
+      summary: Handle Webhook
+      description: 'Receive webhook notifications from external providers.
+
+
+        Validates signature, deduplicates, triggers incremental sync.'
+      operationId: handle_webhook_v1_connectors__provider__webhook_post
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Handle Webhook V1 Connectors  Provider  Webhook Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/connectors/{provider}:
+    get:
+      tags:
+      - Connectors
+      summary: Get Connector Status
+      description: Get connector sync status for the authenticated entity.
+      operationId: get_connector_status_v1_connectors__provider__get
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Connector Status V1 Connectors  Provider  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Connectors
+      summary: Revoke Connector
+      description: Revoke OAuth connection and delete stored credentials.
+      operationId: revoke_connector_v1_connectors__provider__delete
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/health:
+    get:
+      tags:
+      - System
+      summary: Health Check
+      description: 'Probe all backing services (Postgres, Neo4j, Redis, MinIO) and return
+
+        a structured health report. Does not require authentication.'
+      operationId: health_check_v1_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Check V1 Health Get
+  /v1/memories/graph:
+    get:
+      tags:
+      - System
+      summary: Memories Graph
+      description: 'Return graph data (nodes + edges) for visualization.
+
+
+        Suitable for D3.js / vis-network force-directed graph rendering.
+
+        Requires API key authentication.'
+      operationId: memories_graph_v1_memories_graph_get
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Memories Graph V1 Memories Graph Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/memories:
+    post:
+      tags:
+      - Memories
+      summary: Add Memory
+      description: Add content to the memory graph.
+      operationId: add_memory_v2_memories_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMemoryRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Add Memory V2 Memories Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/memories/{memory_id}:
+    get:
+      tags:
+      - Memories
+      summary: Get Memory
+      description: Get a single memory by ID.
+      operationId: get_memory_v2_memories__memory_id__get
+      parameters:
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Memory V2 Memories  Memory Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Memories
+      summary: Delete Memory
+      description: Delete a memory by ID (soft delete — mark as not latest).
+      operationId: delete_memory_v2_memories__memory_id__delete
+      parameters:
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Delete Memory V2 Memories  Memory Id  Delete
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/memories/{memory_id}/validate:
+    post:
+      tags:
+      - Memories
+      summary: Validate Memory
+      description: Increment a memory's validation_count (signals higher trust).
+      operationId: validate_memory_v2_memories__memory_id__validate_post
+      parameters:
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Validate Memory V2 Memories  Memory Id  Validate Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/memories/batch:
+    post:
+      tags:
+      - Memories
+      summary: Add Memories Batch
+      description: Add multiple memories in a single request (up to 50).
+      operationId: add_memories_batch_v2_memories_batch_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchAddMemoryRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Add Memories Batch V2 Memories Batch Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/search:
+    post:
+      tags:
+      - Search
+      summary: Search
+      description: Hybrid search across memory (graph) and RAG (vector).
+      operationId: search_v2_search_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Search V2 Search Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - Search
+      summary: Search Get
+      description: GET variant of search.
+      operationId: search_get_v2_search_get
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Q
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: search_mode
+        in: query
+        required: false
+        schema:
+          type: string
+          default: hybrid
+          title: Search Mode
+      - name: top_k
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 30
+          title: Top K
+      - name: rewrite_query
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Rewrite Query
+      - name: min_confidence
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Min Confidence
+      - name: dynamic_truncation
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Dynamic Truncation
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Search Get V2 Search Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/profiles/{entity_id}:
+    get:
+      tags:
+      - Profiles
+      summary: Get Profile
+      description: Get entity profile (static + dynamic facts).
+      operationId: get_profile_v2_profiles__entity_id__get
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Profile V2 Profiles  Entity Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/profiles/{entity_id}/memory.md:
+    get:
+      tags:
+      - Profiles
+      summary: Get Memory Markdown
+      description: Export entity memory as a MEMORY.md-style Markdown document.
+      operationId: get_memory_markdown_v2_profiles__entity_id__memory_md_get
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            text/plain:
+              schema:
+                type: string
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/profiles/{entity_id}/config:
+    get:
+      tags:
+      - Profiles
+      summary: Get Profile Config
+      description: Get per-entity profile configuration overrides.
+      operationId: get_profile_config_v2_profiles__entity_id__config_get
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Profile Config V2 Profiles  Entity Id  Config Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - Profiles
+      summary: Update Profile Config
+      description: 'Set per-entity profile configuration overrides.
+
+
+        Overrides are stored in Redis and take effect on the next profile
+
+        computation.  The cached profile is invalidated immediately so the
+
+        next GET returns a profile computed with the new config.'
+      operationId: update_profile_config_v2_profiles__entity_id__config_put
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileConfig'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Update Profile Config V2 Profiles  Entity Id  Config Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Profiles
+      summary: Delete Profile Config
+      description: Reset profile config to class defaults.
+      operationId: delete_profile_config_v2_profiles__entity_id__config_delete
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Delete Profile Config V2 Profiles  Entity Id  Config Delete
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/upload:
+    post:
+      tags:
+      - Upload
+      summary: Upload File
+      description: 'Upload a file (PDF, image, audio, video, code, etc.) for async
+
+        extraction, chunking, embedding, and indexing. Returns 202 Accepted
+
+        with a pipeline_id to poll via ``GET /v1/pipelines/{id}``.
+
+
+        File size limit: 50MB.'
+      operationId: upload_file_v2_upload_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_file_v2_upload_post'
+        required: true
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Upload File V2 Upload Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/files:
+    get:
+      tags:
+      - Upload
+      summary: List Files
+      description: List uploaded files for an entity.
+      operationId: list_files_v2_files_get
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: status_filter
+        in: query
+        required: false
+        schema:
+          type: string
+          default: done
+          title: Status Filter
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 1
+          title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+          title: Page Size
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Files V2 Files Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/pipelines/{pipeline_id}:
+    get:
+      tags:
+      - Pipelines
+      summary: Get Pipeline Status
+      description: 'Look up the current status of an async pipeline job (file upload,
+
+        large-document extraction, embedding indexing).
+
+
+        Status values: queued | extracting | chunking | embedding | indexing | done | failed.'
+      operationId: get_pipeline_status_v2_pipelines__pipeline_id__get
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Pipeline Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/connectors/{provider}/connect:
+    post:
+      tags:
+      - Connectors
+      summary: Connect Provider
+      description: 'Initiate OAuth connection to an external data source.
+
+
+        Providers: google_drive, gmail, notion, github.
+
+        Returns the OAuth authorization URL for the user to visit.'
+      operationId: connect_provider_v2_connectors__provider__connect_post
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      - name: redirect_uri
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Redirect Uri
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Connect Provider V2 Connectors  Provider  Connect Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/connectors/{provider}/callback:
+    get:
+      tags:
+      - Connectors
+      summary: Handle Oauth Callback
+      description: OAuth callback - exchange code for token and store credentials.
+      operationId: handle_oauth_callback_v2_connectors__provider__callback_get
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Code
+      - name: state
+        in: query
+        required: true
+        schema:
+          type: string
+          title: State
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Handle Oauth Callback V2 Connectors  Provider  Callback Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/connectors/{provider}/webhook:
+    post:
+      tags:
+      - Connectors
+      summary: Handle Webhook
+      description: 'Receive webhook notifications from external providers.
+
+
+        Validates signature, deduplicates, triggers incremental sync.'
+      operationId: handle_webhook_v2_connectors__provider__webhook_post
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Handle Webhook V2 Connectors  Provider  Webhook Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/connectors/{provider}:
+    get:
+      tags:
+      - Connectors
+      summary: Get Connector Status
+      description: Get connector sync status for the authenticated entity.
+      operationId: get_connector_status_v2_connectors__provider__get
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Connector Status V2 Connectors  Provider  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Connectors
+      summary: Revoke Connector
+      description: Revoke OAuth connection and delete stored credentials.
+      operationId: revoke_connector_v2_connectors__provider__delete
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Provider
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/health:
+    get:
+      tags:
+      - System
+      summary: Health Check
+      description: 'Probe all backing services (Postgres, Neo4j, Redis, MinIO) and return
+
+        a structured health report. Does not require authentication.'
+      operationId: health_check_v2_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Check V2 Health Get
+  /v2/memories/graph:
+    get:
+      tags:
+      - System
+      summary: Memories Graph
+      description: 'Return graph data (nodes + edges) for visualization.
+
+
+        Suitable for D3.js / vis-network force-directed graph rendering.
+
+        Requires API key authentication.'
+      operationId: memories_graph_v2_memories_graph_get
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Memories Graph V2 Memories Graph Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/sessions:
+    post:
+      tags:
+      - Sessions
+      summary: Create Session
+      description: Issue a short-lived JWT session token scoped to an entity/project.
+      operationId: create_session_v2_sessions_post
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Project Id
+      - name: session_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+      - name: ttl_hours
+        in: query
+        required: false
+        schema:
+          type: number
+          default: 24
+          title: Ttl Hours
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Create Session V2 Sessions Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/sessions/verify:
+    get:
+      tags:
+      - Sessions
+      summary: Verify Session
+      description: Verify a session token and return its claims.
+      operationId: verify_session_v2_sessions_verify_get
+      parameters:
+      - name: X-Session-Token
+        in: header
+        required: true
+        schema:
+          type: string
+          title: X-Session-Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Verify Session V2 Sessions Verify Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v2/conflicts/{conflict_id}/resolve:
+    post:
+      tags:
+      - Conflicts
+      summary: Resolve Conflict
+      description: Resolve a pending high-impact conflict.
+      operationId: resolve_conflict_v2_conflicts__conflict_id__resolve_post
+      parameters:
+      - name: conflict_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conflict Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveConflictRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Resolve Conflict V2 Conflicts  Conflict Id  Resolve Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    AddMemoryRequest:
+      properties:
+        content:
+          type: string
+          title: Content
+          examples:
+          - 用户偏好 TypeScript 和函数式编程风格
+        entity_id:
+          type: string
+          title: Entity Id
+          examples:
+          - user_123
+        content_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content Type
+          examples:
+          - text
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
+        async_mode:
+          type: boolean
+          title: Async Mode
+          default: false
+        idempotency_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Idempotency Key
+          description: Client-provided idempotency key. Same key + entity yields same result for 1 hour.
+        require_confirmation_for_high_impact:
+          type: boolean
+          title: Require Confirmation For High Impact
+          description: When true, high-impact contradictions are flagged for confirmation instead of auto-resolved.
+          default: false
+        memory_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Memory Type
+          description: Override the LLM-extracted memory type. Must be one of 'fact', 'preference', or
+            'episodic' if provided.
+        confidence:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Confidence
+          description: Override the LLM-assigned confidence score (0.0-1.0). Useful for human-verified
+            or operator-curated entries.
+        valid_until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Valid Until
+          description: When this memory should be considered expired (e.g. 'I have an exam tomorrow').
+            The ForgetEngine will mark it not_latest after this time. None means no expiry.
+      type: object
+      required:
+      - content
+      - entity_id
+      title: AddMemoryRequest
+    BatchAddMemoryRequest:
+      properties:
+        memories:
+          items:
+            $ref: '#/components/schemas/AddMemoryRequest'
+          type: array
+          maxItems: 50
+          title: Memories
+          description: Up to 50 memories to add in a single batch.
+      type: object
+      required:
+      - memories
+      title: BatchAddMemoryRequest
+    Body_upload_file_v1_upload_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+        entity_id:
+          type: string
+          title: Entity Id
+        content_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content Type
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      type: object
+      required:
+      - file
+      - entity_id
+      title: Body_upload_file_v1_upload_post
+    Body_upload_file_v2_upload_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+        entity_id:
+          type: string
+          title: Entity Id
+        content_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content Type
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      type: object
+      required:
+      - file
+      - entity_id
+      title: Body_upload_file_v2_upload_post
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    PipelineStatusResponse:
+      properties:
+        pipeline_id:
+          type: string
+          title: Pipeline Id
+        status:
+          type: string
+          title: Status
+        stage:
+          type: string
+          title: Stage
+          default: ''
+        document_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Document Id
+        content_type:
+          type: string
+          title: Content Type
+          default: ''
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        fact_extraction_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Fact Extraction Status
+        memory_count:
+          type: integer
+          title: Memory Count
+          default: 0
+      type: object
+      required:
+      - pipeline_id
+      - status
+      title: PipelineStatusResponse
+    ProfileConfig:
+      properties:
+        static_max_items:
+          type: integer
+          maximum: 50.0
+          minimum: 1.0
+          title: Static Max Items
+          default: 10
+        dynamic_max_items:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Dynamic Max Items
+          default: 5
+        dynamic_lookback_days:
+          type: integer
+          maximum: 90.0
+          minimum: 1.0
+          title: Dynamic Lookback Days
+          default: 7
+        min_confidence_static:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Min Confidence Static
+          default: 0.5
+        min_confidence_dynamic:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Min Confidence Dynamic
+          default: 0.3
+      type: object
+      title: ProfileConfig
+    ResolutionAction:
+      type: string
+      enum:
+      - keep_old
+      - keep_new
+      - keep_both
+      - manual
+      title: ResolutionAction
+    ResolveConflictRequest:
+      properties:
+        action:
+          $ref: '#/components/schemas/ResolutionAction'
+      type: object
+      required:
+      - action
+      title: ResolveConflictRequest
+    SearchRequest:
+      properties:
+        q:
+          type: string
+          title: Q
+          examples:
+          - 用户偏好什么编程语言？
+        entity_id:
+          type: string
+          title: Entity Id
+          examples:
+          - user_123
+        search_mode:
+          type: string
+          title: Search Mode
+          default: hybrid
+          examples:
+          - hybrid
+        top_k:
+          type: integer
+          maximum: 100.0
+          minimum: 1.0
+          title: Top K
+          default: 30
+        rerank:
+          type: boolean
+          title: Rerank
+          default: false
+        rewrite_query:
+          type: boolean
+          title: Rewrite Query
+          default: false
+        filters:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Filters
+        min_confidence:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Min Confidence
+        dynamic_truncation:
+          type: boolean
+          title: Dynamic Truncation
+          default: true
+      type: object
+      required:
+      - q
+      - entity_id
+      title: SearchRequest
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: em_<32-hex>
+      description: All endpoints require a Bearer API key in the `Authorization` header. Keys are prefixed
+        with `em_` and scoped to a single entity. The server stores only the SHA-256 hash.
+servers:
+- url: http://localhost:8000/v1
+  description: Local development
+- url: https://api.emerald.ai/v1
+  description: Production
+tags:
+- name: Memories
+  description: Ingest and retrieve memories
+- name: Search
+  description: Hybrid search across memory and RAG
+- name: Profiles
+  description: Entity profiles and context
+- name: Upload
+  description: File upload and pipeline tracking
+- name: Connectors
+  description: External data source integrations
+- name: System
+  description: Health and metrics
+x-emerald-meta:
+  content_types:
+    supported:
+    - text
+    - conversation
+    - url
+    - pdf
+    - image
+    - audio
+    - video
+    - code
+    - markdown
+security:
+- ApiKeyAuth: []

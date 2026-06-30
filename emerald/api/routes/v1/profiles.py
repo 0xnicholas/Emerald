@@ -8,7 +8,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from emerald.api.dependencies import api_key_auth, rate_limit
+from emerald.api.dependencies import (
+    api_key_auth,
+    authorize_entity,
+    rate_limit,
+)
 from emerald.api.schemas.profiles import ProfileConfig as ProfileConfigSchema
 from emerald.core.profile import ProfileConfig
 from emerald.core.summary import MemorySummaryBuilder
@@ -23,11 +27,8 @@ def _get_engine(request: Request):
     return engine
 
 
-def _authorize_entity(request: Request, entity_id: str) -> None:
-    """Ensure the API key is scoped to the target entity."""
-    allowed = getattr(request.state, "entity_id", None)
-    if allowed and allowed != entity_id:
-        raise HTTPException(status_code=403, detail="Entity not authorized for this API key")
+# Local alias (N5 refactor: helper centralised in api.dependencies).
+_authorize_entity = authorize_entity
 
 
 @router.get("/profiles/{entity_id}", dependencies=[Depends(api_key_auth), Depends(rate_limit)])

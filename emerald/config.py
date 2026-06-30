@@ -8,6 +8,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -89,13 +90,42 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
 
     # ---- CORS ----
-    cors_allowed_origins: str = "*"
+    # P2.2: default is empty (most restrictive) so production is safe by
+    # accident.  A bare ``*`` is rejected in production via the validator
+    # below.  In development, ``*`` is permitted for local browser testing.
+    cors_allowed_origins: str = ""
+
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_production(self) -> "Settings":
+        """Refuse to start with ``CORS_ALLOWED_ORIGINS=*`` in production.
+
+        A wildcard origin allows ANY site in the user's browser to call
+        the API on their behalf, which combined with a leaked API key is
+        a full account takeover vector.  Production must list specific
+        origins; development gets a free pass for local testing.
+        """
+        if (
+            self.emerald_env == Environment.production
+            and self.cors_allowed_origins.strip() == "*"
+        ):
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS='*' is not allowed in production. "
+                "List specific origins (comma-separated) or leave empty "
+                "to disable browser CORS entirely."
+            )
+        return self
 
     # ---- Rate Limiting ----
     rate_limit_memories: int = 60
     rate_limit_search: int = 120
     rate_limit_profiles: int = 300
     rate_limit_upload: int = 10
+
+    # ---- OAuth ----
+    # I8: TTL for OAuth state tokens. Should be at least the typical
+    # round-trip time for a human to complete the provider's consent
+    # screen.  10 minutes is conservative; reduce for tighter security.
+    oauth_state_ttl_seconds: int = 600
 
     # ---- OpenTelemetry ----
     otel_exporter_otlp_endpoint: str = ""

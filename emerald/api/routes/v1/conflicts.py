@@ -8,7 +8,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from emerald.api.dependencies import api_key_auth, require_write_permission
+from emerald.api.dependencies import (
+    api_key_auth,
+    authorize_entity,
+    require_write_permission,
+)
 from emerald.core.conflict import ConflictEngine, ResolutionAction
 
 router = APIRouter(tags=["Conflicts"])
@@ -28,10 +32,8 @@ def _get_engine(request: Request):
     return engine
 
 
-def _authorize_entity(request: Request, entity_id: str) -> None:
-    allowed = getattr(request.state, "entity_id", None)
-    if allowed and allowed != entity_id:
-        raise HTTPException(status_code=403, detail="Entity not authorized for this API key")
+# Local alias (N5 refactor: helper centralised in api.dependencies).
+_authorize_entity = authorize_entity
 
 
 @router.post(

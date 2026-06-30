@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import HTTPException, Request
 
@@ -38,13 +38,31 @@ async def api_key_auth(request: Request) -> str:
     if not record:
         raise HTTPException(401, "Invalid API key")
 
-    if record.expires_at and record.expires_at < datetime.now(timezone.utc):
+    if record.expires_at and record.expires_at < datetime.now(UTC):
         raise HTTPException(401, "API key expired")
 
     request.state.api_key_id = str(record.id)
     request.state.entity_id = str(record.entity_id)
     request.state.permissions = record.permissions or []
     return "authenticated"
+
+
+def authorize_entity(request: Request, entity_id: str) -> None:
+    """Ensure the API key is scoped to the target entity.
+
+    Centralized helper (N5) so memories / search / profiles / conflicts /
+    upload / batch routes all enforce the same per-entity isolation check.
+    Raises 403 if the authenticated entity is different from ``entity_id``.
+
+    If ``request.state.entity_id`` is unset (e.g. in test fixtures that
+    bypass auth), the check is a no-op so tests can use generic clients.
+    """
+    allowed = getattr(request.state, "entity_id", None)
+    if allowed and allowed != entity_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Entity not authorized for this API key",
+        )
 
 
 async def require_write_permission(request: Request) -> str:
