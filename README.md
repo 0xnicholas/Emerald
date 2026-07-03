@@ -312,7 +312,7 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**当前 HEAD**：v0.3.0 已发布（2026-06-01），后续 M1 + M2 核心工作项已完成但**尚未发布新版本**（`__version__` 仍为 `0.3.0`，下一个发布将是 v0.4.0）。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
+**当前版本：v0.4.0**（2026-07-03）。本版本合并了 v0.3.0 之后的所有 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）工作项。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 **测试规模**：657 测试 pass / 1 skip / 0 fail。最新一次 M2 安全加固在 601 → 657 之间增加 56 个测试（typed 异常、OpenAPI drift、v2 route parity、OAuth state、CORS 校验、SDK override、chunk_task 守卫）。
 
@@ -334,7 +334,7 @@ docker compose up -d mcp
 | 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + OpenTelemetry 手动 span 集成 |
 | Docker E2E | ✅ 完整 | `docker-compose.test.yml` + `.env.test`，全栈集成测试通过 |
 
-### Post-v0.3.0 已完成工作（待 v0.4.0 发布）
+### v0.4.0 增量（v0.3.0 → v0.4.0）
 
 **M1 — 部署与可观测性加固**
 - ✅ Dockerfile production stage 独立 `pip install`，镜像 < 1.2GB
@@ -367,7 +367,6 @@ docker compose up -d mcp
 
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **v0.4.0**：版本发布（合并 M1+M2 全部工作项）
 - **M3 (v0.6.0)**：NER 实体抽取、多跳图谱推理、LangChain.js / Vercel AI / Mastra 集成
 - **M4 (v0.7.0)**：高级遗忘、负载测试验证、Staging 压测
 - **M5 (v0.8.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）

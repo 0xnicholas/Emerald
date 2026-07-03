@@ -445,7 +445,7 @@ Emerald 同时提供 MCP（Model Context Protocol）服务器，供 Claude Deskt
 
 ## Post-v0.3.0 SDK 增强（2026-06-02 之后）
 
-> 本节记录 v0.3.0 之后影响 Python SDK 的重大变更（M1 + M2 全部完成，待 v0.4.0 发布）。详见 [`docs/roadmap.md`](../roadmap.md) 与 [`CHANGELOG.md`](../../CHANGELOG.md) Unreleased 段。
+> 本节记录 v0.3.0 → v0.4.0 期间影响 Python SDK 的重大变更（M1 + M2 全部完成）。详见 [`docs/roadmap.md`](../roadmap.md) 与 [`CHANGELOG.md`](../../CHANGELOG.md) [0.4.0] 段。
 
 ### SDK 方法覆盖现状
 

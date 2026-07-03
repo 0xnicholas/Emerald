@@ -2,16 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — 2026-06-30
+## [0.4.0] — 2026-07-03
+
+> 合并 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）全部工作项，发布 v0.4.0。M1 细节见 `git log --grep=feat\(m1\)`；M2 细节见 `git log --grep=feat\(m2\)`。本节仅列摘要。
 
 ### Security
 
-- **P0: Cross-entity upload authorization** — `POST /v1/upload` and `POST /v2/upload` now enforce entity authorization via `_authorize_entity(request, entity_id)` before any I/O. Previously, any authenticated key with `write` permission could upload files into any entity's namespace, breaking per-entity isolation. The check runs *before* the MinIO PUT, so a malicious request never produces a stored object.
+- **P0: Cross-entity upload authorization** — `POST /v1/upload` now enforces entity authorization via `_authorize_entity(request, entity_id)` before any I/O. Previously, any authenticated key with `write` permission could upload files into any entity's namespace, breaking per-entity isolation. The check runs *before* the MinIO PUT, so a malicious request never produces a stored object.
 
 ### Added
 
 - **P1.2a: `add()` override parameters** — `engine.add()`, the REST `/v1/memories` route, and the SDK `EmeraldClient.add()` now accept direct `memory_type`, `confidence`, and `valid_until` arguments. Precedence: explicit arg > `metadata` dict > chunker default. Lets an onboarding form that has just captured a structured preference skip the LLM classification step.
-- **P1.2b: `pipeline_status` fact-extraction metadata** — `GET /v1/pipelines/{id}` (and `/v2`) now returns `fact_extraction_status` (`success` / `failed` / `skipped`) and `memory_count` so clients can render "extracted N facts" progress. Pipeline job model + Alembic migration `007_add_pipeline_fact_extraction_status` add the columns. Tasks write the column only in `index_task` (the previous duplicate write in `chunk_task` was dead code that index_task overwrote unconditionally).
+- **P1.2b: `pipeline_status` fact-extraction metadata** — `GET /v1/pipelines/{id}` now returns `fact_extraction_status` (`success` / `failed` / `skipped`) and `memory_count` so clients can render "extracted N facts" progress. Pipeline job model + Alembic migration `007_add_pipeline_fact_extraction_status` add the columns. Tasks write the column only in `index_task` (the previous duplicate write in `chunk_task` was dead code that index_task overwrote unconditionally).
 - **P1.2c: SDK typed exceptions** — New `emerald.sdk.exceptions` module exposes `EmeraldAuthError` (401/403), `EmeraldNotFoundError` (404), `EmeraldValidationError` (422, carries `field_errors`), `EmeraldRateLimitError` (429, carries `retry_after`), `EmeraldServerError` (5xx), `EmeraldNetworkError` (connection/DNS failures). All inherit from `EmeraldError`. The old `httpx.HTTPStatusError` is no longer surfaced to callers.
 - **P1.2d: SDK async context manager** — `EmeraldClient` now implements `__aenter__` / `__aexit__`. Use `async with EmeraldClient(...) as client:` and the underlying httpx connection is closed automatically.
 - **P2.1: OAuth state in Redis with TTL** — `/v1/connectors/{provider}/connect` and `/callback` now persist OAuth state tokens in Redis (`emerald:oauth_state:{token}`) with a 10-minute TTL via the new `OAuthStateStore`. Replaces the in-process dict that broke multi-worker deployments. `consume()` uses Redis `GETDEL` for atomic read+delete; older redis-py clients fall back to non-atomic get+delete. TTL is configurable via `OAUTH_STATE_TTL_SECONDS` env var. When Redis is unavailable, the route fails with **503** (loud failure) rather than silently accepting tokens that won't work across workers.
@@ -20,8 +22,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **OpenAPI path / endpoint gaps** — the published spec was missing 6 v1 endpoints (`POST /memories/{id}/validate`, `GET /profiles/{id}/memory.md`, `GET/PUT/DELETE /profiles/{id}/config`, `POST /sessions`, `GET /sessions/verify`, `POST /conflicts/{id}/resolve`) and all 4 v2 paths (`/v2/sessions/*`, `/v2/conflicts/*`). Auto-generation eliminates this class of bug permanently.
-- **v2 route parity** — v2 was previously a strict subset of v1; now registers the same 17 routes as v1 (sessions + conflicts included). `tests/api/test_v2_route_parity.py` prevents future drift.
+- **OpenAPI path / endpoint gaps** — the published spec was missing 6 v1 endpoints (`POST /memories/{id}/validate`, `GET /profiles/{id}/memory.md`, `GET/PUT/DELETE /profiles/{id}/config`, `POST /sessions`, `GET /sessions/verify`, `POST /conflicts/{id}/resolve`). Auto-generation eliminates this class of bug permanently.
+- **v2 routes removed** — v2 was a strict subset of v1 throughout v0.3.x; for v0.4.0 we drop the `/v2` prefix entirely. All improvements (error codes, pagination, rate-limit headers, OpenAPI auto-gen) land directly on `/v1/*`. `tests/api/test_v2_route_parity.py` is replaced by `tests/api/test_route_completeness.py`, which fails if any v1 route is missing or undocumented.
 - **Chunked `fact_extraction_status` write removed** — `chunk_task` used to write `fact_extraction_status` to the DB; `index_task`'s `finally` block overwrote that value unconditionally, making the chunk write dead. The write is removed; `index_task` is now the single source of truth. `tests/pipeline/test_chunk_task_no_fact_status.py` pins the contract.
 - **`chunk_count` field removed from `PipelineStatus`** — the field was declared in the schema and SDK but always returned `0` (the `pipeline_jobs` table doesn't track it), misleading clients. Removed from the Pydantic schema, the SDK dataclass, the route, and the docs.
 
@@ -54,50 +56,11 @@ All notable changes to this project will be documented in this file.
 - **`CORS_ALLOWED_ORIGINS=*` rejected in production** — existing prod deployments using a wildcard must set an explicit list before upgrading. The new validator fails the startup if `EMERALD_ENV=production` and the wildcard is present.
 - **SDK exception types** — existing callers catching `httpx.HTTPStatusError` must catch `EmeraldError` (or a specific subclass) instead. The broad base catches everything.
 - **OAuth state tokens** — no client action required; the in-memory dict is gone. Existing in-flight OAuth flows at the moment of upgrade will see their state tokens discarded (they'll need to restart the flow).
+- **v2 API removed** — clients pointing at `/v2/*` must switch to the corresponding `/v1/*` path. The v1 path was always a strict superset, so the only change is dropping the `v2` prefix from URLs. The published `docs/api/openapi.yaml` is now single-version.
 
-## [0.3.0] — 2026-06-01
+### Earlier in this release (2026-06-02 to 2026-06-22)
 
-### Added
-
-#### M2 — Full Content Type Support (Phase 3)
-- Default extractor/chunker registry factories (`get_default_registry()`) for out-of-the-box content processing
-- Comprehensive unit tests for PDF, Image, Audio, and Video extractors with graceful dependency-missing fallback
-- URL and Code extractor test coverage expanded to 95%+
-- Default registry integration tests verifying all 7 extractors and 5 chunkers are wired correctly
-
-#### M3 — Graph Intelligence (Phase 4+5+7)
-- `GraphStore.create_relationship()` for writing EXTENDS and DERIVES_FROM edges to the graph
-- `RelationshipEngine` now persists EXTENDS and DERIVES_FROM relationships (was logging-only)
-- DERIVES_FROM inference heuristic: new memories combining bigrams from 2+ existing memories trigger derivation
-- 16 comprehensive tests for `RelationshipEngine` covering UPDATES atomicity, EXTENDS, DERIVES_FROM, and classification
-- 11 tests for `ProfileManager` covering cache hit/miss, compute, static/dynamic facts, and latency (< 100ms)
-- 10 tests for `ForgetEngine` covering time-based expiry, noise filtering, episodic decay, and strategy idempotency
-
-#### M5 — API Completeness + SDK
-- `DELETE /v1/memories/{id}` endpoint (soft delete — marks as `is_latest=False`)
-- API version bumped to `0.3.0` across all surfaces
-- SDK tests (25 passing) covering add/search/profile/upload/health/pipeline_status/get_memory
-
-#### Phase 11 — Benchmarks
-- Standalone benchmark runner (`scripts/run_benchmarks.py`) with quantitative metrics:
-  - Temporal Fact Tracking (LongMemEval-style): accuracy
-  - Relationship Classification: accuracy
-  - Search Recall (LoCoMo-style): recall
-  - MRR (Mean Reciprocal Rank)
-  - Profile Computation Latency: cold/warm P50 and P99
-  - Conversation Recall (ConvoMem-style): accuracy
-
-#### Phase 12 — Observability
-- Prometheus metrics endpoint at `/v1/metrics` via `prometheus-fastapi-instrumentator`
-
-### Fixed
-- `PipelineOrchestrator` and `MemoryEngine` now use default registries when none provided (previously created empty registries, causing runtime failures)
-- `pipeline/tasks.py` now uses default registries for extract and chunk Celery tasks
-- All 484 unit tests now pass (previously 2 tests failed due to missing `OPENAI_API_KEY` in CI)
-
-## [Unreleased] — Post-v0.3.0 (2026-06-02 to 2026-06-22)
-
-> **状态：** ~36 commits after v0.3.0 release。未作为 v0.4.0 发布（需要 M1 实施完成后升版本号）。详见 [`docs/roadmap.md`](docs/roadmap.md) 与 [`docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`](docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md)。
+> 这批 M3 图谱智能增强 + 基准升级 + 生产基础设施工作在 v0.3.0 之后、M2 之前完成，与上面 M1 / M2 同属于 v0.4.0 的内容。
 
 ### Added
 
@@ -140,7 +103,7 @@ All notable changes to this project will be documented in this file.
 #### 文档
 - `docs/comparison-supermemory.md` v2 重写（495 行）：对比矩阵完整反转——三项 P0 致命差距中两项已修复
 - `docs/roadmap.md`：post-v0.3.0 战略路线图（4 主题、5 里程碑 v0.4-v0.8、依赖驱动、不锁死时间）
-- `docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`：M1 (v0.4.0) 实施计划（2228 行，TDD bite-sized 任务）
+- `docs/superpowers/plans/2026-06-21-m1-v0.4.0-implementation.md`：M1 (v0.4.0) 实施计划（2228 行，TDD bite-sized 任务）— M1 完成后已归档为 `ARCHIVED-2026-06-21-m1-v0.4.0-implementation.md`
 - 删除本地 `_references/supermemory-main` 仓库引用
 - **2026-06-22：** 所有文档同步更新，生产就绪评估反映最新状态；过时 superpowers plans/specs 归档（10 份）
 
@@ -161,7 +124,7 @@ All notable changes to this project will be documented in this file.
 - 所有 chunker `chunk()` 方法统一改为 `async def`
 
 ### Test Coverage
-- 测试函数定义数：537 → **621**（+84，+16%）
+- v0.3.0 → v0.4.0 测试数：484 → **657**（+173，+36%）
 - 重点新增：
   - `tests/pipeline/test_fact_extractor.py`（11 tests，DeepSeekFactExtractor）
   - `tests/pipeline/test_semantic_text_chunker.py`（6 tests）
@@ -171,7 +134,49 @@ All notable changes to this project will be documented in this file.
   - `tests/unit/test_embedder.py`（fastembed）
   - `tests/core/test_search.py`（+193 行图谱遍历测试；+5 重排序测试）
   - `tests/core/test_profile_manager.py`（+8 测试：profile config CRUD + 效果验证）
+  - M2 新增 9 个测试文件 / 56 测试（typed 异常、OpenAPI drift、OAuth state、CORS 校验、SDK override、chunk_task 守卫、v2 route parity → route completeness）
 - 5 个测试失败 → 全部修复
+
+## [0.3.0] — 2026-06-01
+
+### Added
+
+#### M2 — Full Content Type Support (Phase 3)
+- Default extractor/chunker registry factories (`get_default_registry()`) for out-of-the-box content processing
+- Comprehensive unit tests for PDF, Image, Audio, and Video extractors with graceful dependency-missing fallback
+- URL and Code extractor test coverage expanded to 95%+
+- Default registry integration tests verifying all 7 extractors and 5 chunkers are wired correctly
+
+#### M3 — Graph Intelligence (Phase 4+5+7)
+- `GraphStore.create_relationship()` for writing EXTENDS and DERIVES_FROM edges to the graph
+- `RelationshipEngine` now persists EXTENDS and DERIVES_FROM relationships (was logging-only)
+- DERIVES_FROM inference heuristic: new memories combining bigrams from 2+ existing memories trigger derivation
+- 16 comprehensive tests for `RelationshipEngine` covering UPDATES atomicity, EXTENDS, DERIVES_FROM, and classification
+- 11 tests for `ProfileManager` covering cache hit/miss, compute, static/dynamic facts, and latency (< 100ms)
+- 10 tests for `ForgetEngine` covering time-based expiry, noise filtering, episodic decay, and strategy idempotency
+
+#### M5 — API Completeness + SDK
+- `DELETE /v1/memories/{id}` endpoint (soft delete — marks as `is_latest=False`)
+- API version bumped to `0.3.0` across all surfaces
+- SDK tests (25 passing) covering add/search/profile/upload/health/pipeline_status/get_memory
+
+#### Phase 11 — Benchmarks
+- Standalone benchmark runner (`scripts/run_benchmarks.py`) with quantitative metrics:
+  - Temporal Fact Tracking (LongMemEval-style): accuracy
+  - Relationship Classification: accuracy
+  - Search Recall (LoCoMo-style): recall
+  - MRR (Mean Reciprocal Rank)
+  - Profile Computation Latency: cold/warm P50 and P99
+  - Conversation Recall (ConvoMem-style): accuracy
+
+#### Phase 12 — Observability
+- Prometheus metrics endpoint at `/v1/metrics` via `prometheus-fastapi-instrumentator`
+
+### Fixed
+- `PipelineOrchestrator` and `MemoryEngine` now use default registries when none provided (previously created empty registries, causing runtime failures)
+- `pipeline/tasks.py` now uses default registries for extract and chunk Celery tasks
+- All 484 unit tests now pass (previously 2 tests failed due to missing `OPENAI_API_KEY` in CI)
+
 
 ## [0.2.0] — 2026-05-27
 

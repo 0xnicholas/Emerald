@@ -316,29 +316,6 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v1_connectors.router, prefix="/v1")
     app.include_router(v1_system.router, prefix="/v1")
 
-    # Register V2 routes (v0.5.0: substantive improvements over V1)
-    from emerald.api.routes.v2 import (
-        conflicts as v2_conflicts,
-        connectors as v2_connectors,
-        memories as v2_memories,
-        pipelines as v2_pipelines,
-        profiles as v2_profiles,
-        search as v2_search,
-        sessions as v2_sessions,
-        system as v2_system,
-        upload as v2_upload,
-    )
-
-    app.include_router(v2_memories.router, prefix="/v2")
-    app.include_router(v2_search.router, prefix="/v2")
-    app.include_router(v2_profiles.router, prefix="/v2")
-    app.include_router(v2_upload.router, prefix="/v2")
-    app.include_router(v2_pipelines.router, prefix="/v2")
-    app.include_router(v2_connectors.router, prefix="/v2")
-    app.include_router(v2_system.router, prefix="/v2")
-    app.include_router(v2_sessions.router, prefix="/v2")
-    app.include_router(v2_conflicts.router, prefix="/v2")
-
     return app
 
 

@@ -1,6 +1,6 @@
 {
   "name": "@emerald/sdk",
-  "version": "0.5.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for Emerald — AI Agent memory and context infrastructure",
   "license": "MIT",
   "author": "Emerald Contributors",

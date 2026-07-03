@@ -1,6 +1,6 @@
 # Emerald 生产级可用性评估报告
 
-> **更新日期：2026-07-03**（基于 v0.5.0-dev，M1+M2 核心工作项完成后的重新评估）
+> **更新日期：2026-07-03**（基于 v0.4.0 release，M1+M2 核心工作项完成后的重新评估）
 >
 > **总体结论：Emerald 已具备受控环境生产部署的基础条件。** M1（Dockerfile/K8s/OTEL/基准/CI）和 M2（v2 API/错误码体系/分页/限流头/安全审计/PII 脱敏）全部完成。剩余差距：TypeScript SDK（M2 最后一项）、负载压测验证（D2-D3）、NER/多跳推理（M3）。
 >
@@ -135,9 +135,9 @@
 | 文件大小限制 | 🟢 | upload 50MB 限制 |
 | 输入校验 | 🟢 | Pydantic 模型校验，FastAPI 自动处理 |
 | Webhook 签名验证 | 🟢 | GitHub HMAC-SHA256 验证 |
-| 依赖安全扫描 | 🟢 | v0.5.0: `.github/workflows/security.yml` — pip-audit（每周+PR）、Gitleaks 密钥检测、CodeQL 静态分析；`.gitleaks.toml` 含项目定制规则 |
+| 依赖安全扫描 | 🟢 | v0.4.0: `.github/workflows/security.yml` — pip-audit（每周+PR）、Gitleaks 密钥检测、CodeQL 静态分析；`.gitleaks.toml` 含项目定制规则 |
 | SQL 注入防护 | 🟢 | SQLAlchemy 参数化查询 |
-| PII 日志脱敏 | 🟢 | v0.5.0: `emerald/core/sanitizer.py` — structlog processor，生产环境自动启用；覆盖 email/电话/APIkey/IP/信用卡/SSN/JWT + 敏感字段名红action |
+| PII 日志脱敏 | 🟢 | v0.4.0: `emerald/core/sanitizer.py` — structlog processor，生产环境自动启用；覆盖 email/电话/APIkey/IP/信用卡/SSN/JWT + 敏感字段名红action |
 | 安全策略文档 | 🟢 | `SECURITY.md` — 支持版本、漏洞报告流程、信任边界图、12 项安全措施清单 |
 
 ---
@@ -171,7 +171,7 @@
 | **MCP Server** | 🟢 | stdio + SSE 双模式，3 个工具 |
 | **Python SDK** | 🟢 | async client，4 核心方法 + 辅助方法 |
 | **文档列表** | 🟢 | `GET /v1/files` 已实现 Document 分页查询（7 个集成测试覆盖） |
-| **幂等写入** | 🟡 | Redis `idempotency_key` (1h TTL) 已实现；`customId` 在 M2 (v0.5.0) 计划 |
+| **幂等写入** | 🟡 | Redis `idempotency_key` (1h TTL) 已实现；`customId` 仍在路线图（v0.6+ 计划） |
 | **metadata 过滤** | 🟢 | MongoDB 风格 `$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne` 完整支持 |
 
 ---
@@ -186,7 +186,7 @@
 | 集成指南 | 🟢 | SDK 用法、REST API、Pandaria 集成、MCP 配置 |
 | API 文档 | 🟡 | FastAPI 自动生成 `/docs`（仅 dev 环境），无独立 API 参考站点 |
 | 变更日志 | 🟡 | `CHANGELOG.md` 存在但未查看内容 |
-| 版本策略 | 🟡 | v1/v2 双路由结构已就位（当前互为别名）；v2 API 实质改进在 M2 (v0.5.0) 计划 |
+| 版本策略 | 🟢 | v1 API 为统一版本；所有改进（错误码、分页、限流头）在 v1 中直接提供，无需 URL 版本号变更 |
 | 社区/支持 | 🔴 | 无 Discord/论坛/Slack，issue 响应机制未建立 |
 
 ---
@@ -226,7 +226,7 @@
 | 15 | **Dockerfile 非最优** | ⏳ M1 计划 | `requirements-prod.txt` 已拆分（`0f29876`）；production stage 独立 pip install 是 M1 (v0.4.0) A1 计划 |
 | 16 | **画像冷缓存计算瓶颈** | 🟡 部分修复 | `0f29876`：多因子重要性评分 (confidence 35% + recency 25% + type 20% + rels 20%)；冷缓存仍全量重算，增量更新是 M3+ 计划 |
 | 17 | **keyword search 性能** | ⏳ 未处理 | Neo4j 全文索引待评估；如 Staging 负载测试显示瓶颈则在 M4 处理 |
-| 18 | **版本演进策略** | ✅ 已修复 | v1/v2 双路由结构在 v0.3.0 已就位（`emerald/api/routes/v1/` + `v2/`）；v1/v2 现在是别名，实质改进在 v2 API 中（分页、限流、customId）在 M2 (v0.5.0) 计划 |
+| 18 | **版本演进策略** | ✅ 已修复 | API 版本统一为 v1；所有改进（错误码、分页、限流头、PII 脱敏）在 v1 中直接提供 |
 
 ### 结论
 
@@ -256,14 +256,14 @@
 
 ⚠️ **不建议立即部署**，需完成路线图 M1-M2：
 - M1 (v0.4.0)：Dockerfile 优化、/v1/files 实现、OpenTelemetry 自动 instrumentation、真实 LLM 基准跑分、CI 自动化
-- M2 (v0.5.0)：v2 API 实质改进（分页、限流、customId）、TS SDK
+- M2 (v0.4.0)：v2 API 下线（错误码 / 分页 / 限流头 / OpenAPI 自动化合并到 v1）、TS SDK v1、安全加固
 - 路线图 [`docs/roadmap.md`](roadmap.md) §10 详述 v1.0 提升的 7 个硬性条件
 
 ---
 
 ## 与 Supermemory 的生产级差距
 
-| 维度 | Emerald v0.3.0 + 33 commits | Supermemory | 差距状态 |
+| 维度 | Emerald v0.4.0 | Supermemory | 差距状态 |
 |---|---|---|---|
 | **基准验证** | 🟡 脚本就位（6 维度 + JSON 报告） | ✅ 三项 #1 | 待真实 LLM 跑分 |
 | **负载验证** | ❌ 未验证 | ✅ 10k 文档/小时 | M4 计划 |
@@ -273,7 +273,7 @@
 | **metadata 过滤** | ✅ MongoDB 风格（$and/$or/$gte/$lte） | ✅ 同等 | 已对齐 |
 | **分布式部署** | ✅ K8s 模板完整 | ✅ 全球分布式 | 架构对齐 |
 | **SLA 保障** | ❌ 未定义 | ✅ SaaS SLA | M5 路线 |
-| **版本演进** | 🟡 v1/v2 别名（v2 是 v1 镜像） | ✅ v3→v4 演进 | M2 计划 |
+| **版本演进** | 🟢 v1 统一版本（改进在 v1 直接提供） | ✅ v3→v4 演进 | 已完成 |
 | **消费者产品** | ❌ 无 | ✅ App + 插件 | 不在路线图 |
 
 **差距本质**：Emerald 的「骨架」+「核心能力」已对齐 Supermemory。所有 Stub 已清零。剩余差距集中在「生态成熟度」（真实生产负载验证、版本演进实质化）和「产品形态」（无消费者产品，这是定位选择）。详见 [`docs/comparison-supermemory.md`](comparison-supermemory.md) v2。
@@ -291,7 +291,7 @@
 | 性能与扩展性 | 🟢 | 所有能力已 LLM 化或三级降级（查询改写、关系分类、重排序） |
 | 容错与恢复 | 🟢 | Reconciliation + Redis 分布式锁 + 优雅降级 |
 | 安全 | 🟡 | CORS 修复；安全扫描未做（M2 P1 计划） |
-| 测试覆盖 | 🟢 | 629 test 函数（+145 from v0.3.0 baseline 484）；基准 CI 待 M1 D1 |
+| 测试覆盖 | 🟢 | 657 test 函数（+173 from v0.3.0 baseline 484）；M1 完成后基准 CI 已落地 |
 | 功能完整性 | 🟢 | 核心能力对齐 Supermemory；所有 Stub 已清零（重排序、profile config、关系推断、/v1/files） |
 | 运维与文档 | 🟢 | 文档完整对齐（comparison v2 + roadmap + 6 个架构/集成/概念/quickstart 文档） |
 
@@ -300,4 +300,4 @@
 ---
 
 *评估时间：2026-06-01*  
-*评估版本：Emerald v0.3.0*
+*评估版本：Emerald v0.4.0*

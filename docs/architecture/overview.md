@@ -246,9 +246,9 @@ search_mode = "rag"    → 仅向量相似度搜索
 
 ---
 
-## 6. Post-v0.3.0 增强（2026-06-02 之后）
+## 6. v0.4.0 增强（2026-06-02 之后，2026-07-03 发布）
 
-> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后 ~36 个 commit 中的重大架构变更。未作为独立版本发布，将在路线图 v0.4 → v0.8 中逐步发布。完整 roadmap 见 [`docs/roadmap.md`](../roadmap.md)。
+> 本节记录 v0.3.0 release (commit 2665734, 2026-06-01) 之后合并到 v0.4.0 release (2026-07-03) 的重大架构变更。完整 release notes 见 [`CHANGELOG.md`](../../CHANGELOG.md) [0.4.0] 段；后续路线图见 [`docs/roadmap.md`](../roadmap.md)。
 
 ### 6.1 事实提取从「格式转换」升级为「语义理解」
 
@@ -348,7 +348,7 @@ importance = 0.35 × confidence
 
 - **OpenTelemetry 手动 span 集成**（`emerald/core/tracing.py`, 132 行）：FastAPI、Neo4j、httpx、Celery 自动 + 手动 span
 - **结构化 JSON 日志** + Prometheus `/v1/metrics` 端点
-- M1 (v0.4.0) 计划增加 OpenTelemetry 自动 instrumentation（httpx/asyncpg/redis/celery）
+- M1 (v0.4.0) 已增加 OpenTelemetry 自动 instrumentation（httpx/asyncpg/redis/celery）
 
 ### 6.9 新 API 端点
 

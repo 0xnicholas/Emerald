@@ -88,7 +88,6 @@ def build_spec() -> dict:
     # Prometheus's `include_in_schema=False`. If a future FastAPI version
     # leaks it, strip it here so the public spec stays clean.
     schema["paths"].pop("/v1/metrics", None)
-    schema["paths"].pop("/v2/metrics", None)
 
     return schema
 
