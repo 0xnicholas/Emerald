@@ -548,7 +548,7 @@ docker compose up -d mcp
 
 ## 13. Post-v0.3.0 集成增强（2026-06-02 之后）
 
-> 本节记录 v0.3.0 之后 33 个 commit 中影响集成路径的重大变更。详见 [`docs/roadmap.md`](roadmap.md)。
+> 本节记录 v0.3.0 之后影响集成路径的重大变更（M1 + M2 全部完成，待 v0.4.0 发布）。详见 [`docs/roadmap.md`](roadmap.md) 与 [`CHANGELOG.md`](../CHANGELOG.md) Unreleased 段。
 
 ### 13.1 LLM 事实提取集成（核心变更）
 

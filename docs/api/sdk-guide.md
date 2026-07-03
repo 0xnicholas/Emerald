@@ -2,6 +2,8 @@
 
 Emerald 提供官方 Python SDK，以最小化的接口封装 REST API。SDK 遵循 AGENTS.md 设计原则：**不暴露内部图谱操作**，公共方法仅限 `add`、`search`、`profile`、`upload` 四个核心方法。
 
+> **需要 TypeScript / JavaScript？** 参见 [`sdk/typescript/README.md`](../../sdk/typescript/README.md)（`@emerald/sdk`，v0.5.0）。两个 SDK 在方法集、异常体系、错误码上保持一致。
+
 ---
 
 ## 安装
@@ -443,7 +445,7 @@ Emerald 同时提供 MCP（Model Context Protocol）服务器，供 Claude Deskt
 
 ## Post-v0.3.0 SDK 增强（2026-06-02 之后）
 
-> 本节记录 v0.3.0 之后 33 个 commit 中影响 Python SDK 的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
+> 本节记录 v0.3.0 之后影响 Python SDK 的重大变更（M1 + M2 全部完成，待 v0.4.0 发布）。详见 [`docs/roadmap.md`](../roadmap.md) 与 [`CHANGELOG.md`](../../CHANGELOG.md) Unreleased 段。
 
 ### SDK 方法覆盖现状
 

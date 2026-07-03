@@ -30,15 +30,15 @@
 
 ### 1.3 路线图成功的 3 个北极星指标
 
-| 指标 | 当前（v0.3.0） | 目标（v0.8.0） |
+| 指标 | 当前（v0.3.0 + M1/M2 已完成，待 v0.4.0 发布） | 目标（v0.8.0） |
 |---|---|---|
 | **公开基准分数** | mock 嵌入下 4/6 通过（0.667） | 真实 LLM 嵌入下 ≥5/6 通过 |
-| **生产部署就绪度** | Beta（受控环境试运行） | GA（生产 SLA 保障） |
-| **开发者采用度** | 1 SDK（Python）+ Pandaria 集成 | 4 SDK（Python/TS/Java/Go）+ 5 框架集成 |
+| **生产部署就绪度** | Productionizing 70%（生产化进行中，见 production-readiness 评估） | GA（生产 SLA 保障） |
+| **开发者采用度** | 2 SDK（Python + TypeScript）+ Pandaria 集成 | 4 SDK（Python/TS/Java/Go）+ 5 框架集成 |
 
 ---
 
-## 二、当前状态快照（v0.3.0 + 33 post-release commits）
+## 二、当前状态快照（v0.3.0 + M1/M2 已完成，待 v0.4.0 发布）
 
 ### 2.1 已完成能力（post-v0.3.0 期间）
 
@@ -62,26 +62,27 @@
 - ✅ 多因子画像评分（confidence 35% + recency 25% + type 20% + rels 20%）
 
 **测试 & 文档**：
-- ✅ 测试数：484 → **601**（+117，+24%）
+- ✅ 测试数：484 → 601 → **657**（+173，+36%；含 M2 阶段 +56 个安全 / API / SDK 守卫）
 - ✅ 基准跑分：6 维度评估 + JSON 报告生成
 - ✅ 对比文档：`docs/comparison-supermemory.md` 重写（v1 → v2）
 
 ### 2.2 已知未解决项（按重要性）
 
-| 优先级 | 项 | 来源 |
-|---|---|---|
-| 🔴 | Dockerfile production stage 未独立 pip install | comparison-supermemory §10 P0 |
-| 🔴 | v2 API 仍是 v1 别名（每文件一行 `from v1.xxx import router`） | comparison-supermemory §10 P1 |
-| 🔴 | TypeScript SDK 缺失 | comparison-supermemory §10 P1 |
-| 🔴 | 框架集成生态空白（仅 Pandaria） | comparison-supermemory §10 P1 |
-| 🟡 | 真实 LLM 嵌入下的基准分数未发布 | comparison-supermemory §10 P0 |
-| 🟡 | Cross-encoder 重排序未实现（仍是 Stub） | production-readiness §5 |
-| ✅ | **Cross-encoder 重排序** — 2026-06-22 完成：三级降级链（cached CE → embedding cosine → keyword boost） |
-| 🟡 | NER 实体抽取层未实现 | comparison-supermemory §10 P2 |
-| 🟡 | 分布式追踪未实现 | production-readiness §4 |
-| 🟡 | 安全审计未做 | production-readiness §7 |
-| 🟡 | 负载测试未做 | production-readiness §5 |
-| 🟡 | API 文档需要 overhaul | production-readiness §10 |
+> 2026-06-22 后状态更新。详细 M1 / M2 进展见 [`docs/production-readiness-assessment.md`](production-readiness-assessment.md) 和 [`CHANGELOG.md`](../CHANGELOG.md) Unreleased 段。
+
+| 优先级 | 项 | 状态 | 来源 |
+|---|---|---|---|
+| ✅ | Dockerfile production stage 独立 `pip install` | M1 已完成 | comparison-supermemory §10 P0 |
+| ⚪ | v2 API 实质改进 | **方向调整**：v2 路由已下线并合并回 v1，错误码 / 分页 / 限流头 / OpenAPI 自动化在 v1 上落地 | comparison-supermemory §10 P1 |
+| ✅ | TypeScript SDK v1 | M2 已完成（`sdk/typescript/`，对齐 Python SDK） | comparison-supermemory §10 P1 |
+| 🟡 | 框架集成生态空白（仅 Pandaria） | LangChain.js / Vercel AI / Mastra 仍在 M3 计划中 | comparison-supermemory §10 P1 |
+| 🟡 | 真实 LLM 嵌入下的基准分数未发布 | mock 嵌入下 4/6 通过 | comparison-supermemory §10 P0 |
+| ✅ | Cross-encoder 重排序 | M2 已完成：三级降级链 | production-readiness §5 |
+| 🟡 | NER 实体抽取层未实现 | M3 计划中 | comparison-supermemory §10 P2 |
+| ✅ | 分布式追踪（OpenTelemetry） | M1 已完成（手动 + 自动 instrumentation） | production-readiness §4 |
+| 🟡 | 安全审计未做 | M2 部分完成（CORS 校验、跨实体授权、OAuth state）；正式审计在 M5 计划中 | production-readiness §7 |
+| 🟡 | 负载测试未做 | Locust 基础设施已在 M1 完成（`tests/load/`），压测验证仍待 D2/D3 | production-readiness §5 |
+| 🟡 | API 文档需要 overhaul | M2 部分完成（OpenAPI 自动生成 + 错误码 + drift 测试），教程与 SDK 对照仍在 A5 | production-readiness §10 |
 
 ---
 
@@ -484,4 +485,4 @@ v1.0 之后的路线图将在 v1.0 实际发布前 1-2 个月单独制定。
 
 ---
 
-*本路线图由对 Emerald v0.3.0 + 33 post-release commits、`docs/comparison-supermemory.md` v2、`docs/production-readiness-assessment.md` v0.3.0 的综合分析得出，于 2026-06-21 制定。*
+*本路线图由对 Emerald v0.3.0 + 50+ post-release commits（含 M1 / M2 完成工作）的综合分析得出，于 2026-06-21 制定，2026-07-03 更新当前状态快照。详细 M1 / M2 进展见 [`docs/production-readiness-assessment.md`](production-readiness-assessment.md) 和 [`CHANGELOG.md`](../CHANGELOG.md) Unreleased 段。*

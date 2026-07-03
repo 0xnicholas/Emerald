@@ -225,6 +225,24 @@ client.upload(file=pdf_bytes, title="架构文档.pdf")
 
 ---
 
+## TypeScript SDK
+
+Emerald 提供官方 TypeScript SDK（`@emerald/sdk`），与 Python SDK 方法集一一对应，支持浏览器、Node.js、Bun、Deno 等运行时。
+
+```ts
+import { EmeraldClient, EmeraldNotFoundError } from "@emerald/sdk";
+
+const client = new EmeraldClient({ apiKey: "em_xxx" });
+
+await client.add("用户偏好 TypeScript", "user_123");
+const results = await client.search("TypeScript", "user_123");
+const profile = await client.profile("user_123");
+```
+
+支持 typed 异常体系（`EmeraldAuthError` / `EmeraldNotFoundError` / `EmeraldValidationError` / `EmeraldRateLimitError` / `EmeraldServerError` / `EmeraldNetworkError`）和 `async with` 上下文管理器。详见 [`sdk/typescript/README.md`](sdk/typescript/README.md) 与 [`docs/api/sdk-guide.md`](docs/api/sdk-guide.md)。
+
+---
+
 ## Pandaria 集成
 
 [Pandaria](https://github.com/earendil-works/pandaria)（Rust Agent Runtime）通过 HTTP 适配器 `EmeraldMemoryStore` 与 Emerald 集成。Agent 的每一轮对话自动保存到 Emerald，后续对话自动召回相关记忆。
@@ -294,9 +312,11 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**当前 HEAD** (post-v0.3.0, 33 commits) — v0.3.0 + 重大增强，**601 test 函数定义**（~548 passed, 9 skipped, 53 parametrize 展开）。详见 [`docs/roadmap.md`](docs/roadmap.md) v0.4 → v0.8 路线图。
+**当前 HEAD**：v0.3.0 已发布（2026-06-01），后续 M1 + M2 核心工作项已完成但**尚未发布新版本**（`__version__` 仍为 `0.3.0`，下一个发布将是 v0.4.0）。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
-### v0.3.0 核心模块
+**测试规模**：657 测试 pass / 1 skip / 0 fail。最新一次 M2 安全加固在 601 → 657 之间增加 56 个测试（typed 异常、OpenAPI drift、v2 route parity、OAuth state、CORS 校验、SDK override、chunk_task 守卫）。
+
+### v0.3.0 核心模块（已发布）
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -306,37 +326,50 @@ docker compose up -d mcp
 | 用户画像 | ✅ 完整 | 静态+动态事实，Redis 缓存，< 50ms 冷启动 |
 | 混合搜索 | ✅ 完整 | Memory + RAG 合并，支持重排序和查询改写 |
 | 遗忘引擎 | ✅ 完整 | 时间过期、噪音过滤、情节衰减（Celery Beat） |
-| REST API | ✅ 完整 | P0/P1/P2 端点全部实现 |
-| Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status |
-| 连接器 | ✅ 完整 | GitHub、Google Drive、Gmail、Notion（OAuth + 增量同步） |
-| MCP Server | ✅ 完整 | stdio + SSE 双模式 |
+| REST API | ✅ 完整 | 17 个 v1 端点（memories/search/profiles/upload/pipelines/conflicts/sessions/connectors/system） |
+| Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status，typed 异常 + async context manager |
+| 连接器 | ✅ 完整 | GitHub、Google Drive、Gmail、Notion（OAuth + 增量同步，OAuth state 存 Redis） |
+| MCP Server | ✅ 完整 | stdio + SSE 双模式，3 个工具（add / search / profile） |
 | 基准测试 | ✅ 完整 | LongMemEval / LoCoMo / ConvoMem 风格评估脚本，6 维度 + JSON 报告 |
-| 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + **OpenTelemetry 手动 span 集成** |
+| 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + OpenTelemetry 手动 span 集成 |
 | Docker E2E | ✅ 完整 | `docker-compose.test.yml` + `.env.test`，全栈集成测试通过 |
 
-### v0.3.0 之后的增强（post-release commits，未发布）
+### Post-v0.3.0 已完成工作（待 v0.4.0 发布）
 
-- 🆕 **LLM 事实提取**：DeepSeek V4-Flash 驱动的多事实分解、类型分类、置信度评分
-- 🆕 **图谱搜索遍历**：`_expand_relationships()` 沿 EXTENDS/DERIVES_FROM 双向遍历
-- 🆕 **首选项强化**：重复偏好 +0.05 置信度
-- 🆕 **本地嵌入**：[fastembed](https://github.com/qdrant/fastembed)（ONNX 无 PyTorch）
-- 🆕 **批量写入**：`POST /v1/memories/batch`（最多 50 条）
-- 🆕 **图谱可视化**：`GET /v1/graph/viewport`
-- 🆕 **元数据过滤**：MongoDB 风格（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`）
-- 🆕 **双写一致性**：`ReconciliationEngine` 后台修复孤立节点
-- 🆕 **Redis 分布式锁**：防止 Celery Beat 多实例并发
-- 🆕 **Neo4j 生产配置**：连接池、超时、重试
-- 🆕 **CORS 加固**：环境变量区分 dev/prod 模式
-- 🆕 **关系推断 LLM 化**：DeepSeek → OpenAI 降级路径
-- 🆕 **ForgetEngine 生产修复**：`GraphStore.list_entity_ids()`
-- 🆕 **多因子画像评分**：置信度 35% + 时近性 25% + 类型 20% + 关系 20%
+**M1 — 部署与可观测性加固**
+- ✅ Dockerfile production stage 独立 `pip install`，镜像 < 1.2GB
+- ✅ K8s manifest + 灾备演练脚本（`scripts/disaster_recovery_drill.sh`）
+- ✅ OpenTelemetry 自动 instrumentation（FastAPI / SQLAlchemy / httpx / Redis）
+- ✅ Locust 负载测试基础设施（`tests/load/`）
+- ✅ CI 自动化（`scripts/generate_openapi.py --check` + drift 测试）
+
+**M2 — API / SDK / 安全加固**
+- ✅ **TypeScript SDK v1**（`sdk/typescript/`，对齐 Python SDK 方法集，typed 异常，async 支持）
+- ✅ 错误码体系（[`docs/api/error-codes.md`](docs/api/error-codes.md)）+ OpenAPI 自动生成（`scripts/generate_openapi.py`）
+- ✅ API 分页（memories 列表）+ 限流响应头（`X-RateLimit-Remaining` / `Retry-After`）
+- ✅ P0：跨实体上传授权（`authorize_entity()` 集中到 `emerald/api/dependencies.py`）
+- ✅ OAuth state 存 Redis（`OAuthStateStore`，TTL 10 分钟，多 worker 安全）
+- ✅ CORS 生产加固（wildcard 在 production 启动时拒绝）
+- ✅ SDK typed 异常（`EmeraldAuthError` / `EmeraldValidationError` / `EmeraldRateLimitError` 等）
+
+**M3 增量能力**
+- ✅ LLM 事实提取（DeepSeek V4-Flash，多事实分解、类型分类、置信度评分）
+- ✅ 图谱搜索遍历（`_expand_relationships()` 沿 EXTENDS / DERIVES_FROM 双向）
+- ✅ 首选项强化（重复偏好 +0.05 置信度）
+- ✅ 本地嵌入（[fastembed](https://github.com/qdrant/fastembed)，ONNX 无 PyTorch）
+- ✅ 批量写入（`POST /v1/memories/batch`，最多 50 条）
+- ✅ 图谱可视化（`GET /v1/memories/graph`）
+- ✅ MongoDB 风格元数据过滤（`$and` / `$or` / `$gte` / `$lte` / `$eq` / `$ne`）
+- ✅ 双写一致性（`ReconciliationEngine` 后台修复孤立节点）
+- ✅ Redis 分布式锁（防止 Celery Beat 多实例并发）
+- ✅ Neo4j 生产配置（连接池、超时、重试）
+- ✅ 多因子画像评分（置信度 35% + 时近性 25% + 类型 20% + 关系 20%）
 
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **M1 (v0.4.0)**：Dockerfile 优化、K8s 灾备演练、OpenTelemetry 自动 instrumentation、真实 LLM 基准跑分、CI 自动化
-- **M2 (v0.5.0)**：v2 API 实质化、Cross-encoder 重排序、**TypeScript SDK v1**、安全审计
-- **M3 (v0.6.0)**：NER、多跳推理、LangChain.js/Vercel AI/Mastra 集成
-- **M4 (v0.7.0)**：高级遗忘、负载测试、Staging 压测
+- **v0.4.0**：版本发布（合并 M1+M2 全部工作项）
+- **M3 (v0.6.0)**：NER 实体抽取、多跳图谱推理、LangChain.js / Vercel AI / Mastra 集成
+- **M4 (v0.7.0)**：高级遗忘、负载测试验证、Staging 压测
 - **M5 (v0.8.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
 
 ## OpenAI API Key
@@ -375,7 +408,7 @@ docker compose -f docker-compose.test.yml up -d
 cp .env.test .env.test.local  # 按需修改
 set -a && source .env.test && set +a
 alembic upgrade head
-pytest  # 601 test functions; ~548 passed, 9 skipped (some parametrize expanded)
+pytest  # 657 pass / 1 skip / 0 fail (post-M2 hardening)
 ```
 
 > **Note:** `.env` provides default development values. `.env.local` overrides it for your machine and is ignored by git. Keep real API keys in `.env.local` only.
@@ -393,6 +426,10 @@ pytest  # 601 test functions; ~548 passed, 9 skipped (some parametrize expanded)
 | 处理管线 | [docs/architecture/pipeline.md](docs/architecture/pipeline.md) |
 | REST API 完整参考 | [docs/api/rest-guide.md](docs/api/rest-guide.md) |
 | Python SDK | [docs/api/sdk-guide.md](docs/api/sdk-guide.md) |
+| TypeScript SDK | [sdk/typescript/README.md](sdk/typescript/README.md) |
+| 错误码 / OpenAPI spec | [docs/api/error-codes.md](docs/api/error-codes.md) · [docs/api/openapi.yaml](docs/api/openapi.yaml) |
+| K8s 灾备 / 可观测性 | [docs/deployment/k8s-runbook.md](docs/deployment/k8s-runbook.md) · [docs/deployment/observability.md](docs/deployment/observability.md) |
+| 生产就绪度评估 | [docs/production-readiness-assessment.md](docs/production-readiness-assessment.md) |
 | 与 Supermemory 能力对比 | [docs/comparison-supermemory.md](docs/comparison-supermemory.md) |
 | 项目路线图 | [docs/roadmap.md](docs/roadmap.md) |
 | Pandaria (Rust) 集成 | [docs/integration-guide.md](docs/integration-guide.md) |
