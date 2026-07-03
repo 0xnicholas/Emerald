@@ -1,0 +1,44 @@
+# .dockerignore — exclude from Docker build context
+.git
+.gitignore
+.github
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Tests (not needed in production image)
+tests/
+
+# Documentation (not needed in production)
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local env files (NEVER copy secrets)
+.env
+.env.local
+.env.*.local
+
+# Worktrees
+.worktrees/
+
+# Reports (large JSON files)
+reports/
+
+# Backups
+backups/

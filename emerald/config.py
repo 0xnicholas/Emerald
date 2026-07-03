@@ -133,6 +133,17 @@ class Settings(BaseSettings):
     otel_traces_sampler: str = "parentbased_traceidratio"
     otel_traces_sampler_arg: float = 1.0
 
+    # ---- OTEL Auto-instrumentation ----
+    # NOTE: FastAPI is hardcoded in emerald/api/app.py.
+    #       Neo4j has no PyPI instrumentation package (uses manual spans).
+    otel_instrument_httpx: bool = True
+    otel_instrument_asyncpg: bool = True
+    otel_instrument_redis: bool = True
+    otel_instrument_celery: bool = True
+    otel_console_exporter: bool = False
+    otel_service_namespace: str = "memory-infrastructure"
+    otel_service_version: str = "0.4.0"
+
     # ---- Search / Recall ----
     search_default_top_k: int = 30
     search_max_top_k: int = 100

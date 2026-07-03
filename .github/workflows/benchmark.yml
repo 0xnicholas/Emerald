@@ -1,0 +1,147 @@
+name: Emerald Benchmarks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "emerald/core/**"
+      - "emerald/pipeline/**"
+      - "scripts/run_benchmarks.py"
+      - ".github/workflows/benchmark.yml"
+  pull_request:
+    paths:
+      - "emerald/core/**"
+      - "emerald/pipeline/**"
+      - "scripts/run_benchmarks.py"
+      - ".github/workflows/benchmark.yml"
+  schedule:
+    # Every Monday at 6:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: emerald
+          POSTGRES_PASSWORD: emerald_dev
+          POSTGRES_DB: emerald
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/emerald_dev
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p emerald_dev 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run Alembic migrations
+        run: |
+          alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+asyncpg://emerald:emerald_dev@localhost:5432/emerald
+          DATABASE_URL_SYNC: postgresql://emerald:emerald_dev@localhost:5432/emerald
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: emerald_dev
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -x -q --ignore=tests/docker --ignore=tests/tracing \
+            -m "not integration and not docker" \
+            --timeout=60
+        env:
+          DATABASE_URL: postgresql+asyncpg://emerald:emerald_dev@localhost:5432/emerald
+          DATABASE_URL_SYNC: postgresql://emerald:emerald_dev@localhost:5432/emerald
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: emerald_dev
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+
+      - name: Run benchmarks (mock)
+        run: |
+          python scripts/run_benchmarks.py
+        env:
+          DATABASE_URL: postgresql+asyncpg://emerald:emerald_dev@localhost:5432/emerald
+          DATABASE_URL_SYNC: postgresql://emerald:emerald_dev@localhost:5432/emerald
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: emerald_dev
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+
+      - name: Convert benchmark to Markdown
+        run: |
+          LATEST=$(ls -1t reports/benchmark-*.json | head -1)
+          python scripts/benchmark_to_markdown.py "$LATEST" docs/benchmarks/mock-results.md
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-report
+          path: |
+            reports/benchmark-*.json
+            docs/benchmarks/mock-results.md
+
+      - name: Check benchmark pass rate
+        run: |
+          LATEST=$(ls -1t reports/benchmark-*.json | head -1)
+          PASS_RATE=$(python -c "
+          import json
+          report = json.load(open('$LATEST'))
+          summary = report.get('summary', {})
+          rate = summary.get('pass_rate', 0)
+          print(rate)
+          ")
+          echo "Benchmark pass rate: $PASS_RATE"
+          # Warn if pass rate drops below 0.5
+          if (( $(echo "$PASS_RATE < 0.5" | bc -l) )); then
+            echo "::warning ::Benchmark pass rate dropped below 50% ($PASS_RATE)"
+          fi

@@ -39,6 +39,10 @@ dependencies = [
     "opentelemetry-sdk>=1.24",
     "opentelemetry-instrumentation-fastapi>=0.45",
     "opentelemetry-exporter-otlp>=1.24",
+    "opentelemetry-instrumentation-httpx>=0.45b0",
+    "opentelemetry-instrumentation-asyncpg>=0.45b0",
+    "opentelemetry-instrumentation-redis>=0.45b0",
+    "opentelemetry-instrumentation-celery>=0.45b0",
 ]
 
 [project.optional-dependencies]
@@ -102,4 +106,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "integration: marks tests that require Docker (testcontainers)",
+    "docker: integration tests requiring Docker daemon",
 ]

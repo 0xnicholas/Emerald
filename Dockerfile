@@ -1,10 +1,10 @@
-# Emerald Dockerfile — multi-stage build
+# Emerald Dockerfile — multi-stage build (v0.4.0)
 
 FROM python:3.12-slim AS development
 
 WORKDIR /app
 
-# System dependencies
+# System dependencies (full set for dev)
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
@@ -14,26 +14,38 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 COPY . .
 
-# ---- Production stage ----
+# ---- Production stage (v0.4.0: independent pip install) ----
 FROM python:3.12-slim AS production
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
+# Runtime system deps only (no build-essential)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     tesseract-ocr \
     tesseract-ocr-chi-sim \
-    libpq-dev \
+    libpq5 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=development /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY . .
+# Production-only Python deps
+COPY requirements-prod.txt ./
+RUN pip install --no-cache-dir -r requirements-prod.txt
+
+# Application code
+COPY emerald/ ./emerald/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
+
+# Non-root user for runtime
+RUN useradd -m -u 1001 emerald && chown -R emerald:emerald /app
+USER emerald
+
+EXPOSE 8000
 
 CMD ["uvicorn", "emerald.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
