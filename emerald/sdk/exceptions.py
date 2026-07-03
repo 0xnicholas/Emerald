@@ -29,7 +29,14 @@ class EmeraldError(Exception):
     branching.
     """
 
-    def __init__(self, message: str, *, response: Any | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str | None = None,
+        response: Any | None = None,
+    ) -> None:
+        self.error_code = error_code
         self.response = response
         super().__init__(message)
 
@@ -54,10 +61,11 @@ class EmeraldValidationError(EmeraldError):
         message: str,
         *,
         field_errors: dict[str, str] | None = None,
+        error_code: str | None = None,
         response: Any | None = None,
     ) -> None:
         self.field_errors = field_errors or {}
-        super().__init__(message, response=response)
+        super().__init__(message, error_code=error_code, response=response)
 
 
 class EmeraldRateLimitError(EmeraldError):
@@ -72,10 +80,11 @@ class EmeraldRateLimitError(EmeraldError):
         message: str,
         *,
         retry_after: int | None = None,
+        error_code: str | None = None,
         response: Any | None = None,
     ) -> None:
         self.retry_after = retry_after
-        super().__init__(message, response=response)
+        super().__init__(message, error_code=error_code, response=response)
 
 
 class EmeraldServerError(EmeraldError):
@@ -100,7 +109,11 @@ _STATUS_TO_EXCEPTION: dict[int, type[EmeraldError]] = {
 
 
 def exception_for_status(
-    status_code: int, message: str, response: Any | None = None
+    status_code: int,
+    message: str,
+    *,
+    error_code: str | None = None,
+    response: Any | None = None,
 ) -> EmeraldError:
     """Map an HTTP status code to the most specific SDK exception type.
 
@@ -109,8 +122,8 @@ def exception_for_status(
     can still catch and handle.
     """
     if 500 <= status_code < 600:
-        return EmeraldServerError(message, response=response)
+        return EmeraldServerError(message, error_code=error_code, response=response)
     exc = _STATUS_TO_EXCEPTION.get(status_code)
     if exc is not None:
-        return exc(message, response=response)
-    return EmeraldError(message, response=response)
+        return exc(message, error_code=error_code, response=response)
+    return EmeraldError(message, error_code=error_code, response=response)

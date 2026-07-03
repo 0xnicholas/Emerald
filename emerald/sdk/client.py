@@ -40,16 +40,28 @@ from emerald.sdk.models import (
 def _extract_error_message(body: Any, response: httpx.Response) -> str:
     """Best human-readable error message from a response body.
 
-    Prefers the structured ``error.message`` field, falls back to the raw
-    body text, then to a status-code-only placeholder.
+    Supports both v2 format (``message`` at top level) and v1 format
+    (``error.message`` nested).
     """
     if isinstance(body, dict):
+        # v2 format: {"error_code": "...", "message": "..."}
+        msg = body.get("message")
+        if msg:
+            return str(msg)
+        # v1 format: {"error": {"code": "...", "message": "..."}}
         err = body.get("error")
         if isinstance(err, dict):
-            msg = err.get("message")
-            if msg:
-                return str(msg)
+            msg_v1 = err.get("message")
+            if msg_v1:
+                return str(msg_v1)
     return response.text or f"HTTP {response.status_code}"
+
+
+def _extract_error_code(body: Any) -> str | None:
+    """Extract the ``error_code`` field from v2 error responses."""
+    if isinstance(body, dict):
+        return body.get("error_code")
+    return None
 
 
 def _extract_retry_after(response: httpx.Response) -> int | None:
@@ -64,16 +76,35 @@ def _extract_retry_after(response: httpx.Response) -> int | None:
 
 
 def _extract_field_errors(body: Any) -> dict[str, str] | None:
-    """Pull ``error.details.field_errors`` from the response body when present."""
+    """Pull field-level error details from the response body when present.
+
+    Supports v2 format (``details`` as list of {field, message}) and
+    v1 format (``error.details.field_errors`` as dict).
+    """
     if not isinstance(body, dict):
         return None
+
+    # v2 format: {"details": [{"field": "...", "message": "..."}, ...]}
+    details = body.get("details")
+    if isinstance(details, list):
+        result: dict[str, str] = {}
+        for d in details:
+            if isinstance(d, dict):
+                field = d.get("field")
+                msg = d.get("message")
+                if field and msg:
+                    result[str(field)] = str(msg)
+        if result:
+            return result
+
+    # v1 format: {"error": {"details": {"field_errors": {...}}}}
     err = body.get("error")
     if not isinstance(err, dict):
         return None
-    details = err.get("details")
-    if not isinstance(details, dict):
+    nested = err.get("details")
+    if not isinstance(nested, dict):
         return None
-    fe = details.get("field_errors")
+    fe = nested.get("field_errors")
     if not isinstance(fe, dict):
         return None
     return {str(k): str(v) for k, v in fe.items()}
@@ -93,10 +124,13 @@ def _raise_for_status(response: httpx.Response) -> None:
         body = None
 
     msg = _extract_error_message(body, response)
+    error_code = _extract_error_code(body)
     retry_after = _extract_retry_after(response)
     field_errors = _extract_field_errors(body)
 
-    exc = exception_for_status(response.status_code, msg, response=response)
+    exc = exception_for_status(
+        response.status_code, msg, error_code=error_code, response=response,
+    )
     if isinstance(exc, EmeraldRateLimitError) and retry_after is not None:
         exc.retry_after = retry_after
     if isinstance(exc, EmeraldValidationError) and field_errors:

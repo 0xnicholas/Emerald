@@ -7,7 +7,7 @@ import io
 import time
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 
 from emerald.api.dependencies import (
     api_key_auth,
@@ -141,13 +141,21 @@ async def list_files(
     request: Request,
     entity_id: str,
     status_filter: str = "done",
-    page: int = 1,
-    page_size: int = 20,
+    page_token: str | None = Query(None, description="Cursor token for pagination"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
 ) -> dict:
-    """List uploaded files for an entity."""
+    """List uploaded files for an entity with cursor-based pagination."""
     start = time.perf_counter()
 
-    from sqlalchemy import func, select
+    from emerald.api.pagination import InvalidPaginationToken, PageToken
+
+    try:
+        token = PageToken.decode_or_raise(page_token, default_limit=page_size, max_limit=100)
+    except InvalidPaginationToken as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    effective_limit = token.limit
+
+    from sqlalchemy import select
 
     from emerald.db.session import session_factory
     from emerald.models.document import Document
@@ -161,32 +169,38 @@ async def list_files(
         entity = entity_result.scalar_one_or_none()
         if not entity:
             return {
-                "data": {"items": [], "total": 0, "page": page, "page_size": page_size},
+                "data": {"items": []},
                 "meta": {"request_id": str(uuid4())[:8], "took_ms": 0},
+                "pagination": {"next_page_token": None, "has_more": False},
             }
 
-        # Count total
-        count_result = await session.execute(
-            select(func.count()).where(
-                Document.entity_id == entity.id,
-                Document.status == status_filter,
-            )
-        )
-        total = count_result.scalar() or 0
-
-        # Paginated query
-        offset = (page - 1) * page_size
-        docs_result = await session.execute(
+        # Build cursor-based query (fetch one extra to detect has_more)
+        query = (
             select(Document)
             .where(
                 Document.entity_id == entity.id,
                 Document.status == status_filter,
             )
-            .order_by(Document.created_at.desc())
-            .offset(offset)
-            .limit(page_size)
+            .order_by(Document.created_at.desc(), Document.id.desc())
+            .limit(effective_limit + 1)
         )
+
+        # Apply cursor if present (keyset pagination)
+        if token.cursor:
+            query = query.where(Document.id < token.cursor)
+
+        docs_result = await session.execute(query)
         docs = docs_result.scalars().all()
+
+        has_more = len(docs) > effective_limit
+        if has_more:
+            docs = docs[:effective_limit]
+
+        next_token = None
+        if has_more and docs:
+            next_token = PageToken.encode(
+                cursor=str(docs[-1].id), limit=effective_limit,
+            )
 
         items = [
             {
@@ -204,13 +218,15 @@ async def list_files(
     return {
         "data": {
             "items": items,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
+            "page_size": effective_limit,
         },
         "meta": {
             "request_id": getattr(request.state, "request_id", str(uuid4())[:8]),
             "took_ms": int((time.perf_counter() - start) * 1000),
+        },
+        "pagination": {
+            "next_page_token": next_token,
+            "has_more": has_more,
         },
     }
 

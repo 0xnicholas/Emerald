@@ -12,6 +12,7 @@ from emerald.api.dependencies import (
     authorize_entity,
     rate_limit,
 )
+from emerald.api.pagination import InvalidPaginationToken, PageToken
 from emerald.api.schemas import SearchRequest
 from emerald.core.search import SearchMode, SearchOrchestrator
 
@@ -41,7 +42,11 @@ _authorize_entity = authorize_entity
 
 
 @router.post("/search", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
-async def search(body: SearchRequest, request: Request) -> dict:
+async def search(
+    body: SearchRequest,
+    request: Request,
+    page_token: str | None = Query(None, description="Page token for pagination"),
+) -> dict:
     """Hybrid search across memory (graph) and RAG (vector)."""
     start = time.perf_counter()
     _authorize_entity(request, body.entity_id)
@@ -49,17 +54,28 @@ async def search(body: SearchRequest, request: Request) -> dict:
     orchestrator = _get_search_orchestrator(request, engine)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
+    try:
+        token = PageToken.decode_or_raise(page_token, default_limit=body.top_k or 30, max_limit=100)
+    except InvalidPaginationToken as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    effective_top_k = token.limit
+
     results = await orchestrator.search(
         q=body.q,
         entity_id=body.entity_id,
         search_mode=SearchMode(body.search_mode),
-        top_k=body.top_k,
+        top_k=effective_top_k + 1,  # fetch one extra to detect has_more
         rerank=body.rerank,
         rewrite_query=body.rewrite_query,
         filters=body.filters,
         min_confidence=body.min_confidence,
         dynamic_truncation=body.dynamic_truncation,
     )
+
+    result_items = results.results
+    pagination = PageToken.pagination_meta(result_items, token)
+    if pagination["has_more"]:
+        result_items = result_items[:effective_top_k]
 
     return {
         "data": {
@@ -75,7 +91,7 @@ async def search(body: SearchRequest, request: Request) -> dict:
                     "document_id": r.document_id,
                     "document_title": r.document_title,
                 }
-                for r in results.results
+                for r in result_items
             ],
             "search_mode": results.search_mode.value,
             "query_rewritten": results.query_rewritten,
@@ -84,6 +100,7 @@ async def search(body: SearchRequest, request: Request) -> dict:
             "request_id": request_id,
             "took_ms": int((time.perf_counter() - start) * 1000),
         },
+        "pagination": pagination,
     }
 
 

@@ -6,7 +6,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -122,8 +122,10 @@ async def lifespan(app: FastAPI):
     from emerald.db.session import session_factory
 
     from emerald.core.tracing import init_tracing
+    from emerald.core.tracing_instrumentation import instrument_all
 
     init_tracing()
+    instrument_all()
     await init_neo4j()
     await init_redis()
     async with session_factory.session() as s:
@@ -214,34 +216,81 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
 
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+
+        # Inject rate limit headers (A3.4)
+        if hasattr(request.state, "rate_limit_limit"):
+            response.headers["X-RateLimit-Limit"] = str(request.state.rate_limit_limit)
+            response.headers["X-RateLimit-Remaining"] = str(request.state.rate_limit_remaining)
+            response.headers["X-RateLimit-Reset"] = str(request.state.rate_limit_reset)
+
         return response
 
-    # ---- Exception handlers ----
+    # ---- Exception handlers (v2 standardized error format) ----
+
+    def _error_response(
+        request: Request,
+        error_code: str,
+        message: str,
+        status_code: int,
+        details: list | None = None,
+    ) -> JSONResponse:
+        """Build a standardized error response."""
+        body: dict[str, object] = {
+            "error_code": error_code,
+            "message": message,
+            "details": details or [],
+            "request_id": getattr(request.state, "request_id", ""),
+        }
+        return JSONResponse(status_code=status_code, content=body)
 
     @app.exception_handler(EmeraldError)
     async def emerald_error_handler(request: Request, exc: EmeraldError):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": type(exc).__name__.upper(),
-                    "message": str(exc),
-                },
-                "meta": {"request_id": getattr(request.state, "request_id", "")},
-            },
-        )
+        from emerald.api.error_codes import get_error_code
+
+        code = type(exc).__name__.upper()
+        mapped = get_error_code(code)
+        return _error_response(request, mapped.code, str(exc), mapped.http_status)
 
     @app.exception_handler(404)
     async def not_found_handler(request: Request, exc):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": f"Route not found: {request.url.path}",
-                },
-                "meta": {"request_id": getattr(request.state, "request_id", "")},
-            },
+        return _error_response(
+            request,
+            "ROUTE_NOT_FOUND",
+            f"Route not found: {request.url.path}",
+            404,
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        # Map common HTTP statuses to error codes. Unmapped statuses
+        # fall back to INTERNAL_ERROR to avoid generating non-existent
+        # codes like "HTTP_418" in error responses.
+        status_map: dict[int, str] = {
+            400: "VALIDATION_ERROR",
+            401: "AUTH_INVALID_KEY",
+            403: "AUTH_INSUFFICIENT_PERMISSIONS",
+            404: "MEMORY_NOT_FOUND",
+            409: "DUPLICATE_RESOURCE",
+            422: "VALIDATION_ERROR",
+            429: "RATE_LIMITED",
+            503: "SERVICE_UNAVAILABLE",
+        }
+        code = status_map.get(exc.status_code, "INTERNAL_ERROR")
+        return _error_response(
+            request,
+            code,
+            exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            exc.status_code,
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logging.getLogger(__name__).exception("Unhandled exception: %s", exc)
+        return _error_response(
+            request,
+            "INTERNAL_ERROR",
+            "An unexpected internal error occurred",
+            500,
         )
 
     # Register V1 routes
@@ -267,7 +316,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v1_connectors.router, prefix="/v1")
     app.include_router(v1_system.router, prefix="/v1")
 
-    # Register V2 routes (currently re-export V1)
+    # Register V2 routes (v0.5.0: substantive improvements over V1)
     from emerald.api.routes.v2 import (
         conflicts as v2_conflicts,
         connectors as v2_connectors,

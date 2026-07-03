@@ -158,6 +158,17 @@ paths:
       summary: Search
       description: Hybrid search across memory (graph) and RAG (vector).
       operationId: search_v1_search_post
+      parameters:
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Page token for pagination
+          title: Page Token
+        description: Page token for pagination
       requestBody:
         required: true
         content:
@@ -447,7 +458,7 @@ paths:
       tags:
       - Upload
       summary: List Files
-      description: List uploaded files for an entity.
+      description: List uploaded files for an entity with cursor-based pagination.
       operationId: list_files_v1_files_get
       parameters:
       - name: entity_id
@@ -463,20 +474,27 @@ paths:
           type: string
           default: done
           title: Status Filter
-      - name: page
+      - name: page_token
         in: query
         required: false
         schema:
-          type: integer
-          default: 1
-          title: Page
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cursor token for pagination
+          title: Page Token
+        description: Cursor token for pagination
       - name: page_size
         in: query
         required: false
         schema:
           type: integer
+          maximum: 100
+          minimum: 1
+          description: Items per page
           default: 20
           title: Page Size
+        description: Items per page
       responses:
         '200':
           description: Successful Response
@@ -1013,6 +1031,17 @@ paths:
       summary: Search
       description: Hybrid search across memory (graph) and RAG (vector).
       operationId: search_v2_search_post
+      parameters:
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Page token for pagination
+          title: Page Token
+        description: Page token for pagination
       requestBody:
         required: true
         content:
@@ -1302,7 +1331,7 @@ paths:
       tags:
       - Upload
       summary: List Files
-      description: List uploaded files for an entity.
+      description: List uploaded files for an entity with cursor-based pagination.
       operationId: list_files_v2_files_get
       parameters:
       - name: entity_id
@@ -1318,20 +1347,27 @@ paths:
           type: string
           default: done
           title: Status Filter
-      - name: page
+      - name: page_token
         in: query
         required: false
         schema:
-          type: integer
-          default: 1
-          title: Page
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cursor token for pagination
+          title: Page Token
+        description: Cursor token for pagination
       - name: page_size
         in: query
         required: false
         schema:
           type: integer
+          maximum: 100
+          minimum: 1
+          description: Items per page
           default: 20
           title: Page Size
+        description: Items per page
       responses:
         '200':
           description: Successful Response

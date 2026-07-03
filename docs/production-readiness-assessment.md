@@ -1,12 +1,10 @@
 # Emerald 生产级可用性评估报告
 
-> **更新日期：2026-06-22**（基于 v0.3.0 + ~36 post-release commits + 今日 3 项补齐 的重新评估）
+> **更新日期：2026-07-03**（基于 v0.5.0-dev，M1+M2 核心工作项完成后的重新评估）
 >
-> **总体结论：Emerald 是一套架构完整、核心能力对齐 Supermemory 的记忆系统。**所有 Stub 项已清零：cross-encoder 重排序（三级降级链）、关系推断（LLM-first）、`/v1/files` 列表、profile config 端点全部实现。
+> **总体结论：Emerald 已具备受控环境生产部署的基础条件。** M1（Dockerfile/K8s/OTEL/基准/CI）和 M2（v2 API/错误码体系/分页/限流头/安全审计/PII 脱敏）全部完成。剩余差距：TypeScript SDK（M2 最后一项）、负载压测验证（D2-D3）、NER/多跳推理（M3）。
 >
-> **剩余未实现能力**：无。cross-encoder 重排序已升至三级降级链（cached CE → embedding cosine → keyword），关系推断已 LLM-first（LLM 优先 + 规则降级），`/v1/files` 列表已修复，profile config PUT/GET/DELETE 端点已实现。
->
-> **可部署性评级：🟢 生产化进行中**。**建议路径**：在受控环境试运行 + 完成 LongMemEval/LoCoMo 基准验证后升级为 v0.8.0 Production-Ready Beta（路线图 M5）。
+> **可部署性评级：🟢 生产化进行中（推进至 70%）。** 建议路径：完成 TS SDK → 负载压测 → v0.8.0 Production-Ready Beta。
 
 ---
 
@@ -35,12 +33,11 @@
 |---|---|---|
 | Docker Compose 开发环境 | 🟢 | 8 个服务完整：API、Worker、Beat、PostgreSQL、Neo4j、Redis、MinIO、Nginx + MCP Server，健康检查齐全 |
 | K8s 生产部署 | 🟢 | Deployment（API/Worker/Beat）、HPA（CPU 70%/Memory 80%）、Ingress（50MB body limit）、Service、CronJob 备份、ConfigMap、Secret、Namespace 全部就绪 |
-| Dockerfile 多阶段构建 | 🟡 | 有 development + production 两阶段，但 production 直接复制 development 的 site-packages，非最优 |
+| Dockerfile 多阶段构建 | 🟢 | v0.4.0: production stage 独立 `pip install`，`.dockerignore` 排除非必要文件，`requirements-prod.txt` 仅含运行时依赖，镜像体积 <1.2GB |
 | 服务依赖管理 | 🟢 | `lifespan` 中按序初始化 Neo4j → Redis → PostgreSQL，关闭时反向释放 |
 | 进程模型 | 🟢 | Uvicorn ASGI + Celery 异步任务队列，符合 Python 高并发最佳实践 |
 
 **风险点：**
-- Dockerfile production stage 直接从 development 复制已安装包，未在 production stage 独立 `pip install`，镜像体积未最小化。
 - `upload.py` 中 MinIO `put_object()` 是同步调用，在 async 路由中直接调用会阻塞事件循环。应使用 `asyncio.to_thread()` 包裹或 MinIO 的 async API。
 
 ---
@@ -84,8 +81,8 @@
 | 健康检查 | 🟢 | `/v1/health` 探测 PostgreSQL、Neo4j、Redis、MinIO，返回 `ok`/`degraded` + 各组件状态 |
 | Prometheus 指标 | 🟢 | `/v1/metrics` 暴露 FastAPI 自动指标（请求数、延迟、状态码分布） |
 | 自定义业务指标 | 🟡 | 未看到自定义指标（如 memory_add_count、search_latency_ms、relationship_infer_count） |
-| 分布式追踪 | 🟡 | 手动 span (`tracing.py`) + FastAPI auto-instrumentation 已就位；httpx/asyncpg/redis/celery 自动 instrumentation 在 M1 A4 计划中 |
-| 告警机制 | 🔴 | 无内置告警规则，需依赖外部 Prometheus Alertmanager |
+| 分布式追踪 | 🟢 | v0.4.0: OTEL auto-instrumentation（FastAPI/httpx/asyncpg/redis/celery）+ 手动 span + trace_id 注入 structlog + collector 部署文档；Neo4j 无 PyPI instrumentation 包，使用手动 span |
+| 告警机制 | 🟡 | `docs/deployment/observability.md` 含告警规则建议，需外部 Prometheus Alertmanager 落地 |
 
 ---
 
@@ -138,8 +135,10 @@
 | 文件大小限制 | 🟢 | upload 50MB 限制 |
 | 输入校验 | 🟢 | Pydantic 模型校验，FastAPI 自动处理 |
 | Webhook 签名验证 | 🟢 | GitHub HMAC-SHA256 验证 |
-| 依赖安全扫描 | 🔴 | 无 Dependabot/Snyk 配置 |
+| 依赖安全扫描 | 🟢 | v0.5.0: `.github/workflows/security.yml` — pip-audit（每周+PR）、Gitleaks 密钥检测、CodeQL 静态分析；`.gitleaks.toml` 含项目定制规则 |
 | SQL 注入防护 | 🟢 | SQLAlchemy 参数化查询 |
+| PII 日志脱敏 | 🟢 | v0.5.0: `emerald/core/sanitizer.py` — structlog processor，生产环境自动启用；覆盖 email/电话/APIkey/IP/信用卡/SSN/JWT + 敏感字段名红action |
+| 安全策略文档 | 🟢 | `SECURITY.md` — 支持版本、漏洞报告流程、信任边界图、12 项安全措施清单 |
 
 ---
 

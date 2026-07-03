@@ -154,3 +154,8 @@ async def rate_limit(request: Request) -> None:
     # Record this request and set TTL
     await redis.zadd(key, {member: now})
     await redis.expire(key, window)
+
+    # Store rate limit metadata for X-RateLimit-* headers middleware
+    request.state.rate_limit_limit = limit
+    request.state.rate_limit_remaining = max(0, limit - int(current) - 1)
+    request.state.rate_limit_reset = int(now + window)
