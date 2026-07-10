@@ -31,6 +31,7 @@ interface GraphLink extends SimulationLinkDatum<GraphNode> {
 interface KnowledgeGraphProps {
   memories: SearchMemory[];
   onNodeClick?: (memory: SearchMemory) => void;
+  zoomLevel?: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────
@@ -47,9 +48,15 @@ const TYPE_EMOJIS: Record<string, string> = {
   episodic: "💭",
 };
 
+const NS = "http://www.w3.org/2000/svg";
+
 // ─── Component ────────────────────────────────────────────────────────
 
-export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
+export function KnowledgeGraph({
+  memories,
+  onNodeClick,
+  zoomLevel = 1,
+}: KnowledgeGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<Simulation<GraphNode, GraphLink> | null>(null);
@@ -128,18 +135,20 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
 
     // ── Setup SVG ──
     const svgEl = svg as unknown as SVGSVGElement;
-    // Clear
     let child = svgEl.lastChild;
     while (child) {
       svgEl.removeChild(child);
       child = svgEl.lastChild;
     }
 
-    const ns = "http://www.w3.org/2000/svg";
+    // Root group for zoom
+    const root = document.createElementNS(NS, "g");
+    root.setAttribute("class", "root");
+    svgEl.appendChild(root);
 
     // Defs
-    const defs = document.createElementNS(ns, "defs");
-    const marker = document.createElementNS(ns, "marker");
+    const defs = document.createElementNS(NS, "defs");
+    const marker = document.createElementNS(NS, "marker");
     marker.setAttribute("id", "arrow");
     marker.setAttribute("viewBox", "0 -5 10 10");
     marker.setAttribute("refX", "20");
@@ -147,12 +156,12 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
     marker.setAttribute("markerWidth", "6");
     marker.setAttribute("markerHeight", "6");
     marker.setAttribute("orient", "auto");
-    const arrowPath = document.createElementNS(ns, "path");
+    const arrowPath = document.createElementNS(NS, "path");
     arrowPath.setAttribute("d", "M0,-5L10,0L0,5");
     arrowPath.setAttribute("fill", "#a1a1aa");
     marker.appendChild(arrowPath);
     defs.appendChild(marker);
-    svgEl.appendChild(defs);
+    root.appendChild(defs);
 
     // ── Physics ──
     const simulation = forceSimulation<GraphNode>(nodes)
@@ -169,11 +178,11 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
     simRef.current = simulation;
 
     // ── Link lines ──
-    const linkGroup = document.createElementNS(ns, "g");
+    const linkGroup = document.createElementNS(NS, "g");
     linkGroup.setAttribute("class", "links");
     const linkElements: SVGLineElement[] = [];
     for (const _ of links) {
-      const line = document.createElementNS(ns, "line");
+      const line = document.createElementNS(NS, "line");
       line.setAttribute("stroke", "#d4d4d8");
       line.setAttribute("stroke-width", "1.5");
       line.setAttribute("stroke-dasharray", "4 2");
@@ -181,15 +190,15 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
       linkGroup.appendChild(line);
       linkElements.push(line);
     }
-    svgEl.appendChild(linkGroup);
+    root.appendChild(linkGroup);
 
     // ── Link labels ──
-    const labelGroup = document.createElementNS(ns, "g");
+    const labelGroup = document.createElementNS(NS, "g");
     labelGroup.setAttribute("class", "link-labels");
     const labelElements: SVGTextElement[] = [];
     for (const l of links) {
       if (l.label) {
-        const text = document.createElementNS(ns, "text");
+        const text = document.createElementNS(NS, "text");
         text.setAttribute("font-size", "9");
         text.setAttribute("fill", "#71717a");
         text.setAttribute("text-anchor", "middle");
@@ -198,18 +207,18 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
         labelElements.push(text);
       }
     }
-    svgEl.appendChild(labelGroup);
+    root.appendChild(labelGroup);
 
     // ── Nodes ──
-    const nodeGroup = document.createElementNS(ns, "g");
+    const nodeGroup = document.createElementNS(NS, "g");
     nodeGroup.setAttribute("class", "nodes");
     const nodeRects: Record<string, SVGGElement> = {};
 
     for (const n of nodes) {
-      const g = document.createElementNS(ns, "g");
+      const g = document.createElementNS(NS, "g");
       g.setAttribute("cursor", "pointer");
 
-      const circle = document.createElementNS(ns, "circle");
+      const circle = document.createElementNS(NS, "circle");
       circle.setAttribute("r", String(n.radius));
       circle.setAttribute("fill", TYPE_COLORS[n.type] ?? "#6b7280");
       circle.setAttribute("stroke", "#fff");
@@ -217,14 +226,14 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
       circle.setAttribute("opacity", "0.85");
       g.appendChild(circle);
 
-      const emoji = document.createElementNS(ns, "text");
+      const emoji = document.createElementNS(NS, "text");
       emoji.setAttribute("text-anchor", "middle");
       emoji.setAttribute("dy", "0.35em");
       emoji.setAttribute("font-size", String(Math.max(10, n.radius * 0.6)));
       emoji.textContent = TYPE_EMOJIS[n.type] ?? "📄";
       g.appendChild(emoji);
 
-      const label = document.createElementNS(ns, "text");
+      const label = document.createElementNS(NS, "text");
       label.setAttribute("text-anchor", "middle");
       label.setAttribute("dy", String(n.radius + 14));
       label.setAttribute("font-size", "10");
@@ -232,8 +241,7 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
       label.textContent = n.label + (n.label.length >= 40 ? "…" : "");
       g.appendChild(label);
 
-      // Tooltip
-      const title = document.createElementNS(ns, "title");
+      const title = document.createElementNS(NS, "title");
       title.textContent = `${memoryTypeLabel(n.type)} | 置信度: ${Math.round(n.score * 100)}%\n${n.label}`;
       g.appendChild(title);
 
@@ -258,8 +266,8 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
       const dragMove = (e: MouseEvent) => {
         if (!dragActive) return;
         const rect = svgEl.getBoundingClientRect();
-        n.fx = e.clientX - rect.left;
-        n.fy = e.clientY - rect.top;
+        n.fx = (e.clientX - rect.left) / zoomLevel;
+        n.fy = (e.clientY - rect.top) / zoomLevel;
       };
       const dragEnd = () => {
         dragActive = false;
@@ -274,7 +282,13 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
       nodeGroup.appendChild(g);
       nodeRects[n.id] = g;
     }
-    svgEl.appendChild(nodeGroup);
+    root.appendChild(nodeGroup);
+
+    // ── Apply zoom ──
+    root.setAttribute(
+      "transform",
+      `translate(${width / 2},${height / 2}) scale(${zoomLevel}) translate(${-width / 2},${-height / 2})`
+    );
 
     // ── Tick ──
     simulation.on("tick", () => {
@@ -310,7 +324,7 @@ export function KnowledgeGraph({ memories, onNodeClick }: KnowledgeGraphProps) {
     return () => {
       simulation.stop();
     };
-  }, [memories, dimensions, graphData, onNodeClick]);
+  }, [memories, dimensions, graphData, onNodeClick, zoomLevel]);
 
   if (memories.length === 0) {
     return (

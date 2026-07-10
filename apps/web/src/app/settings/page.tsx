@@ -21,13 +21,13 @@ import {
 import { useQuery } from "@tanstack/react-query";
 
 export default function SettingsPage() {
-  const { connected, hydrateFromStorage } = useAppStore();
+  const { connected, demoMode, hydrateFromStorage } = useAppStore();
 
   useEffect(() => {
     hydrateFromStorage();
   }, [hydrateFromStorage]);
 
-  if (!connected) {
+  if (!connected && !demoMode) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-zinc-950">
         <ConnectionPanel />
