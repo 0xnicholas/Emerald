@@ -1,23 +1,54 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Send, Bot, User, Brain, Loader, Sparkles } from "lucide-react";
+import {
+  Send, Bot, User, Brain, Loader, Sparkles, Search, MessageSquare,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/typography";
 import { cn } from "@/lib/utils";
-import { createMessage, getDemoResponse, type ChatMessage } from "./types";
+import { getClient } from "@/lib/api";
+import { useAppStore } from "@/stores/app";
+import { getMockSearchResults } from "@/lib/mock-data";
+import {
+  createMessage, formatMemoryResponse,
+  type ChatMessage, type ChatSession,
+} from "./types";
+import type { SearchMemory } from "@/lib/types";
 
 interface ChatInterfaceProps {
   onClose?: () => void;
 }
 
+const SESSIONS_KEY = "emerald:chat-sessions";
+
+function readSessions(): ChatSession[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveSessions(sessions: ChatSession[]) {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+  } catch { /* noop */ }
+}
+
+const WELCOME = "I'm your memory assistant. I can search through your saved memories to answer questions about what you've learned, your preferences, and past events. Try asking me something!";
+
 export function ChatInterface({ onClose }: ChatInterfaceProps) {
+  const entityId = useAppStore((s) => s.entityId);
+  const demoMode = useAppStore((s) => s.demoMode);
+
+  const [sessions, setSessions] = useState<ChatSession[]>(readSessions);
+  const [activeSession, setActiveSession] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    createMessage("assistant", "Hello! I'm your memory assistant. Ask me anything about what I know about you and your projects."),
+    createMessage("assistant", WELCOME),
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -32,31 +63,79 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
 
   useEffect(() => {
     inputRef.current?.focus();
-  }, []);
+  }, [activeSession]);
 
-  const handleSend = async () => {
+  const saveCurrentSession = useCallback((msgs: ChatMessage[]) => {
+    const title = msgs.find((m) => m.role === "user")?.content.slice(0, 60) || "Chat";
+    const session: ChatSession = {
+      id: activeSession || `session_${Date.now()}`,
+      title,
+      messages: msgs,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const updated = [session, ...sessions.filter((s) => s.id !== session.id)];
+    setSessions(updated);
+    saveSessions(updated);
+    if (!activeSession) setActiveSession(session.id);
+  }, [activeSession, sessions]);
+
+  const handleSend = useCallback(async () => {
     if (!input.trim() || isLoading) return;
+    const q = input.trim();
 
-    const userMsg = createMessage("user", input.trim());
-    setMessages((prev) => [...prev, userMsg]);
+    const userMsg = createMessage("user", q);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInput("");
     setIsLoading(true);
 
-    // Simulate AI response delay
-    await new Promise((r) => setTimeout(r, 800 + Math.random() * 1200));
+    try {
+      // Search memories
+      let results: SearchMemory[];
+      if (demoMode) {
+        const data = getMockSearchResults(q);
+        results = data.results.slice(0, 8);
+      } else {
+        const data = await getClient().search(q, entityId, {
+          searchMode: "hybrid",
+          topK: 8,
+        });
+        results = data.results;
+      }
 
-    const response = getDemoResponse();
-    const botMsg = createMessage("assistant", response);
-    setMessages((prev) => [...prev, botMsg]);
-    setIsLoading(false);
-  };
+      await new Promise((r) => setTimeout(r, 300 + Math.random() * 200));
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+      const { text, memories } = formatMemoryResponse(q, results);
+      const botMsg = createMessage("assistant", text, memories);
+      const finalMessages = [...newMessages, botMsg];
+      setMessages(finalMessages);
+      saveCurrentSession(finalMessages);
+    } catch {
+      const errorMsg = createMessage("assistant", "Sorry, I encountered an error searching your memories. Please try again.");
+      const finalMessages = [...newMessages, errorMsg];
+      setMessages(finalMessages);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [input, isLoading, messages, entityId, demoMode, saveCurrentSession]);
+
+  const handleNewChat = useCallback(() => {
+    setActiveSession(null);
+    setMessages([createMessage("assistant", WELCOME)]);
+  }, []);
+
+  const loadSession = useCallback((session: ChatSession) => {
+    setActiveSession(session.id);
+    setMessages(session.messages);
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-  };
+  }, [handleSend]);
 
   return (
     <div className="flex h-full flex-col">
@@ -71,7 +150,32 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
             <p className="text-[10px] text-fg-faint">Ask about your memories</p>
           </div>
         </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleNewChat} title="New chat">
+            <MessageSquare className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
+
+      {/* Sessions list (collapsed) */}
+      {sessions.length > 0 && (
+        <div className="border-b border-surface-border/30 px-3 py-1.5 flex gap-1.5 overflow-x-auto scrollbar-thin">
+          {sessions.slice(0, 5).map((s) => (
+            <button
+              key={s.id}
+              onClick={() => loadSession(s)}
+              className={cn(
+                "shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors whitespace-nowrap",
+                activeSession === s.id
+                  ? "bg-brand-accent-subtle text-brand-accent"
+                  : "bg-surface-hover text-fg-muted hover:text-fg-primary"
+              )}
+            >
+              {s.title.slice(0, 24)}{s.title.length > 24 ? "…" : ""}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Messages */}
       <ScrollArea ref={scrollRef} className="flex-1">
@@ -95,23 +199,40 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
                 )}
                 <div
                   className={cn(
-                    "max-w-[80%] rounded-[18px] px-4 py-2.5",
+                    "max-w-[85%] rounded-[18px] px-4 py-2.5",
                     msg.role === "user"
                       ? "bg-brand-accent text-white"
                       : "border border-surface-border bg-surface-card/60 backdrop-blur-md"
                   )}
                 >
-                  <p className={cn(
-                    "text-sm leading-relaxed",
+                  <div className={cn(
+                    "text-sm leading-relaxed whitespace-pre-wrap",
                     msg.role === "user" ? "text-white" : "text-fg-primary"
                   )}>
                     {msg.content}
-                  </p>
+                  </div>
+
+                  {/* Related memories citations */}
+                  {msg.role === "assistant" && msg.relatedMemories && msg.relatedMemories.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-surface-border/30 space-y-1">
+                      <div className="flex items-center gap-1 text-[10px] text-fg-faint">
+                        <Brain className="h-3 w-3" />
+                        Sources
+                      </div>
+                      {msg.relatedMemories.slice(0, 3).map((mem) => (
+                        <div key={mem.id} className="flex items-start gap-1.5 text-[10px] text-fg-muted">
+                          <Search className="h-2.5 w-2.5 mt-0.5 shrink-0" />
+                          <span className="line-clamp-1">{mem.content}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <p className={cn(
                     "mt-1 text-[10px]",
                     msg.role === "user" ? "text-white/60" : "text-fg-faint"
                   )}>
-                    {msg.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                    {new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
                 {msg.role === "user" && (
@@ -134,7 +255,7 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
               </div>
               <div className="flex items-center gap-1.5 rounded-[18px] border border-surface-border bg-surface-card/60 px-4 py-2.5 backdrop-blur-md">
                 <Loader className="h-3.5 w-3.5 animate-spin text-brand-accent" />
-                <span className="text-xs text-fg-muted">Thinking...</span>
+                <span className="text-xs text-fg-muted">Searching memories...</span>
               </div>
             </motion.div>
           )}
@@ -159,7 +280,11 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
             disabled={!input.trim() || isLoading}
             className="h-8 w-8 shrink-0 rounded-xl"
           >
-            <Send className="h-4 w-4" />
+            {isLoading ? (
+              <Loader className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </div>

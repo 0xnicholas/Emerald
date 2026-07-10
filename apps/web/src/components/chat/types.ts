@@ -13,7 +13,7 @@ export interface ChatSession {
   title: string;
   messages: ChatMessage[];
   createdAt: Date;
-  model: string;
+  updatedAt: Date;
 }
 
 let messageCounter = 0;
@@ -33,42 +33,42 @@ export function createMessage(
   };
 }
 
-const DEMO_RESPONSES = [
-  "Based on the memories I have, you've been working on Emerald's knowledge graph architecture. You prefer TypeScript and have experience with both frontend and backend development. Would you like to explore specific aspects of the project?",
-  "I remember you were researching knowledge graph databases comparing Neo4j and SurrealDB. The key difference is that Neo4j is more mature with better tooling, while SurrealDB offers built-in vector search which could reduce infrastructure complexity.",
-  "Your recent focus has been on the payment module microservices refactoring. You mentioned adopting CQRS pattern for the payment system architecture. Would you like me to find the relevant architectural decisions?",
-  "I found several memories about your preference for async communication and morning code reviews. Your typical workflow involves deep work in the afternoon after reviewing PRs in the morning.",
-];
+export function formatMemoryResponse(
+  query: string,
+  results: SearchMemory[]
+): { text: string; memories: SearchMemory[] } {
+  if (results.length === 0) {
+    return {
+      text: "I couldn't find any relevant memories for that query. Try asking about something else, or add more information to your knowledge base.",
+      memories: [],
+    };
+  }
 
-let demoIdx = 0;
+  const facts = results.filter((r) => r.memory_type === "fact").slice(0, 3);
+  const preferences = results.filter((r) => r.memory_type === "preference").slice(0, 2);
+  const episodes = results.filter((r) => r.memory_type === "episodic").slice(0, 2);
 
-export function getDemoResponse(): string {
-  const r = DEMO_RESPONSES[demoIdx % DEMO_RESPONSES.length];
-  demoIdx++;
-  return r;
+  const parts: string[] = [];
+  if (facts.length > 0) {
+    parts.push("Here's what I found:");
+    parts.push(facts.map((r) => `• ${r.content}`).join("\n"));
+  }
+  if (preferences.length > 0) {
+    parts.push("\nRegarding your preferences:");
+    parts.push(preferences.map((r) => `• ${r.content}`).join("\n"));
+  }
+  if (episodes.length > 0) {
+    parts.push("\nRelevant past events:");
+    parts.push(episodes.map((r) => `• ${r.summary || r.content}`).join("\n"));
+  }
+
+  if (facts.length + preferences.length + episodes.length < results.length) {
+    const remaining = results.length - facts.length - preferences.length - episodes.length;
+    parts.push(`\n_+${remaining} more related memories_`);
+  }
+
+  return {
+    text: parts.join("\n\n"),
+    memories: results.slice(0, 8),
+  };
 }
-
-export const DEMO_SESSIONS: ChatSession[] = [
-  {
-    id: "session_1",
-    title: "Emerald architecture discussion",
-    messages: [
-      createMessage("user", "What have I been working on recently?"),
-      createMessage("assistant", DEMO_RESPONSES[0]),
-      createMessage("user", "Tell me about the database choices"),
-      createMessage("assistant", DEMO_RESPONSES[1]),
-    ],
-    createdAt: new Date(Date.now() - 3600000),
-    model: "emerald-memory",
-  },
-  {
-    id: "session_2",
-    title: "Payment module refactoring",
-    messages: [
-      createMessage("user", "What was my decision on the payment architecture?"),
-      createMessage("assistant", DEMO_RESPONSES[2]),
-    ],
-    createdAt: new Date(Date.now() - 86400000),
-    model: "emerald-memory",
-  },
-];
