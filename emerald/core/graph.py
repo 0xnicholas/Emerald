@@ -28,6 +28,8 @@ class GraphStore:
         self._driver = None
         # In-memory store: entity_id → list of memory dicts
         self._memories: dict[str, list[dict[str, Any]]] = {}
+        # In-memory store: "space:{entity_id}" → list of space dicts
+        self._spaces: dict[str, list[dict[str, Any]]] = {}
 
     def _init_driver(self) -> None:
         """Lazy-init Neo4j driver; retry on each call if not yet available."""
@@ -808,3 +810,348 @@ class GraphStore:
                         rel[key] = value
                         return True
         return False
+
+    # ------------------------------------------------------------------
+    # Space CRUD
+    # ------------------------------------------------------------------
+
+    async def create_space(
+        self,
+        container_tag: str,
+        name: str,
+        emoji: str,
+        entity_id: str,
+    ) -> dict[str, Any]:
+        """Create a Space node linked to an Entity via [:HAS_SPACE].
+
+        Uses MERGE for idempotency — calling twice with the same args
+        will not create duplicates.
+
+        Returns the space dict.
+        """
+        self._init_driver()
+        now = datetime.now(UTC)
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MERGE (e:Entity {id: $entity_id})
+                    ON CREATE SET e.created_at = datetime(), e.type = "user"
+                    WITH e
+                    MERGE (e)-[:HAS_SPACE]->(s:Space {
+                        container_tag: $container_tag,
+                        entity_id: $entity_id
+                    })
+                    ON CREATE SET
+                        s.name = $name,
+                        s.emoji = $emoji,
+                        s.created_at = datetime(),
+                        s.updated_at = datetime()
+                    RETURN s.container_tag AS container_tag,
+                           s.name AS name,
+                           s.emoji AS emoji,
+                           s.entity_id AS entity_id,
+                           s.created_at AS created_at,
+                           s.updated_at AS updated_at
+                    """,
+                    entity_id=entity_id,
+                    container_tag=container_tag,
+                    name=name,
+                    emoji=emoji,
+                )
+                record = await result.single()
+                if record:
+                    return {
+                        "container_tag": record["container_tag"],
+                        "name": record["name"],
+                        "emoji": record["emoji"],
+                        "entity_id": record["entity_id"],
+                        "created_at": record["created_at"],
+                        "updated_at": record["updated_at"],
+                    }
+                # Fallback: build from inputs (should not normally reach here)
+                return {
+                    "container_tag": container_tag,
+                    "name": name,
+                    "emoji": emoji,
+                    "entity_id": entity_id,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+
+        # In-memory fallback
+        key = f"space:{entity_id}"
+        spaces = self._spaces.setdefault(key, [])
+        for space in spaces:
+            if space["container_tag"] == container_tag:
+                return space
+        space = {
+            "container_tag": container_tag,
+            "name": name,
+            "emoji": emoji,
+            "entity_id": entity_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        spaces.append(space)
+        return space
+
+    async def list_spaces(
+        self,
+        entity_id: str,
+    ) -> list[dict[str, Any]]:
+        """List all Spaces for an entity with memory_count.
+
+        Uses OPTIONAL MATCH to count memories per space.
+        Ordered: default first, then by name.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (e:Entity {id: $entity_id})-[:HAS_SPACE]->(s:Space)
+                    OPTIONAL MATCH (m:Memory {
+                        entity_id: $entity_id,
+                        container_tag: s.container_tag
+                    })
+                    WITH s, count(m) AS memory_count
+                    RETURN s.container_tag AS container_tag,
+                           s.name AS name,
+                           s.emoji AS emoji,
+                           s.entity_id AS entity_id,
+                           s.created_at AS created_at,
+                           s.updated_at AS updated_at,
+                           memory_count
+                    ORDER BY
+                      CASE WHEN s.container_tag = 'default' THEN 0 ELSE 1 END,
+                      s.name
+                    """,
+                    entity_id=entity_id,
+                )
+                spaces = []
+                async for record in result:
+                    spaces.append({
+                        "container_tag": record["container_tag"],
+                        "name": record["name"],
+                        "emoji": record["emoji"],
+                        "entity_id": record["entity_id"],
+                        "created_at": record["created_at"],
+                        "updated_at": record["updated_at"],
+                        "memory_count": record["memory_count"],
+                    })
+                return spaces
+
+        # In-memory fallback
+        key = f"space:{entity_id}"
+        spaces = self._spaces.get(key, [])
+        result = []
+        for s in spaces:
+            count = sum(
+                1
+                for m in self._memories.get(entity_id, [])
+                if m.get("container_tag") == s["container_tag"]
+            )
+            result.append({**s, "memory_count": count})
+        result.sort(key=lambda x: (0 if x["container_tag"] == "default" else 1, x.get("name", "")))
+        return result
+
+    async def update_space(
+        self,
+        container_tag: str,
+        entity_id: str,
+        name: str | None = None,
+        emoji: str | None = None,
+    ) -> dict[str, Any]:
+        """Update Space name and/or emoji.
+
+        Returns the updated space dict.
+        """
+        self._init_driver()
+        now = datetime.now(UTC)
+
+        if self._use_db and self._driver:
+            sets = []
+            params: dict[str, Any] = {
+                "container_tag": container_tag,
+                "entity_id": entity_id,
+            }
+            if name is not None:
+                sets.append("s.name = $name")
+                params["name"] = name
+            if emoji is not None:
+                sets.append("s.emoji = $emoji")
+                params["emoji"] = emoji
+            sets.append("s.updated_at = datetime()")
+
+            async with self._driver.session() as session:
+                await session.run(
+                    f"""
+                    MATCH (s:Space {{container_tag: $container_tag, entity_id: $entity_id}})
+                    SET {', '.join(sets)}
+                    """,
+                    **params,
+                )
+
+            # Re-fetch to return updated state
+            return await self.get_space(container_tag, entity_id)
+
+        # In-memory fallback
+        key = f"space:{entity_id}"
+        spaces = self._spaces.get(key, [])
+        for s in spaces:
+            if s["container_tag"] == container_tag:
+                if name is not None:
+                    s["name"] = name
+                if emoji is not None:
+                    s["emoji"] = emoji
+                s["updated_at"] = now
+                return s
+        return {
+            "container_tag": container_tag,
+            "entity_id": entity_id,
+            "name": name,
+            "emoji": emoji,
+            "updated_at": now,
+        }
+
+    async def get_space(
+        self,
+        container_tag: str,
+        entity_id: str,
+    ) -> dict[str, Any]:
+        """Get a single Space by container_tag + entity_id.
+
+        Internal helper used by update_space to return updated state.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (s:Space {container_tag: $container_tag, entity_id: $entity_id})
+                    RETURN s.container_tag AS container_tag,
+                           s.name AS name,
+                           s.emoji AS emoji,
+                           s.entity_id AS entity_id,
+                           s.created_at AS created_at,
+                           s.updated_at AS updated_at
+                    """,
+                    container_tag=container_tag,
+                    entity_id=entity_id,
+                )
+                record = await result.single()
+                if record:
+                    return {
+                        "container_tag": record["container_tag"],
+                        "name": record["name"],
+                        "emoji": record["emoji"],
+                        "entity_id": record["entity_id"],
+                        "created_at": record["created_at"],
+                        "updated_at": record["updated_at"],
+                    }
+                raise ValueError(
+                    f"Space not found: container_tag={container_tag}, entity_id={entity_id}"
+                )
+
+        # In-memory fallback
+        key = f"space:{entity_id}"
+        spaces = self._spaces.get(key, [])
+        for s in spaces:
+            if s["container_tag"] == container_tag:
+                return s
+        raise ValueError(
+            f"Space not found: container_tag={container_tag}, entity_id={entity_id}"
+        )
+
+    async def delete_space(
+        self,
+        container_tag: str,
+        entity_id: str,
+        migrate_to_default: bool = True,
+    ) -> None:
+        """Delete a Space node.
+
+        If ``migrate_to_default`` is True (default), all memories with
+        this container_tag are re-assigned to "default" first.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                if migrate_to_default:
+                    await session.run(
+                        """
+                        MATCH (m:Memory {entity_id: $entity_id, container_tag: $container_tag})
+                        SET m.container_tag = 'default'
+                        """,
+                        entity_id=entity_id,
+                        container_tag=container_tag,
+                    )
+                await session.run(
+                    """
+                    MATCH (s:Space {container_tag: $container_tag, entity_id: $entity_id})
+                    DETACH DELETE s
+                    """,
+                    container_tag=container_tag,
+                    entity_id=entity_id,
+                )
+            return
+
+        # In-memory fallback
+        key = f"space:{entity_id}"
+        if migrate_to_default:
+            for m in self._memories.get(entity_id, []):
+                if m.get("container_tag") == container_tag:
+                    m["container_tag"] = "default"
+        spaces = self._spaces.get(key, [])
+        self._spaces[key] = [
+            s for s in spaces if s["container_tag"] != container_tag
+        ]
+
+    async def ensure_default_spaces(self) -> int:
+        """Create a default Space for every Entity that doesn't have one.
+
+        Returns the number of spaces created.
+        """
+        self._init_driver()
+        now = datetime.now(UTC)
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (e:Entity)
+                    WHERE NOT (e)-[:HAS_SPACE]->(:Space {container_tag: 'default'})
+                    CREATE (s:Space {
+                        container_tag: 'default',
+                        name: 'My Space',
+                        emoji: '📁',
+                        entity_id: e.id,
+                        created_at: datetime(),
+                        updated_at: datetime()
+                    })
+                    CREATE (e)-[:HAS_SPACE]->(s)
+                    RETURN count(s) AS created
+                    """,
+                )
+                record = await result.single()
+                return record["created"] if record else 0
+
+        # In-memory fallback: iterate over all entities with memories
+        created = 0
+        for eid in list(self._memories.keys()):
+            key = f"space:{eid}"
+            spaces = self._spaces.get(key, [])
+            if not any(s["container_tag"] == "default" for s in spaces):
+                spaces.append({
+                    "container_tag": "default",
+                    "name": "My Space",
+                    "emoji": "📁",
+                    "entity_id": eid,
+                    "created_at": now,
+                    "updated_at": now,
+                })
+                self._spaces[key] = spaces
+                created += 1
+        return created
