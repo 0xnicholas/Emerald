@@ -10,6 +10,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   Brain,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
@@ -26,6 +27,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const setChatOpen = useAppStore((s) => s.setChatOpen);
 
   return (
     <aside
@@ -64,6 +66,15 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Chat button */}
+        <button
+          onClick={() => setChatOpen(true)}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-primary"
+        >
+          <MessageSquare className="h-5 w-5 shrink-0" />
+          {sidebarOpen && <span>Memory Chat</span>}
+        </button>
       </nav>
 
       {/* Toggle */}

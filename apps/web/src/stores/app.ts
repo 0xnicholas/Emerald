@@ -15,6 +15,7 @@ interface AppState {
 
   // UI state
   sidebarOpen: boolean;
+  chatOpen: boolean;
 
   // Actions
   setApiKey: (key: string) => void;
@@ -25,6 +26,7 @@ interface AppState {
   setProfile: (p: Profile | null) => void;
   setProfileLoading: (v: boolean) => void;
   toggleSidebar: () => void;
+  setChatOpen: (v: boolean) => void;
   hydrateFromStorage: () => void;
 }
 
@@ -37,6 +39,7 @@ export const useAppStore = create<AppState>((set) => ({
   profile: null,
   profileLoading: false,
   sidebarOpen: true,
+  chatOpen: false,
 
   setApiKey: (key) => {
     localStorage.setItem("emerald_api_key", key);
@@ -55,6 +58,7 @@ export const useAppStore = create<AppState>((set) => ({
   setProfile: (p) => set({ profile: p }),
   setProfileLoading: (v) => set({ profileLoading: v }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  setChatOpen: (v) => set({ chatOpen: v }),
 
   hydrateFromStorage: () => {
     if (typeof window === "undefined") return;
