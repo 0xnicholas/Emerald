@@ -1,7 +1,7 @@
 """API schema package."""
 
 from emerald.api.schemas.common import ErrorResponse, MetaResponse
-from emerald.api.schemas.memories import AddMemoryRequest, AddMemoryResponse, BatchAddMemoryRequest, MemoryResponse
+from emerald.api.schemas.memories import AddMemoryRequest, AddMemoryResponse, BatchAddMemoryRequest, MemoryResponse, UpdateMemoryRequest
 from emerald.api.schemas.pipeline import PipelineStatusResponse
 from emerald.api.schemas.spaces import SpaceCreateRequest, SpaceResponse, SpaceUpdateRequest
 from emerald.api.schemas.profiles import ProfileConfig, ProfileFact, ProfileResponse
@@ -12,6 +12,7 @@ __all__ = [
     "AddMemoryRequest", "AddMemoryResponse", "BatchAddMemoryRequest", "MemoryResponse",
     "SearchRequest", "SearchResponse", "SearchResultItem",
     "ProfileResponse", "ProfileFact", "ProfileConfig",
+    "UpdateMemoryRequest",
     "PipelineStatusResponse",
     "SpaceCreateRequest", "SpaceUpdateRequest", "SpaceResponse",
 ]

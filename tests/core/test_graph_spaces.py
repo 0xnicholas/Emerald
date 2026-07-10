@@ -219,3 +219,35 @@ async def test_ensure_default_spaces_idempotent(graph):
     spaces = await graph.list_spaces("user_001")
     defaults = [s for s in spaces if s["container_tag"] == "default"]
     assert len(defaults) == 1
+
+
+@pytest.mark.asyncio
+async def test_update_memory_fields(graph):
+    """update_memory() should update only the provided fields."""
+    await graph.create_space("default", "My Space", "📁", "user_test")
+    await graph.create_memory(
+        content="original content",
+        entity_id="user_test",
+        container_tag="default",
+    )
+    # Find the memory ID
+    memories = graph._memories.get("user_test", [])
+    assert len(memories) == 1
+    mem_id = memories[0]["id"]
+    assert memories[0]["content"] == "original content"
+
+    # Update only content
+    await graph.update_memory(mem_id, content="updated content")
+    assert memories[0]["content"] == "updated content"
+    assert memories[0]["memory_type"] == "fact"  # unchanged
+
+    # Update only memory_type
+    await graph.update_memory(mem_id, memory_type="preference")
+    assert memories[0]["memory_type"] == "preference"
+    assert memories[0]["content"] == "updated content"  # unchanged
+
+    # Update multiple fields
+    await graph.update_memory(mem_id, content="final", summary="a summary", confidence=0.95)
+    assert memories[0]["content"] == "final"
+    assert memories[0]["summary"] == "a summary"
+    assert memories[0]["confidence"] == 0.95

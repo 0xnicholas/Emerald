@@ -13,7 +13,7 @@ from emerald.api.dependencies import (
     rate_limit,
     require_write_permission,
 )
-from emerald.api.schemas import AddMemoryRequest, BatchAddMemoryRequest, MemoryResponse
+from emerald.api.schemas import AddMemoryRequest, BatchAddMemoryRequest, MemoryResponse, UpdateMemoryRequest
 
 router = APIRouter(tags=["Memories"])
 
@@ -123,6 +123,30 @@ async def validate_memory(memory_id: str, request: Request) -> dict:
 
     return {
         "data": {"validated": True, "memory_id": memory_id},
+        "meta": {
+            "request_id": getattr(request.state, "request_id", ""),
+            "took_ms": int((time.perf_counter() - start) * 1000),
+        },
+    }
+
+
+@router.patch("/memories/{memory_id}", dependencies=[Depends(api_key_auth), Depends(require_write_permission), Depends(rate_limit)])
+async def update_memory(memory_id: str, body: UpdateMemoryRequest, request: Request) -> dict:
+    """Update a memory's content, summary, type, and/or confidence."""
+    start = time.perf_counter()
+    engine = _get_engine(request)
+    memory = await _get_authorized_memory(engine, request, memory_id)
+
+    update_kwargs = body.model_dump(exclude_none=True)
+    if not update_kwargs:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    await engine.graph.update_memory(memory_id, **update_kwargs)
+    # Refresh profile so changes are reflected
+    await engine.profile_manager.invalidate(memory.get("entity_id", ""))
+
+    return {
+        "data": {"updated": True, "memory_id": memory_id},
         "meta": {
             "request_id": getattr(request.state, "request_id", ""),
             "took_ms": int((time.perf_counter() - start) * 1000),

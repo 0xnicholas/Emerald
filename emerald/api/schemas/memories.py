@@ -96,6 +96,13 @@ class MemoryResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class UpdateMemoryRequest(BaseModel):
+    content: str | None = Field(default=None, examples=["Updated content"])
+    summary: str | None = Field(default=None, examples=["Updated summary"])
+    memory_type: str | None = Field(default=None, pattern=r"^(fact|preference|episodic)$")
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class BatchAddMemoryRequest(BaseModel):
     memories: list[AddMemoryRequest] = Field(
         max_length=50,

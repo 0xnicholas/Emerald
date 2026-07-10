@@ -380,6 +380,62 @@ class GraphStore:
                         m["replaced_by"] = replaced_by
                     return
 
+    async def update_memory(
+        self,
+        memory_id: str,
+        *,
+        content: str | None = None,
+        summary: str | None = None,
+        memory_type: str | None = None,
+        confidence: float | None = None,
+    ) -> None:
+        """Update a memory's content, summary, type, and/or confidence."""
+        self._init_driver()
+        sets = []
+        params: dict[str, object] = {"id": memory_id}
+        now = datetime.now(UTC)
+
+        if content is not None:
+            sets.append("m.content = $content")
+            params["content"] = content
+        if summary is not None:
+            sets.append("m.summary = $summary")
+            params["summary"] = summary
+        if memory_type is not None:
+            sets.append("m.memory_type = $memory_type")
+            params["memory_type"] = memory_type
+        if confidence is not None:
+            sets.append("m.confidence = $confidence")
+            params["confidence"] = confidence
+
+        if not sets:
+            return  # nothing to update
+
+        sets.append("m.updated_at = datetime()")
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    "MATCH (m:Memory {id: $id})"
+                    f" SET {', '.join(sets)}",
+                    **params,
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == memory_id:
+                    if content is not None:
+                        m["content"] = content
+                    if summary is not None:
+                        m["summary"] = summary
+                    if memory_type is not None:
+                        m["memory_type"] = memory_type
+                    if confidence is not None:
+                        m["confidence"] = confidence
+                    m["updated_at"] = now
+                    return
+
     async def update_memory_confidence(
         self, memory_id: str, confidence: float
     ) -> None:
