@@ -5,7 +5,7 @@ FROM python:3.12-slim AS development
 WORKDIR /app
 
 # System dependencies (full set for dev)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ffmpeg \
     tesseract-ocr \
@@ -18,6 +18,7 @@ COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
 COPY . .
+RUN pip install --no-cache-dir -e .
 
 # ---- Production stage (v0.4.0: independent pip install) ----
 FROM python:3.12-slim AS production

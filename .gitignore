@@ -16,3 +16,4 @@ backups/*
 
 # Local secrets
 .env.local
+.env.docker

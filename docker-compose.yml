@@ -16,7 +16,7 @@ services:
     volumes:
       - .:/app
     env_file:
-      - .env
+      - .env.docker
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
     volumes:
       - .:/app
     env_file:
-      - .env
+      - .env.docker
     depends_on:
       - api
       - redis
@@ -64,7 +64,7 @@ services:
     volumes:
       - .:/app
     env_file:
-      - .env
+      - .env.docker
     depends_on:
       - redis
       - postgres
@@ -194,7 +194,30 @@ services:
     ports:
       - "8001:8001"
     env_file:
-      - .env
+      - .env.docker
+    depends_on:
+      - api
+    networks:
+      - emerald-net
+
+  # ============================================
+  # Frontend (Next.js Dashboard)
+  # ============================================
+  frontend:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      target: development
+    container_name: emerald-frontend
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_EMERALD_API_URL=http://api:8000
     depends_on:
       - api
     networks:
@@ -212,6 +235,7 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api
+      - frontend
     networks:
       - emerald-net
 
