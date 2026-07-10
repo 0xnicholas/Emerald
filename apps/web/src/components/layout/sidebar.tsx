@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
 import { Button } from "@/components/ui/button";
+import { SpaceSelector } from "@/components/spaces/space-selector";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -45,6 +46,13 @@ export function Sidebar() {
           </span>
         )}
       </div>
+
+      {/* Space selector */}
+      {sidebarOpen && (
+        <div className="px-3 py-2 border-b border-surface-border/50">
+          <SpaceSelector />
+        </div>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 space-y-1 p-2">
