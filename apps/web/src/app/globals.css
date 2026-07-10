@@ -1,70 +1,36 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
+  --font-sans: "DM Sans", var(--font-geist-sans), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
 
-  /* ── Foreground ── */
-  --color-fg-primary: #18181b;
-  --color-fg-secondary: #3f3f46;
-  --color-fg-muted: #71717a;
-  --color-fg-subtle: #a1a1aa;
-  --color-fg-faint: #d4d4d8;
+  /* ── Foreground (dark theme, matching Supermemory exactly) ── */
+  --color-fg-primary: #fafafa;
+  --color-fg-secondary: #e2e8f0;
+  --color-fg-muted: #d0dae7;
+  --color-fg-subtle: #b5c2d3;
+  --color-fg-faint: #a0aec4;
 
   /* ── Surfaces ── */
-  --color-surface-base: #fafafa;
-  --color-surface-card: #ffffff;
-  --color-surface-hover: #f4f4f5;
-  --color-surface-skeleton: #e4e4e7;
-  --color-surface-border: #e4e4e7;
-  --color-surface-ring: #10b981;
+  --color-surface-base: #0b1119;
+  --color-surface-card: #101822;
+  --color-surface-hover: #131b28;
+  --color-surface-skeleton: #1a2030;
+  --color-surface-border: #263348;
+  --color-surface-ring: #4ba0fa;
 
   /* ── Brand ── */
-  --color-brand-accent: #059669;
-  --color-brand-accent-subtle: #d1fae5;
+  --color-brand-accent: #4ba0fa;
+  --color-brand-accent-subtle: #00173c;
+  --color-brand-accent-border: #2261ca33;
+
+  /* ── Pill / tag ── */
+  --color-pill-bg: #0d121a;
+  --color-pill-bg-active: #00173c;
+  --color-pill-border: #161f2c;
+  --color-pill-border-active: #2261ca33;
 
   /* ── Semantic ── */
-  --color-bg-success: #dcfce7;
-  --color-text-success: #166534;
-  --color-bg-warning: #fef3c7;
-  --color-text-warning: #92400e;
-  --color-bg-error: #fee2e2;
-  --color-text-error: #991b1b;
-  --color-bg-info: #dbeafe;
-  --color-text-info: #1e40af;
-
-  /* ── Memory types ── */
-  --color-memory-fact: #059669;
-  --color-memory-fact-bg: #d1fae5;
-  --color-memory-preference: #7c3aed;
-  --color-memory-preference-bg: #ede9fe;
-  --color-memory-episodic: #d97706;
-  --color-memory-episodic-bg: #fef3c7;
-
-  /* ── Animations ── */
-  --animate-fade-in: fade-in 0.3s ease-out;
-  --animate-slide-up: slide-up 0.3s ease-out;
-  --animate-pulse-soft: pulse-soft 2s ease-in-out infinite;
-}
-
-/* ── Dark theme ── */
-.dark {
-  --color-fg-primary: #fafafa;
-  --color-fg-secondary: #e4e4e7;
-  --color-fg-muted: #a1a1aa;
-  --color-fg-subtle: #71717a;
-  --color-fg-faint: #52525b;
-
-  --color-surface-base: #09090b;
-  --color-surface-card: #18181b;
-  --color-surface-hover: #1f1f23;
-  --color-surface-skeleton: #27272a;
-  --color-surface-border: #27272a;
-  --color-surface-ring: #10b981;
-
-  --color-brand-accent: #34d399;
-  --color-brand-accent-subtle: #064e3b;
-
   --color-bg-success: #052e16;
   --color-text-success: #86efac;
   --color-bg-warning: #451a03;
@@ -74,12 +40,21 @@
   --color-bg-info: #1e3a5f;
   --color-text-info: #93c5fd;
 
+  /* ── Memory types ── */
   --color-memory-fact: #34d399;
   --color-memory-fact-bg: #064e3b;
   --color-memory-preference: #a78bfa;
   --color-memory-preference-bg: #3b0764;
   --color-memory-episodic: #fbbf24;
   --color-memory-episodic-bg: #451a03;
+
+  /* ── Animations ── */
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-slide-up: slide-up 0.3s ease-out;
+  --animate-pulse-soft: pulse-soft 2s ease-in-out infinite;
+
+  /* ── Radius ── */
+  --radius-card: 18px;
 }
 
 /* ── Base ── */
@@ -87,23 +62,26 @@ body {
   background: var(--color-surface-base);
   color: var(--color-fg-primary);
   font-family: var(--font-sans), system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  line-height: 135%;
 }
 
-/* ── Custom scrollbar ── */
+/* ── Scrollbar ── */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-surface-border) transparent;
+  scrollbar-color: rgb(41 57 82 / 0.55) transparent;
 }
 
 *::-webkit-scrollbar { width: 6px; height: 6px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
-  background-color: var(--color-surface-border);
+  background-color: rgb(41 57 82 / 0.55);
   border-radius: 100px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-*::-webkit-scrollbar-thumb:hover { background-color: var(--color-fg-subtle); }
+*::-webkit-scrollbar-thumb:hover { background-color: rgb(55 90 130 / 0.75); }
+*::-webkit-scrollbar-thumb:active { background-color: rgb(70 110 160 / 0.85); }
 
 /* ── Animations ── */
 @keyframes fade-in {
