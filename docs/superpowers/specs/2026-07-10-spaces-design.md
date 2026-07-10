@@ -23,38 +23,81 @@ Supermemory 中 Spaces 的实现：
 
 ## 2. 数据模型
 
-### 2.1 后端 (Python / SQLModel / Pydantic)
+### 2.1 后端 (Neo4j / Pydantic)
 
-#### Memory 模型扩展
+Emerald 使用 **Neo4j 图数据库**（`GraphStore` in `emerald/core/graph.py`）。
+Memory 是 `:Memory` 标签节点，通过 `[:HAS_MEMORY]` 关系连接到 `:Entity` 节点。
 
-```python
-# emerald/db/models.py (现有 Memory 模型增加字段)
-class Memory(Base):
-    __tablename__ = "memories"
+#### Memory 节点增加属性
 
-    # ... 现有字段
-    container_tag: str = Field(default="default", index=True)
-    container_tag_name: str = Field(default="My Space")
-    container_tag_emoji: str = Field(default="📁")
+`create_memory()` Cypher 查询增加 `container_tag` 属性：
+
+```cypher
+MERGE (e:Entity {id: $entity_id})
+CREATE (m:Memory {
+    id: $id,
+    entity_id: $entity_id,
+    content: $content,
+    container_tag: $container_tag,  -- NEW
+    memory_type: $memory_type,
+    confidence: $confidence,
+    ...
+})
+CREATE (e)-[:HAS_MEMORY]->(m)
 ```
 
-#### Space 模型（新增）
+Memory 节点**只存 `container_tag` 字符串**（指向 Space 的标识键，如 `"work"`）。
+Space 的名称和 emoji 存在独立的 Space 节点上，避免冗余和数据不一致。
 
-```python
-# emerald/db/models.py
-class Space(Base):
-    __tablename__ = "spaces"
+#### Space 节点（新增 `:Space` 标签）
 
-    id: int = Field(primary_key=True)
-    container_tag: str = Field(unique=True, index=True)  # 唯一标识
-    name: str = Field(default="My Space")
-    emoji: str = Field(default="📁")
-    entity_id: str = Field(index=True)  # 归属实体
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+```cypher
+// 创建 Space 节点 + 关联到 Entity
+MERGE (e:Entity {id: $entity_id})
+CREATE (s:Space {
+    container_tag: $container_tag,  -- 唯一标识（如 "work", "ideas"）
+    name: $name,                    -- 显示名称（如 "Work"）
+    emoji: $emoji,                  -- Emoji 图标（如 "💼"）
+    entity_id: $entity_id,
+    created_at: datetime(),
+    updated_at: datetime()
+})
+CREATE (e)-[:HAS_SPACE]->(s)
 ```
 
-#### Pydantic Schema
+#### 关系图谱
+
+```
+(:Entity)-[:HAS_SPACE]->(:Space {container_tag: "work"})
+(:Entity)-[:HAS_MEMORY]->(:Memory {..., container_tag: "work"})
+```
+
+> **设计决策**：Memory 不通过关系直连 Space。通过 `container_tag` 属性过滤 +
+> Space 节点管理元信息，好处是：(1) 创建记忆时无需额外写关系；(2) Space 重命名
+> 只需改 Space 节点一处；(3) 删除 Space 时只需更新 `container_tag` 属性，不改关系。
+
+#### GraphStore 新增方法
+
+```python
+# emerald/core/graph.py (新增)
+async def create_space(self, container_tag: str, name: str, emoji: str, entity_id: str) -> dict
+async def list_spaces(self, entity_id: str) -> list[dict]
+async def get_space(self, container_tag: str, entity_id: str) -> dict | None
+async def update_space(self, container_tag: str, entity_id: str, name: str | None, emoji: str | None) -> dict
+async def delete_space(self, container_tag: str, entity_id: str, migrate_to_default: bool = True) -> None
+```
+
+查询 Spaces 时带 memory_count：
+
+```cypher
+MATCH (e:Entity {id: $entity_id})-[:HAS_SPACE]->(s:Space)
+OPTIONAL MATCH (m:Memory {entity_id: $entity_id, container_tag: s.container_tag})
+WHERE m.is_latest = true
+RETURN s.container_tag, s.name, s.emoji, s.entity_id, s.created_at, s.updated_at,
+       count(m) AS memory_count
+```
+
+### 2.2 Pydantic Schema
 
 ```python
 # emerald/api/schemas/spaces.py (新增)
@@ -77,7 +120,7 @@ class SpaceResponse(BaseModel):
     updated_at: datetime
 ```
 
-### 2.2 前端 (TypeScript)
+### 2.3 前端 (TypeScript)
 
 ```typescript
 // apps/web/src/lib/types.ts (新增)
@@ -91,19 +134,15 @@ export interface Space {
   updatedAt: string;
 }
 
-// Memory 类型扩展
+// Memory 类型扩展（只加 containerTag，Space 名从 Space 对象获取）
 export interface Memory {
   // ... 现有字段
   containerTag?: string;
-  containerTagName?: string;
-  containerTagEmoji?: string;
 }
 
 export interface SearchMemory {
   // ... 现有字段
   containerTag?: string;
-  containerTagName?: string;
-  containerTagEmoji?: string;
 }
 ```
 
@@ -337,24 +376,39 @@ export const MOCK_SPACES: Space[] = [
 - 前端 `selectedSpaceTag` 默认 `"default"`
 - 所有现有页面功能不受影响
 
-### 7.2 数据库迁移
-```sql
--- Alembic migration
-ALTER TABLE memories ADD COLUMN container_tag VARCHAR(100) NOT NULL DEFAULT 'default';
-ALTER TABLE memories ADD COLUMN container_tag_name VARCHAR(100) NOT NULL DEFAULT 'My Space';
-ALTER TABLE memories ADD COLUMN container_tag_emoji VARCHAR(10) NOT NULL DEFAULT '📁';
-CREATE INDEX ix_memories_container_tag ON memories (container_tag);
+### 7.2 Neo4j 迁移
 
-CREATE TABLE spaces (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    container_tag VARCHAR(100) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL DEFAULT 'My Space',
-    emoji VARCHAR(10) NOT NULL DEFAULT '📁',
-    entity_id VARCHAR(100) NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX ix_spaces_entity_id ON spaces (entity_id);
+Neo4j 是 schema-less 的，不需要传统 migration。只需：
+
+1. **应用启动时**：为所有已有 Entity 创建对应的 `default` Space 节点（如果不存在）：
+
+```python
+# emerald/core/graph.py
+async def ensure_default_spaces(self) -> None:
+    """Ensure every Entity has a default Space."""
+    result = await self._driver.session().run("""
+        MATCH (e:Entity)
+        WHERE NOT (e)-[:HAS_SPACE]->(:Space {container_tag: 'default'})
+        CREATE (s:Space {
+            container_tag: 'default',
+            name: 'My Space',
+            emoji: '📁',
+            entity_id: e.id,
+            created_at: datetime(),
+            updated_at: datetime()
+        })
+        CREATE (e)-[:HAS_SPACE]->(s)
+        RETURN count(s) AS created
+    """)
+```
+
+2. **已有 Memory 节点**不需要改动——`container_tag` 属性不存在时，代码按默认值 `"default"` 处理。
+
+3. **可选**：在后续查询中补全缺失的 `container_tag`：
+
+```cypher
+MATCH (m:Memory) WHERE m.container_tag IS NULL
+SET m.container_tag = 'default'
 ```
 
 ---
@@ -363,21 +417,22 @@ CREATE INDEX ix_spaces_entity_id ON spaces (entity_id);
 
 | # | 任务 | 依赖 | 预计 |
 |---|------|------|------|
-| 1 | 后端: Memory 模型增加 container_tag | - | ~30min |
-| 2 | 后端: Space 模型 + 迁移 | 1 | ~30min |
-| 3 | 后端: Spaces API 端点（CRUD） | 2 | ~1h |
-| 4 | 后端: 搜索/写入支持 container_tag | 1, 3 | ~30min |
-| 5 | 前端: types.ts 新增 Space 类型 | - | ~10min |
-| 6 | 前端: API client 新增 spaces 方法 | 5 | ~20min |
-| 7 | 前端: Zustand store 增加 space 状态 | 5 | ~20min |
-| 8 | 前端: 创建 SpaceGlyph 组件 | - | ~10min |
-| 9 | 前端: 创建 AddSpaceModal 组件 | 8 | ~30min |
-| 10 | 前端: 创建 SelectSpacesModal 组件 | 8, 9 | ~1h |
-| 11 | 前端: 创建 SpaceSelector 组件 | 10 | ~20min |
-| 12 | 前端: Sidebar 集成 SpaceSelector | 11 | ~15min |
-| 13 | 前端: Spaces 集成到所有页面 | 7 | ~20min |
-| 14 | 前端: 更新 mock-data | 5 | ~20min |
-| 15 | 完整测试验收 | 全部 | ~30min |
+| 1 | 后端: GraphStore 新增 Space 方法（create/list/update/delete） | - | ~45min |
+| 2 | 后端: create_memory() 增加 container_tag 参数 | 1 | ~15min |
+| 3 | 后端: Spaces API 端点（CRUD + list） | 1 | ~1h |
+| 4 | 后端: 搜索/写入 API 支持 container_tag | 2 | ~20min |
+| 5 | 后端: 启动时 ensure_default_spaces | 1 | ~10min |
+| 6 | 前端: types.ts 新增 Space 类型 | - | ~10min |
+| 7 | 前端: API client 新增 spaces 方法 | 6 | ~20min |
+| 8 | 前端: Zustand store 增加 space 状态 | 6 | ~20min |
+| 9 | 前端: 创建 SpaceGlyph 组件 | - | ~10min |
+| 10 | 前端: 创建 AddSpaceModal 组件 | 9 | ~30min |
+| 11 | 前端: 创建 SelectSpacesModal 组件 | 9, 10 | ~1h |
+| 12 | 前端: 创建 SpaceSelector 组件 | 11 | ~20min |
+| 13 | 前端: Sidebar 集成 SpaceSelector | 12 | ~15min |
+| 14 | 前端: Spaces 集成到所有页面 | 8 | ~20min |
+| 15 | 前端: 更新 mock-data | 6 | ~20min |
+| 16 | 完整测试验收 | 全部 | ~30min |
 
 **总计：~5-6 小时**
 
