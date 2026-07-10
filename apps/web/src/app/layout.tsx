@@ -3,6 +3,7 @@ import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { Toaster } from "@/components/ui/sonner";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -34,6 +35,7 @@ export default function RootLayout({
         <Providers>
           {children}
           <ChatPanel />
+          <Toaster />
         </Providers>
       </body>
     </html>
