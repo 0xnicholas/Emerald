@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAppStore } from "@/stores/app";
 import { ConnectionPanel } from "@/components/layout/connection-panel";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -9,23 +9,16 @@ import { MemoryDetailModal } from "@/components/memories/memory-detail-modal";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { SearchBar } from "@/components/search/search-bar";
 import { getClient } from "@/lib/api";
-import type { SearchMemory } from "@/lib/types";
-import { getMockSearchResults } from "@/lib/mock-data";
+import type { SearchMemory, GraphNode, GraphEdge } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/typography";
+import { Separator } from "@/components/ui/separator";
 import {
-  RotateCcw,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
-  Minus,
-  Plus,
-  X,
-  FileText,
-  Star,
-  MessageSquare,
-  Brain,
+  RotateCcw, ZoomIn, ZoomOut, Minus, Plus, X,
+  FileText, Star, MessageSquare, Brain, Search,
+  Filter, Eye, EyeOff, Info,
 } from "lucide-react";
 import { memoryTypeLabel, memoryTypeColor } from "@/lib/utils";
 
@@ -38,7 +31,7 @@ export default function GraphPage() {
 
   if (!connected && !demoMode) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-zinc-950">
+      <div className="flex min-h-screen items-center justify-center bg-surface-base p-4">
         <ConnectionPanel />
       </div>
     );
@@ -47,12 +40,6 @@ export default function GraphPage() {
   return <GraphShell />;
 }
 
-const typeIcons: Record<string, typeof FileText> = {
-  fact: FileText,
-  preference: Star,
-  episodic: MessageSquare,
-};
-
 function GraphShell() {
   const entityId = useAppStore((s) => s.entityId);
   const demoMode = useAppStore((s) => s.demoMode);
@@ -60,58 +47,90 @@ function GraphShell() {
     if (typeof window === "undefined") return "default";
     return new URLSearchParams(window.location.search).get("space") ?? "default";
   });
-  const [memories, setMemories] = useState<SearchMemory[]>([]);
+
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedMemory, setSelectedMemory] = useState<SearchMemory | null>(
-    null
-  );
-  const [showDetail, setShowDetail] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const graphKey = useRef(0);
+  const [showTypes, setShowTypes] = useState<Record<string, boolean>>({ fact: true, preference: true, episodic: true });
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
-  const loadGraph = useCallback(
-    async (q: string) => {
-      setLoading(true);
-      try {
-        if (demoMode) {
-          const data = getMockSearchResults(q, undefined, selectedSpaceTag);
-          setMemories(data.results);
-        } else {
-          const data = await getClient().search(q, entityId, {
-            searchMode: "memory",
-            topK: 80,
-            filters: selectedSpaceTag !== "default" ? { container_tag: selectedSpaceTag } : undefined,
-          });
-          setMemories(data.results);
+  const loadGraph = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (demoMode) {
+        // Generate mock graph data from memories
+        const { MOCK_MEMORIES, MOCK_SPACES } = await import("@/lib/mock-data");
+        const mems = MOCK_MEMORIES.filter(
+          (m) => selectedSpaceTag === "default" || m.container_tag === selectedSpaceTag
+        );
+        const nodes: GraphNode[] = mems.map((m) => ({
+          id: m.id,
+          label: m.summary || m.content.slice(0, 60),
+          type: m.memory_type,
+          confidence: m.score ?? 0.5,
+        }));
+        const edges: GraphEdge[] = [];
+        for (let i = 0; i < nodes.length - 1; i++) {
+          if (nodes[i].type === nodes[i + 1].type) {
+            edges.push({ source: nodes[i].id, target: nodes[i + 1].id, type: "EXTENDS" });
+          }
         }
-        setSearchQuery(q);
-        setSelectedMemory(null);
-        setShowDetail(false);
-        graphKey.current++;
-      } catch {
-        setMemories([]);
-      } finally {
-        setLoading(false);
+        setGraphData({ nodes, edges });
+      } else {
+        const data = await getClient().getGraph(entityId, 150);
+        setGraphData(data);
       }
-    },
-    [entityId, demoMode, selectedSpaceTag]
-  );
+    } catch {
+      setGraphData({ nodes: [], edges: [] });
+    } finally {
+      setLoading(false);
+    }
+  }, [entityId, demoMode, selectedSpaceTag]);
 
   useEffect(() => {
-    loadGraph("");
+    loadGraph();
   }, [loadGraph]);
 
-  const handleNodeClick = useCallback((mem: SearchMemory) => {
-    setSelectedMemory(mem);
-    setShowDetail(true);
+  const selectedTypes = useMemo(
+    () => Object.entries(showTypes).filter(([, v]) => v).map(([k]) => k),
+    [showTypes]
+  );
+
+  const toggleType = useCallback((type: string) => {
+    setShowTypes((prev) => ({ ...prev, [type]: !prev[type] }));
   }, []);
 
-  const typeCounts = {
-    fact: memories.filter((m) => m.memory_type === "fact").length,
-    preference: memories.filter((m) => m.memory_type === "preference").length,
-    episodic: memories.filter((m) => m.memory_type === "episodic").length,
-  };
+  const handleNodeClick = useCallback((nodeId: string) => {
+    const node = graphData.nodes.find((n) => n.id === nodeId);
+    if (node) setSelectedNode(node);
+  }, [graphData.nodes]);
+
+  const typeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const n of graphData.nodes) {
+      counts[n.type] = (counts[n.type] ?? 0) + 1;
+    }
+    return counts;
+  }, [graphData.nodes]);
+
+  const edgeTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const e of graphData.edges) {
+      counts[e.type] = (counts[e.type] ?? 0) + 1;
+    }
+    return counts;
+  }, [graphData.edges]);
+
+  if (loading && graphData.nodes.length === 0) {
+    return (
+      <LoadingShell>
+        <div className="flex items-center justify-center flex-1">
+          <p className="text-sm text-fg-muted animate-pulse">Loading graph...</p>
+        </div>
+      </LoadingShell>
+    );
+  }
 
   return (
     <div className="flex h-screen">
@@ -120,192 +139,138 @@ function GraphShell() {
         <DemoBanner />
 
         {/* Top bar */}
-        <div className="flex items-center gap-3 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-700">
-          <div className="flex-1 max-w-md">
-            <SearchBar
-              onSearch={loadGraph}
-              loading={loading}
-              placeholder="在图谱中搜索…"
+        <div className="flex items-center gap-3 border-b border-surface-border px-4 py-2.5">
+          {/* Search in graph */}
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-fg-muted" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search in graph..."
+              className="w-full rounded-lg bg-surface-hover border border-surface-border/50 pl-8 pr-3 py-1.5 text-xs text-fg-primary placeholder:text-fg-faint focus:outline-none focus:ring-1 focus:ring-surface-ring"
             />
           </div>
 
-          {/* Zoom controls */}
-          <div className="hidden items-center gap-0.5 rounded-lg border border-zinc-200 p-0.5 md:flex dark:border-zinc-700">
-            <button
-              onClick={() => setZoomLevel((z) => Math.max(0.3, z - 0.2))}
-              className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              title="缩小"
-            >
-              <Minus className="h-4 w-4" />
+          {/* Type filters */}
+          <div className="flex items-center gap-1.5">
+            <Filter className="h-3.5 w-3.5 text-fg-faint" />
+            {["fact", "preference", "episodic"].map((type) => (
+              <button
+                key={type}
+                onClick={() => toggleType(type)}
+                className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all ${
+                  showTypes[type]
+                    ? memoryTypeColor(type) + " ring-1 ring-surface-ring/30"
+                    : "bg-surface-hover text-fg-faint opacity-50"
+                }`}
+              >
+                {showTypes[type] ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                {memoryTypeLabel(type)}
+                <span className="text-[10px] opacity-70">({typeCounts[type] ?? 0})</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Zoom */}
+          <div className="flex items-center gap-0.5 rounded-lg border border-surface-border p-0.5">
+            <button onClick={() => setZoomLevel((z) => Math.max(0.3, z - 0.2))} className="rounded-md p-1 text-fg-muted hover:bg-surface-hover" title="Zoom out">
+              <Minus className="h-3.5 w-3.5" />
             </button>
-            <span className="w-10 text-center text-xs font-medium text-zinc-500">
+            <span className="w-10 text-center text-[11px] font-medium text-fg-muted tabular-nums">
               {Math.round(zoomLevel * 100)}%
             </span>
-            <button
-              onClick={() => setZoomLevel((z) => Math.min(3, z + 0.2))}
-              className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              title="放大"
-            >
-              <Plus className="h-4 w-4" />
+            <button onClick={() => setZoomLevel((z) => Math.min(3, z + 0.2))} className="rounded-md p-1 text-fg-muted hover:bg-surface-hover" title="Zoom in">
+              <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
 
-          {/* Nodes count */}
-          <div className="flex items-center gap-2 text-xs text-zinc-400">
-            <span className="hidden md:inline">
-              共 {memories.length} 个节点
-            </span>
-            {typeCounts.fact > 0 && (
-              <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                📌 {typeCounts.fact}
-              </Badge>
-            )}
-            {typeCounts.preference > 0 && (
-              <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
-                ❤️ {typeCounts.preference}
-              </Badge>
-            )}
-            {typeCounts.episodic > 0 && (
-              <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                💭 {typeCounts.episodic}
-              </Badge>
-            )}
-          </div>
+          {/* Stats */}
+          <span className="text-[11px] text-fg-faint tabular-nums">
+            {graphData.nodes.length} nodes · {graphData.edges.length} edges
+          </span>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => loadGraph(searchQuery)}
-            disabled={loading}
-            className="h-8 w-8 p-0"
-          >
-            <RotateCcw className="h-4 w-4" />
+          <Button variant="ghost" size="sm" onClick={loadGraph} disabled={loading} className="h-7 w-7 p-0">
+            <RotateCcw className="h-3.5 w-3.5" />
           </Button>
         </div>
 
         {/* Main area */}
         <div className="flex flex-1 overflow-hidden">
           {/* Graph */}
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden relative">
+            {loading && (
+              <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-lg bg-surface-card/80 px-3 py-1.5 text-xs text-fg-muted backdrop-blur-sm border border-surface-border/50">
+                <div className="h-3 w-3 rounded-full border-2 border-brand-accent border-t-transparent animate-spin" />
+                Updating...
+              </div>
+            )}
             <KnowledgeGraph
-              key={graphKey.current}
-              memories={memories}
+              nodes={graphData.nodes}
+              edges={graphData.edges}
               onNodeClick={handleNodeClick}
               zoomLevel={zoomLevel}
+              selectedTypes={selectedTypes}
+              searchQuery={searchQuery}
             />
           </div>
 
-          {/* Side panel: node details */}
-          {showDetail && selectedMemory && (
-            <div className="w-80 shrink-0 border-l border-zinc-200 overflow-y-auto bg-white dark:border-zinc-700 dark:bg-zinc-900">
-              <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-                <h3 className="text-sm font-semibold">节点详情</h3>
-                <button
-                  onClick={() => setShowDetail(false)}
-                  className="rounded p-1 text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <X className="h-4 w-4" />
+          {/* Side panel */}
+          {selectedNode && (
+            <div className="w-72 shrink-0 border-l border-surface-border overflow-y-auto bg-surface-base/80">
+              <div className="flex items-center justify-between border-b border-surface-border/50 px-4 py-3">
+                <h3 className="text-xs font-semibold text-fg-primary">Node Details</h3>
+                <button onClick={() => setSelectedNode(null)} className="rounded p-1 text-fg-muted hover:bg-surface-hover">
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="space-y-4 p-4">
-                {/* Type badge */}
+              <div className="p-4 space-y-4">
                 <div className="flex items-center gap-2">
-                  {(() => {
-                    const Icon =
-                      typeIcons[selectedMemory.memory_type] ?? Brain;
-                    return (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
-                        <Icon className="h-4 w-4" />
-                      </div>
-                    );
-                  })()}
-                  <Badge
-                    className={memoryTypeColor(selectedMemory.memory_type)}
-                  >
-                    {memoryTypeLabel(selectedMemory.memory_type)}
+                  <Badge className={memoryTypeColor(selectedNode.type)}>
+                    {memoryTypeLabel(selectedNode.type)}
                   </Badge>
-                  {selectedMemory.score !== undefined && (
-                    <span className="text-xs font-medium text-zinc-400">
-                      {Math.round(selectedMemory.score * 100)}%
-                    </span>
+                  <span className="text-xs text-fg-faint">{Math.round(selectedNode.confidence * 100)}%</span>
+                </div>
+                <p className="text-sm leading-relaxed text-fg-primary">{selectedNode.label}</p>
+                <Separator />
+                <Label level="3" weight="medium" className="text-fg-faint">CONNECTIONS</Label>
+                <div className="space-y-1 text-xs">
+                  {graphData.edges.filter((e) => e.source === selectedNode.id || e.target === selectedNode.id).length > 0 ? (
+                    graphData.edges
+                      .filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
+                      .slice(0, 10)
+                      .map((e, i) => {
+                        const otherId = e.source === selectedNode.id ? e.target : e.source;
+                        const other = graphData.nodes.find((n) => n.id === otherId);
+                        return (
+                          <div key={i} className="rounded-lg bg-surface-hover/50 p-2">
+                            <span className="text-[10px] font-medium text-fg-faint uppercase">{e.type.toLowerCase()}</span>
+                            <p className="text-xs text-fg-muted truncate">{other?.label ?? otherId}</p>
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <p className="text-fg-subtle">No direct connections</p>
                   )}
                 </div>
-
-                {/* Content */}
-                <div>
-                  <label className="mb-1 text-xs font-medium text-zinc-500">
-                    内容
-                  </label>
-                  <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
-                    {selectedMemory.content}
-                  </p>
-                </div>
-
-                {/* Summary */}
-                {selectedMemory.summary && (
-                  <div>
-                    <label className="mb-1 text-xs font-medium text-zinc-500">
-                      摘要
-                    </label>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                      {selectedMemory.summary}
-                    </p>
-                  </div>
-                )}
-
-                {/* Meta */}
-                <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-zinc-400">来源</span>
-                      <p className="font-medium text-zinc-700 dark:text-zinc-300">
-                        {selectedMemory.source === "rag" ? "RAG" : "记忆"}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-zinc-400">状态</span>
-                      <p className="font-medium text-zinc-700 dark:text-zinc-300">
-                        {selectedMemory.is_latest ? "最新" : "历史"}
-                      </p>
-                    </div>
-                    {selectedMemory.document_title && (
-                      <div className="col-span-2">
-                        <span className="text-zinc-400">文档</span>
-                        <p className="font-medium text-zinc-700 dark:text-zinc-300">
-                          {selectedMemory.document_title}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* ID */}
-                <p className="text-[10px] text-zinc-400">
-                  ID: {selectedMemory.id}
-                </p>
-
-                {/* View full detail button */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => setSelectedMemory(selectedMemory)}
-                >
-                  查看完整详情
-                </Button>
+                <Separator />
+                <p className="text-[10px] font-mono text-fg-faint break-all">ID: {selectedNode.id}</p>
               </div>
             </div>
           )}
         </div>
       </main>
+    </div>
+  );
+}
 
-      {/* Full detail modal */}
-      {showDetail && (
-        <MemoryDetailModal
-          memory={selectedMemory}
-          onClose={() => setSelectedMemory(null)}
-        />
-      )}
+function LoadingShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-screen">
+      <Sidebar />
+      <main className="flex flex-1 flex-col">
+        <DemoBanner />
+        {children}
+      </main>
     </div>
   );
 }

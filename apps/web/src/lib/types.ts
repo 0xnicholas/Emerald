@@ -86,6 +86,27 @@ export interface PipelineStatus {
   memory_count: number;
 }
 
+// ─── Graph ──────────────────────────────────────────────────────────
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  confidence: number;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+  aspect?: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
 // ─── Space ──────────────────────────────────────────────────────────
 
 export interface Space {

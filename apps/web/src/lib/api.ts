@@ -221,6 +221,16 @@ export class EmeraldClient {
     );
   }
 
+  // ─── Graph ────────────────────────────────────────────────────────
+
+  async getGraph(entityId: string, limit = 150): Promise<{ nodes: { id: string; label: string; type: string; confidence: number }[]; edges: { source: string; target: string; type: string; aspect?: string }[] }> {
+    const data = await this.request<{ data: { nodes: any[]; edges: any[] } }>(
+      "GET",
+      `/v1/memories/graph?entity_id=${encodeURIComponent(entityId)}&limit=${limit}`
+    );
+    return data.data;
+  }
+
   // ─── URL Extract ─────────────────────────────────────────────────
 
   async extractUrl(url: string): Promise<{ url: string; title: string; description: string; favicon: string; image: string; site_name: string }> {

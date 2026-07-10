@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   forceSimulation,
   forceLink,
@@ -11,29 +11,31 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from "d3-force";
-import type { SearchMemory } from "@/lib/types";
-import { memoryTypeLabel, truncate } from "@/lib/utils";
+import type { GraphNode, GraphEdge } from "@/lib/types";
+import { memoryTypeLabel } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
-interface GraphNode extends SimulationNodeDatum {
+interface SimNode extends SimulationNodeDatum {
   id: string;
   label: string;
   type: string;
-  score: number;
+  confidence: number;
   radius: number;
-  content: string;
 }
 
-interface GraphLink extends SimulationLinkDatum<GraphNode> {
-  label?: string;
+interface SimLink extends SimulationLinkDatum<SimNode> {
+  relType: string;
 }
 
 interface KnowledgeGraphProps {
-  memories: SearchMemory[];
-  onNodeClick?: (memory: SearchMemory) => void;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  onNodeClick?: (nodeId: string) => void;
   zoomLevel?: number;
-  onZoomChange?: (z: number) => void;
+  selectedTypes?: string[];
+  searchQuery?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────
@@ -44,21 +46,37 @@ const TYPE_CONFIG: Record<string, { color: string; emoji: string; glow: string }
   episodic: { color: "#fbbf24", emoji: "💭", glow: "rgba(251,191,36,0.3)" },
 };
 
+const EDGE_COLORS: Record<string, string> = {
+  UPDATES: "#f97316",
+  EXTENDS: "#4ba0fa",
+  DERIVES_FROM: "#a78bfa",
+};
+
+const EDGE_LABELS: Record<string, string> = {
+  UPDATES: "updates",
+  EXTENDS: "extends",
+  DERIVES_FROM: "derives",
+};
+
 const NS = "http://www.w3.org/2000/svg";
 
 // ─── Component ────────────────────────────────────────────────────────
 
 export function KnowledgeGraph({
-  memories,
+  nodes: inputNodes,
+  edges: inputEdges,
   onNodeClick,
   zoomLevel = 1,
-  onZoomChange,
+  selectedTypes,
+  searchQuery,
 }: KnowledgeGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const simRef = useRef<Simulation<GraphNode, GraphLink> | null>(null);
+  const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   // Responsive
   useEffect(() => {
@@ -74,58 +92,41 @@ export function KnowledgeGraph({
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // Build graph data
-  const graphData = useCallback(() => {
-    const nodes: GraphNode[] = memories.map((m) => ({
-      id: m.id,
-      label: m.content.slice(0, 40),
-      content: m.content,
-      type: m.memory_type,
-      score: m.score ?? 0.5,
-      radius: Math.max(20, Math.min(38, 14 + Math.sqrt(m.content.length) * 0.5)),
+  // Filter nodes by type
+  const filteredNodes = useMemo(
+    () => (selectedTypes?.length ? inputNodes.filter((n) => selectedTypes.includes(n.type)) : inputNodes),
+    [inputNodes, selectedTypes]
+  );
+  const filteredIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
+  const filteredEdges = useMemo(
+    () => inputEdges.filter((e) => filteredIds.has(e.source) && filteredIds.has(e.target)),
+    [inputEdges, filteredIds]
+  );
+
+  // Search highlight
+  const searchLower = searchQuery?.toLowerCase() ?? "";
+
+  // Build sim data
+  const { simNodes, simLinks } = useMemo(() => {
+    const nodes: SimNode[] = filteredNodes.map((n) => ({
+      id: n.id,
+      label: n.label,
+      type: n.type,
+      confidence: n.confidence,
+      radius: Math.max(20, Math.min(38, 14 + n.label.length * 0.3)),
     }));
-
-    const links: GraphLink[] = [];
-    const byDoc = new Map<string, string[]>();
-    for (const m of memories) {
-      if (m.document_id) {
-        const arr = byDoc.get(m.document_id) ?? [];
-        arr.push(m.id);
-        byDoc.set(m.document_id, arr);
-      }
-    }
-    for (const ids of byDoc.values()) {
-      for (let i = 0; i < ids.length - 1; i++)
-        links.push({ source: ids[i], target: ids[i + 1], label: "document" });
-    }
-
-    const byType = new Map<string, string[]>();
-    for (const m of memories) {
-      const arr = byType.get(m.memory_type) ?? [];
-      arr.push(m.id);
-      byType.set(m.memory_type, arr);
-    }
-    for (const ids of byType.values()) {
-      if (ids.length > 1 && ids.length <= 6) {
-        for (let i = 0; i < ids.length - 1; i++) {
-          const exists = links.some(
-            (l) =>
-              (l.source === ids[i] && l.target === ids[i + 1]) ||
-              (l.source === ids[i + 1] && l.target === ids[i])
-          );
-          if (!exists) links.push({ source: ids[i], target: ids[i + 1], label: "type" });
-        }
-      }
-    }
-    return { nodes, links };
-  }, [memories]);
-
-  const { nodes, links } = useMemo(() => graphData(), [graphData]);
+    const links: SimLink[] = filteredEdges.map((e) => ({
+      source: e.source,
+      target: e.target,
+      relType: e.type,
+    }));
+    return { simNodes: nodes, simLinks: links };
+  }, [filteredNodes, filteredEdges]);
 
   // Render
   useEffect(() => {
     const svg = svgRef.current;
-    if (!svg || nodes.length === 0) return;
+    if (!svg || simNodes.length === 0) return;
 
     const { width, height } = dimensions;
     const svgEl = svg;
@@ -140,20 +141,23 @@ export function KnowledgeGraph({
 
     // Defs
     const defs = document.createElementNS(NS, "defs");
-    // Arrows
-    const marker = document.createElementNS(NS, "marker");
-    marker.setAttribute("id", "arrow");
-    marker.setAttribute("viewBox", "0 -5 10 10");
-    marker.setAttribute("refX", "25");
-    marker.setAttribute("refY", "0");
-    marker.setAttribute("markerWidth", "6");
-    marker.setAttribute("markerHeight", "6");
-    marker.setAttribute("orient", "auto");
-    const arrowPath = document.createElementNS(NS, "path");
-    arrowPath.setAttribute("d", "M0,-5L10,0L0,5");
-    arrowPath.setAttribute("fill", "#4ba0fa");
-    marker.appendChild(arrowPath);
-    defs.appendChild(marker);
+
+    // Arrow markers per relationship type
+    for (const [type, color] of Object.entries(EDGE_COLORS)) {
+      const marker = document.createElementNS(NS, "marker");
+      marker.setAttribute("id", `arrow-${type}`);
+      marker.setAttribute("viewBox", "0 -5 10 10");
+      marker.setAttribute("refX", "28");
+      marker.setAttribute("refY", "0");
+      marker.setAttribute("markerWidth", "7");
+      marker.setAttribute("markerHeight", "7");
+      marker.setAttribute("orient", "auto");
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d", "M0,-5L10,0L0,5");
+      path.setAttribute("fill", color);
+      marker.appendChild(path);
+      defs.appendChild(marker);
+    }
 
     // Glow filters
     for (const [type, cfg] of Object.entries(TYPE_CONFIG)) {
@@ -180,59 +184,77 @@ export function KnowledgeGraph({
     root.appendChild(defs);
 
     // Physics
-    const simulation = forceSimulation<GraphNode>(nodes)
-      .force("link", forceLink<GraphNode, GraphLink>(links).id((d) => d.id).distance(130))
-      .force("charge", forceManyBody().strength(-300))
+    const simulation = forceSimulation<SimNode>(simNodes)
+      .force("link", forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(150))
+      .force("charge", forceManyBody().strength(-350))
       .force("center", forceCenter(width / 2, height / 2))
-      .force("collision", forceCollide<GraphNode>().radius((d) => d.radius + 15));
+      .force("collision", forceCollide<SimNode>().radius((d) => d.radius + 20));
     simRef.current = simulation;
 
     // Links
     const linkGroup = document.createElementNS(NS, "g");
     const linkEls: SVGLineElement[] = [];
-    for (const _ of links) {
+    const linkLabels: SVGTextElement[] = [];
+
+    for (const link of simLinks) {
+      const color = EDGE_COLORS[link.relType] ?? "#263348";
+      const isHovered = hoveredEdge === `${link.source}-${link.target}`;
+
+      // Line
       const line = document.createElementNS(NS, "line");
-      line.setAttribute("stroke", "#263348");
-      line.setAttribute("stroke-width", "1.5");
-      line.setAttribute("stroke-dasharray", "4 3");
-      line.setAttribute("marker-end", "url(#arrow)");
+      line.setAttribute("stroke", color);
+      line.setAttribute("stroke-width", isHovered ? "2.5" : "1.5");
+      line.setAttribute("stroke-opacity", isHovered ? "1" : "0.6");
+      line.setAttribute("stroke-dasharray", link.relType === "UPDATES" ? "6 3" : "4 3");
+      line.setAttribute("marker-end", `url(#arrow-${link.relType})`);
+      line.setAttribute("data-source", String(link.source));
+      line.setAttribute("data-target", String(link.target));
+
+      // Hover for edge
+      line.addEventListener("mouseenter", () => {
+        setHoveredEdge(`${link.source}-${link.target}`);
+      });
+      line.addEventListener("mouseleave", () => {
+        setHoveredEdge(null);
+      });
+
       linkGroup.appendChild(line);
       linkEls.push(line);
+
+      // Label
+      const lbl = document.createElementNS(NS, "text");
+      lbl.setAttribute("font-size", "8");
+      lbl.setAttribute("fill", color);
+      lbl.setAttribute("text-anchor", "middle");
+      lbl.setAttribute("dy", "-5");
+      lbl.setAttribute("font-weight", "600");
+      lbl.setAttribute("opacity", isHovered ? "1" : "0.7");
+      lbl.textContent = EDGE_LABELS[link.relType] ?? link.relType;
+      linkLabels.push(lbl);
+      linkGroup.appendChild(lbl);
     }
     root.appendChild(linkGroup);
-
-    // Link labels
-    const llGroup = document.createElementNS(NS, "g");
-    const llEls: SVGTextElement[] = [];
-    for (const l of links) {
-      if (l.label) {
-        const t = document.createElementNS(NS, "text");
-        t.setAttribute("font-size", "8");
-        t.setAttribute("fill", "#a0aec4");
-        t.setAttribute("text-anchor", "middle");
-        t.textContent = l.label;
-        llGroup.appendChild(t);
-        llEls.push(t);
-      }
-    }
-    root.appendChild(llGroup);
 
     // Nodes
     const nodeGroup = document.createElementNS(NS, "g");
     const nodeMap = new Map<string, SVGGElement>();
 
-    for (const n of nodes) {
+    for (const n of simNodes) {
       const g = document.createElementNS(NS, "g");
       g.setAttribute("cursor", "pointer");
+      g.setAttribute("data-id", n.id);
       const cfg = TYPE_CONFIG[n.type] ?? { color: "#52525b", emoji: "📄", glow: "rgba(82,82,91,0.3)" };
 
-      // Glow circle (behind)
+      // Search match
+      const matchesSearch = searchLower && n.label.toLowerCase().includes(searchLower);
+
+      // Glow circle
       const glow = document.createElementNS(NS, "circle");
-      glow.setAttribute("r", String(n.radius + 4));
+      glow.setAttribute("r", String(n.radius + 5));
       glow.setAttribute("fill", "none");
       glow.setAttribute("stroke", cfg.color);
-      glow.setAttribute("stroke-width", "1.5");
-      glow.setAttribute("opacity", "0.4");
+      glow.setAttribute("stroke-width", matchesSearch ? "3" : "1.5");
+      glow.setAttribute("opacity", matchesSearch ? "1" : "0.35");
       glow.setAttribute("filter", `url(#glow-${n.type})`);
       g.appendChild(glow);
 
@@ -241,7 +263,7 @@ export function KnowledgeGraph({
       circle.setAttribute("r", String(n.radius));
       circle.setAttribute("fill", "#101822");
       circle.setAttribute("stroke", cfg.color);
-      circle.setAttribute("stroke-width", "2");
+      circle.setAttribute("stroke-width", matchesSearch ? "3" : "2");
       g.appendChild(circle);
 
       // Emoji
@@ -252,50 +274,29 @@ export function KnowledgeGraph({
       emoji.textContent = cfg.emoji;
       g.appendChild(emoji);
 
-      // Label below
+      // Label
       const label = document.createElementNS(NS, "text");
       label.setAttribute("text-anchor", "middle");
       label.setAttribute("dy", String(n.radius + 16));
       label.setAttribute("font-size", "9");
       label.setAttribute("fill", "#a0aec4");
-      label.textContent = n.label + (n.label.length >= 40 ? "…" : "");
+      label.setAttribute("font-weight", matchesSearch ? "700" : "400");
+      const displayLabel = n.label.length > 40 ? n.label.slice(0, 38) + "…" : n.label;
+      label.textContent = displayLabel;
       g.appendChild(label);
 
       // Hover
-      g.addEventListener("mouseenter", () => setHoveredId(n.id));
+      g.addEventListener("mouseenter", (e) => {
+        setHoveredId(n.id);
+        const rect = svgEl.getBoundingClientRect();
+        setTooltipPos({ x: (e as MouseEvent).clientX - rect.left, y: (e as MouseEvent).clientY - rect.top - 10 });
+      });
       g.addEventListener("mouseleave", () => setHoveredId(null));
 
       // Click
-      g.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const mem = memories.find((m) => m.id === n.id);
-        if (mem && onNodeClick) onNodeClick(mem);
+      g.addEventListener("click", () => {
+        onNodeClick?.(n.id);
       });
-
-      // Drag
-      let dragActive = false;
-      const dragStart = (e: MouseEvent) => {
-        e.stopPropagation();
-        dragActive = true;
-        simulation.alphaTarget(0.3).restart();
-        n.fx = n.x; n.fy = n.y;
-        window.addEventListener("mousemove", dragMove);
-        window.addEventListener("mouseup", dragEnd);
-      };
-      const dragMove = (e: MouseEvent) => {
-        if (!dragActive) return;
-        const rect = svgEl.getBoundingClientRect();
-        n.fx = (e.clientX - rect.left) / zoomLevel;
-        n.fy = (e.clientY - rect.top) / zoomLevel;
-      };
-      const dragEnd = () => {
-        dragActive = false;
-        simulation.alphaTarget(0);
-        n.fx = null; n.fy = null;
-        window.removeEventListener("mousemove", dragMove);
-        window.removeEventListener("mouseup", dragEnd);
-      };
-      g.addEventListener("mousedown", dragStart);
 
       nodeGroup.appendChild(g);
       nodeMap.set(n.id, g);
@@ -303,54 +304,54 @@ export function KnowledgeGraph({
     root.appendChild(nodeGroup);
 
     // Zoom
+    const scale = zoomLevel;
     root.setAttribute("transform",
-      `translate(${width / 2},${height / 2}) scale(${zoomLevel}) translate(${-width / 2},${-height / 2})`
+      `translate(${width / 2},${height / 2}) scale(${scale}) translate(${-width / 2},${-height / 2})`
     );
 
     // Tick
     simulation.on("tick", () => {
       for (let i = 0; i < linkEls.length; i++) {
-        const d = links[i];
-        const s = d.source as GraphNode;
-        const t = d.target as GraphNode;
+        const d = simLinks[i];
+        const s = d.source as SimNode;
+        const t = d.target as SimNode;
         linkEls[i].setAttribute("x1", String(s.x ?? 0));
         linkEls[i].setAttribute("y1", String(s.y ?? 0));
         linkEls[i].setAttribute("x2", String(t.x ?? 0));
         linkEls[i].setAttribute("y2", String(t.y ?? 0));
-      }
-      let li = 0;
-      for (const l of links) {
-        if (!l.label) continue;
-        const s = l.source as GraphNode;
-        const t = l.target as GraphNode;
-        if (llEls[li]) {
-          llEls[li].setAttribute("x", String(((s.x ?? 0) + (t.x ?? 0)) / 2));
-          llEls[li].setAttribute("y", String(((s.y ?? 0) + (t.y ?? 0)) / 2));
+
+        // Position label at midpoint
+        if (linkLabels[i]) {
+          linkLabels[i].setAttribute("x", String(((s.x ?? 0) + (t.x ?? 0)) / 2));
+          linkLabels[i].setAttribute("y", String(((s.y ?? 0) + (t.y ?? 0)) / 2));
         }
-        li++;
       }
-      for (const n of nodes) {
+      for (const n of simNodes) {
         const g = nodeMap.get(n.id);
         if (g) g.setAttribute("transform", `translate(${n.x ?? 0},${n.y ?? 0})`);
       }
     });
 
     return () => { simulation.stop(); };
-  }, [nodes, links, dimensions, zoomLevel, onNodeClick, memories]);
+  }, [simNodes, simLinks, dimensions, zoomLevel, onNodeClick, hoveredEdge, searchLower]);
 
-  const hoveredMemory = hoveredId ? memories.find((m) => m.id === hoveredId) : null;
+  const hoveredNode = inputNodes.find((n) => n.id === hoveredId);
 
-  if (memories.length === 0) {
+  if (inputNodes.length === 0) {
     return (
       <div className="flex h-full min-h-[400px] items-center justify-center text-fg-subtle">
-        <p className="text-sm">Search memories to see the graph</p>
+        <p className="text-sm">No memories to display in the graph</p>
       </div>
     );
   }
 
   const typeCounts = { fact: 0, preference: 0, episodic: 0 };
-  for (const m of memories) {
-    if (m.memory_type in typeCounts) typeCounts[m.memory_type as keyof typeof typeCounts]++;
+  for (const n of inputNodes) {
+    if (n.type in typeCounts) typeCounts[n.type as keyof typeof typeCounts]++;
+  }
+  const edgeTypeCounts: Record<string, number> = {};
+  for (const e of inputEdges) {
+    edgeTypeCounts[e.type] = (edgeTypeCounts[e.type] ?? 0) + 1;
   }
 
   return (
@@ -364,7 +365,8 @@ export function KnowledgeGraph({
       />
 
       {/* Legend */}
-      <div className="pointer-events-none absolute bottom-4 left-4 flex items-center gap-4 rounded-[18px] border border-surface-border bg-surface-card/60 px-4 py-2 backdrop-blur-md shadow-[0_12px_40px_rgba(0,0,0,0.22)]">
+      <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap items-center gap-3 rounded-[18px] border border-surface-border bg-surface-card/60 px-4 py-2.5 backdrop-blur-md shadow-lg">
+        <span className="text-[10px] font-semibold text-fg-faint uppercase tracking-wider mr-1">Nodes</span>
         {Object.entries(TYPE_CONFIG).map(([type, cfg]) => (
           <span key={type} className="flex items-center gap-1.5 text-[11px] text-fg-muted">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: cfg.color }} />
@@ -372,16 +374,40 @@ export function KnowledgeGraph({
             <span className="text-fg-faint">({typeCounts[type as keyof typeof typeCounts]})</span>
           </span>
         ))}
-        <span className="text-fg-faint text-[10px]">| Drag to rearrange</span>
+        {Object.keys(edgeTypeCounts).length > 0 && (
+          <>
+            <span className="w-px h-4 bg-surface-border/50" />
+            <span className="text-[10px] font-semibold text-fg-faint uppercase tracking-wider mr-1">Edges</span>
+            {Object.entries(edgeTypeCounts).map(([type, count]) => (
+              <span key={type} className="flex items-center gap-1 text-[11px] text-fg-muted">
+                <span className="w-3 h-0.5 rounded-full" style={{ background: EDGE_COLORS[type] ?? "#52525b" }} />
+                {type.toLowerCase()}
+                <span className="text-fg-faint">({count})</span>
+              </span>
+            ))}
+          </>
+        )}
+        <span className="text-fg-faint text-[10px] ml-1">| Drag to rearrange</span>
       </div>
 
-      {/* Hover popover */}
-      {hoveredMemory && (
-        <div className="pointer-events-none absolute top-4 right-4 max-w-xs rounded-[18px] border border-surface-border bg-surface-card/80 p-3 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.34)]">
-          <p className="text-xs font-medium text-fg-primary">{truncate(hoveredMemory.content, 120)}</p>
-          {hoveredMemory.summary && (
-            <p className="mt-1 text-[10px] text-fg-muted">{hoveredMemory.summary}</p>
-          )}
+      {/* Search result count */}
+      {searchQuery && (
+        <div className="absolute top-4 left-4 rounded-xl border border-surface-border bg-surface-card/80 px-3 py-1.5 text-xs text-fg-muted backdrop-blur-md">
+          Searching: <span className="text-fg-primary font-medium">"{searchQuery}"</span>
+        </div>
+      )}
+
+      {/* Hover tooltip */}
+      {hoveredNode && (
+        <div
+          className="pointer-events-none absolute max-w-xs rounded-[18px] border border-surface-border bg-surface-card/90 p-3 backdrop-blur-xl shadow-lg"
+          style={{ left: tooltipPos.x + 15, top: tooltipPos.y - 30, transform: "translateY(-100%)" }}
+        >
+          <p className="text-xs font-medium text-fg-primary leading-relaxed">{hoveredNode.label}</p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] text-fg-muted">{memoryTypeLabel(hoveredNode.type)}</span>
+            <span className="text-[10px] text-fg-faint">{Math.round(hoveredNode.confidence * 100)}%</span>
+          </div>
         </div>
       )}
     </div>
