@@ -25,6 +25,7 @@ class SearchResultItem(BaseModel):
     source: str = "memory"  # memory | rag
     memory_type: str = ""
     container_tag: str = "default"
+    tags: list[str] = []
     is_latest: bool = True
     document_id: str | None = None
     document_title: str | None = None

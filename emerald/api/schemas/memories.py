@@ -91,6 +91,7 @@ class MemoryResponse(BaseModel):
     valid_until: datetime | None = None
     entity_id: str
     validation_count: int = 0
+    tags: list[str] = []
     relationships: list[RelationshipItem] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None

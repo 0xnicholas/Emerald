@@ -88,6 +88,7 @@ async def search(
                     "source": r.source,
                     "memory_type": r.memory_type,
                     "container_tag": r.container_tag,
+                    "tags": r.tags,
                     "is_latest": r.is_latest,
                     "document_id": r.document_id,
                     "document_title": r.document_title,

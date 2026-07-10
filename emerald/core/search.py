@@ -7,7 +7,7 @@ and sorted by relevance score.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -40,6 +40,7 @@ class SearchResult:
     source: str = "memory"
     memory_type: str = ""
     container_tag: str = "default"
+    tags: list[str] = field(default_factory=list)
     is_latest: bool = True
     document_id: str | None = None
     document_title: str | None = None
@@ -276,6 +277,7 @@ class SearchOrchestrator:
                             source="memory",
                             memory_type=memory.get("memory_type", "fact"),
                             container_tag=memory.get("container_tag", "default"),
+                            tags=memory.get("tags") or [],
                             is_latest=memory.get("is_latest", True),
                         )
                     )
@@ -319,6 +321,7 @@ class SearchOrchestrator:
                         source="memory",
                         memory_type=m.get("memory_type", "fact"),
                         container_tag=m.get("container_tag", "default"),
+                        tags=m.get("tags") or [],
                         is_latest=m.get("is_latest", True),
                     )
                 )
@@ -446,6 +449,7 @@ class SearchOrchestrator:
                         source="memory_expanded",
                         memory_type=memory.get("memory_type", "fact"),
                         container_tag=memory.get("container_tag", "default"),
+                        tags=memory.get("tags") or [],
                     )
                 )
                 added += 1
