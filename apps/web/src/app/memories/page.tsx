@@ -36,7 +36,7 @@ export default function MemoriesPage() {
 
   if (!connected && !demoMode) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-zinc-950">
+      <div className="flex min-h-screen items-center justify-center bg-surface-base p-4">
         <ConnectionPanel />
       </div>
     );

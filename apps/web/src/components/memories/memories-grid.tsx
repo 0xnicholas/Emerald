@@ -1,52 +1,82 @@
 "use client";
 
-import { useMemo } from "react";
+import { useRef, useCallback } from "react";
+import { Masonry, useInfiniteLoader } from "masonic";
 import type { SearchMemory } from "@/lib/types";
-import { MemoryCard } from "./memory-card";
+import { NotePreview, FilePreview, WebsitePreview, YoutubePreview } from "@/components/document-cards";
+import { detectCardType } from "@/components/document-cards/utils";
 import { Brain } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface MemoriesGridProps {
   memories: SearchMemory[];
   onMemoryClick?: (memory: SearchMemory) => void;
   emptyMessage?: string;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
 }
 
-export function MemoriesGrid({
-  memories,
-  onMemoryClick,
-  emptyMessage = "暂无记忆数据",
-}: MemoriesGridProps) {
-  // Split into columns for masonry layout
-  const columns = useMemo(() => {
-    const cols: SearchMemory[][] = [[], [], []];
-    memories.forEach((mem, i) => {
-      cols[i % 3].push(mem);
-    });
-    return cols;
-  }, [memories]);
+type GridItem = SearchMemory & { _onClick: () => void };
 
-  if (memories.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-zinc-400">
-        <Brain className="mb-3 h-10 w-10" />
-        <p className="text-lg font-medium">{emptyMessage}</p>
-        <p className="mt-1 text-sm">
-          添加内容到 Emerald 记忆引擎，或调整搜索条件
-        </p>
-      </div>
-    );
+function CardRenderer({ data }: { data: GridItem }) {
+  const type = detectCardType(data);
+  switch (type) {
+    case "website": return <WebsitePreview memory={data} onClick={data._onClick} />;
+    case "youtube": return <YoutubePreview memory={data} onClick={data._onClick} />;
+    case "file": return <FilePreview memory={data} onClick={data._onClick} />;
+    default: return <NotePreview memory={data} onClick={data._onClick} />;
   }
+}
 
+function GridSkeleton() {
   return (
-    <div className="hidden gap-3 md:columns-2 lg:columns-3 xl:columns-4">
-      {memories.map((mem) => (
-        <div key={mem.id} className="mb-3 break-inside-avoid">
-          <MemoryCard
-            memory={mem}
-            onClick={() => onMemoryClick?.(mem)}
-          />
+    <div className="columns-2 gap-3 md:columns-3 lg:columns-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="mb-3 break-inside-avoid">
+          <div className="rounded-[18px] border border-surface-border bg-surface-card/60 p-3">
+            <Skeleton className="mb-2 h-4 w-20 rounded-full" />
+            <Skeleton lines={3} className="h-3" />
+            <Skeleton className="mt-2 h-3 w-16" />
+          </div>
         </div>
       ))}
     </div>
   );
 }
+
+export function MemoriesGrid({
+  memories,
+  onMemoryClick,
+  emptyMessage = "No memories yet",
+  hasMore = false,
+  onLoadMore,
+}: MemoriesGridProps) {
+  const maybeLoadMore = useInfiniteLoader(
+    useCallback(() => { onLoadMore?.(); }, [onLoadMore])
+  );
+
+  if (memories.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-fg-subtle">
+        <Brain className="mb-3 h-10 w-10 opacity-40" />
+        <p className="text-sm font-medium">{emptyMessage}</p>
+        <p className="mt-1 text-xs">Add content to Emerald or adjust your search</p>
+      </div>
+    );
+  }
+
+  const items: GridItem[] = memories.map((m) => ({ ...m, _onClick: () => onMemoryClick?.(m) }));
+
+  return (
+    <Masonry
+      items={items}
+      columnGutter={12}
+      columnWidth={280}
+      overscanBy={2}
+      render={CardRenderer}
+      onRender={maybeLoadMore}
+    />
+  );
+}
+
+export { GridSkeleton };
