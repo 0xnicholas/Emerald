@@ -217,6 +217,20 @@ export class EmeraldClient {
     );
   }
 
+  // ─── Connectors ───────────────────────────────────────────────────
+
+  async getConnectorStatus(provider: string): Promise<{ sync_status: string; last_synced_at: string | null; error_message: string | null; connected_at: string | null }> {
+    const data = await this.request<{ data: { sync_status: string; last_synced_at: string | null; error_message: string | null; connected_at: string | null } }>(
+      "GET",
+      `/v1/connectors/${encodeURIComponent(provider)}`
+    );
+    return data.data;
+  }
+
+  async disconnectConnector(provider: string): Promise<void> {
+    await this.request("DELETE", `/v1/connectors/${encodeURIComponent(provider)}`);
+  }
+
   // ─── Health ───────────────────────────────────────────────────────
 
   async health(): Promise<{ status: string; version: string; checks?: Record<string, string> }> {

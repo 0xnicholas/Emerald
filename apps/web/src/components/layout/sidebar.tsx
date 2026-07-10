@@ -11,6 +11,7 @@ import {
   PanelLeft,
   Brain,
   MessageSquare,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/memories", label: "记忆浏览", icon: Search },
   { href: "/graph", label: "知识图谱", icon: Share2 },
+  { href: "/integrations", label: "集成", icon: Plug },
   { href: "/settings", label: "设置", icon: Settings },
 ];
 
