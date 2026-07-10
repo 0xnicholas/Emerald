@@ -39,6 +39,7 @@ class SearchResult:
     score: float = 0.0
     source: str = "memory"
     memory_type: str = ""
+    container_tag: str = "default"
     is_latest: bool = True
     document_id: str | None = None
     document_title: str | None = None
@@ -225,6 +226,7 @@ class SearchOrchestrator:
                     score=score,
                     source="memory",
                     memory_type=memory.get("memory_type", "fact"),
+                    container_tag=memory.get("container_tag", "default"),
                     is_latest=memory.get("is_latest", True),
                 )
             )
@@ -273,6 +275,7 @@ class SearchOrchestrator:
                             score=score * trust,
                             source="memory",
                             memory_type=memory.get("memory_type", "fact"),
+                            container_tag=memory.get("container_tag", "default"),
                             is_latest=memory.get("is_latest", True),
                         )
                     )
@@ -315,6 +318,7 @@ class SearchOrchestrator:
                         score=score * trust,
                         source="memory",
                         memory_type=m.get("memory_type", "fact"),
+                        container_tag=m.get("container_tag", "default"),
                         is_latest=m.get("is_latest", True),
                     )
                 )
@@ -441,6 +445,7 @@ class SearchOrchestrator:
                         score=src_score * expansion_factor * trust,
                         source="memory_expanded",
                         memory_type=memory.get("memory_type", "fact"),
+                        container_tag=memory.get("container_tag", "default"),
                     )
                 )
                 added += 1
