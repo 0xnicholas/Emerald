@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, FileText, Link2, Upload, Send, Loader, CheckCircle2 } from "lucide-react";
+import { X, FileText, Link2, Upload, Send, Loader, CheckCircle2, Globe, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/typography";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { getClient } from "@/lib/api";
 
 interface AddMemoryModalProps {
   isOpen: boolean;
@@ -56,6 +57,32 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
   const [success, setSuccess] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
+  const [urlPreview, setUrlPreview] = useState<{ title: string; description: string; favicon: string; image: string; site_name: string } | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Extract URL metadata when URL changes
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!url.trim() || !url.includes(".")) {
+      setUrlPreview(null);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setExtracting(true);
+      try {
+        const data = await getClient().extractUrl(url.trim());
+        if (data.title || data.description) {
+          setUrlPreview(data);
+        }
+      } catch {
+        // Silently fail — preview is optional
+      } finally {
+        setExtracting(false);
+      }
+    }, 800);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [url]);
 
   const handleSubmit = async (type: string, content: string) => {
     if (!content.trim()) return;
@@ -108,10 +135,55 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
 
         <TabsContent value="link" className="mt-4 space-y-3">
           <Label>Paste a URL</Label>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/article" />
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://example.com/article"
+          />
+
+          {/* URL preview */}
+          {extracting && (
+            <div className="flex items-center gap-2 rounded-lg bg-surface-hover/50 p-3 text-sm text-fg-muted">
+              <Loader className="h-4 w-4 animate-spin" />
+              Extracting page info...
+            </div>
+          )}
+          {urlPreview && !extracting && (
+            <div className="rounded-xl border border-surface-border bg-surface-card/60 overflow-hidden">
+              {urlPreview.image && (
+                <div className="h-32 bg-surface-hover overflow-hidden">
+                  <img
+                    src={urlPreview.image}
+                    alt=""
+                    className="w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                </div>
+              )}
+              <div className="p-3 space-y-1">
+                <div className="flex items-center gap-2">
+                  {urlPreview.favicon && (
+                    <img src={urlPreview.favicon} alt="" className="w-4 h-4 rounded"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  )}
+                  <Globe className="h-3.5 w-3.5 text-fg-faint shrink-0" />
+                  <p className="text-xs text-fg-muted truncate">
+                    {urlPreview.site_name || new URL(url).hostname}
+                  </p>
+                </div>
+                <p className="text-sm font-medium text-fg-primary line-clamp-2">
+                  {urlPreview.title || url}
+                </p>
+                {urlPreview.description && (
+                  <p className="text-xs text-fg-muted line-clamp-2">{urlPreview.description}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           <Button onClick={() => handleSubmit("link", url)} disabled={!url.trim() || submitting} className="w-full">
             {submitting ? <Loader className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-            Save Link
+            {urlPreview ? "Save Link" : "Save Link"}
           </Button>
         </TabsContent>
 

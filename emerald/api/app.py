@@ -306,6 +306,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     from emerald.api.routes.v1 import (
         conflicts as v1_conflicts,
         connectors as v1_connectors,
+        extract as v1_extract,
         memories as v1_memories,
         pipelines as v1_pipelines,
         profiles as v1_profiles,
@@ -322,6 +323,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v1_upload.router, prefix="/v1")
     app.include_router(v1_pipelines.router, prefix="/v1")
     app.include_router(v1_conflicts.router, prefix="/v1")
+    app.include_router(v1_extract.router, prefix="/v1")
     app.include_router(v1_sessions.router, prefix="/v1")
     app.include_router(v1_connectors.router, prefix="/v1")
     app.include_router(v1_spaces.router, prefix="/v1")

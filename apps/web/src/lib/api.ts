@@ -221,6 +221,17 @@ export class EmeraldClient {
     );
   }
 
+  // ─── URL Extract ─────────────────────────────────────────────────
+
+  async extractUrl(url: string): Promise<{ url: string; title: string; description: string; favicon: string; image: string; site_name: string }> {
+    const data = await this.request<{ data: { url: string; title: string; description: string; favicon: string; image: string; site_name: string } }>(
+      "POST",
+      "/v1/extract-url",
+      { url }
+    );
+    return data.data;
+  }
+
   // ─── Connectors ───────────────────────────────────────────────────
 
   async getConnectorStatus(provider: string): Promise<{ sync_status: string; last_synced_at: string | null; error_message: string | null; connected_at: string | null }> {
