@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   forceSimulation,
   forceLink,
@@ -12,7 +12,7 @@ import {
   type SimulationLinkDatum,
 } from "d3-force";
 import type { SearchMemory } from "@/lib/types";
-import { memoryTypeLabel } from "@/lib/utils";
+import { memoryTypeLabel, truncate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -22,6 +22,7 @@ interface GraphNode extends SimulationNodeDatum {
   type: string;
   score: number;
   radius: number;
+  content: string;
 }
 
 interface GraphLink extends SimulationLinkDatum<GraphNode> {
@@ -32,20 +33,15 @@ interface KnowledgeGraphProps {
   memories: SearchMemory[];
   onNodeClick?: (memory: SearchMemory) => void;
   zoomLevel?: number;
+  onZoomChange?: (z: number) => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────
 
-const TYPE_COLORS: Record<string, string> = {
-  fact: "#059669",
-  preference: "#7c3aed",
-  episodic: "#d97706",
-};
-
-const TYPE_EMOJIS: Record<string, string> = {
-  fact: "📌",
-  preference: "❤️",
-  episodic: "💭",
+const TYPE_CONFIG: Record<string, { color: string; emoji: string; glow: string }> = {
+  fact:     { color: "#34d399", emoji: "📌", glow: "rgba(52,211,153,0.3)" },
+  preference: { color: "#a78bfa", emoji: "❤️", glow: "rgba(167,139,250,0.3)" },
+  episodic: { color: "#fbbf24", emoji: "💭", glow: "rgba(251,191,36,0.3)" },
 };
 
 const NS = "http://www.w3.org/2000/svg";
@@ -56,34 +52,37 @@ export function KnowledgeGraph({
   memories,
   onNodeClick,
   zoomLevel = 1,
+  onZoomChange,
 }: KnowledgeGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<Simulation<GraphNode, GraphLink> | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   // Responsive
   useEffect(() => {
-    const updateSize = () => {
+    const update = () => {
       if (!containerRef.current) return;
       setDimensions({
         width: containerRef.current.clientWidth,
         height: Math.max(500, containerRef.current.clientHeight),
       });
     };
-    updateSize();
-    window.addEventListener("resize", updateSize);
-    return () => window.removeEventListener("resize", updateSize);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
 
-  // Graph data builder
+  // Build graph data
   const graphData = useCallback(() => {
     const nodes: GraphNode[] = memories.map((m) => ({
       id: m.id,
       label: m.content.slice(0, 40),
+      content: m.content,
       type: m.memory_type,
       score: m.score ?? 0.5,
-      radius: Math.max(16, Math.min(36, 12 + Math.sqrt(m.content.length) * 0.5)),
+      radius: Math.max(20, Math.min(38, 14 + Math.sqrt(m.content.length) * 0.5)),
     }));
 
     const links: GraphLink[] = [];
@@ -96,9 +95,8 @@ export function KnowledgeGraph({
       }
     }
     for (const ids of byDoc.values()) {
-      for (let i = 0; i < ids.length - 1; i++) {
-        links.push({ source: ids[i], target: ids[i + 1], label: "同文档" });
-      }
+      for (let i = 0; i < ids.length - 1; i++)
+        links.push({ source: ids[i], target: ids[i + 1], label: "document" });
     }
 
     const byType = new Map<string, string[]>();
@@ -115,135 +113,157 @@ export function KnowledgeGraph({
               (l.source === ids[i] && l.target === ids[i + 1]) ||
               (l.source === ids[i + 1] && l.target === ids[i])
           );
-          if (!exists) {
-            links.push({ source: ids[i], target: ids[i + 1], label: "同类" });
-          }
+          if (!exists) links.push({ source: ids[i], target: ids[i + 1], label: "type" });
         }
       }
     }
-
     return { nodes, links };
   }, [memories]);
+
+  const { nodes, links } = useMemo(() => graphData(), [graphData]);
 
   // Render
   useEffect(() => {
     const svg = svgRef.current;
-    if (!svg || memories.length === 0) return;
+    if (!svg || nodes.length === 0) return;
 
     const { width, height } = dimensions;
-    const { nodes, links } = graphData();
+    const svgEl = svg;
 
-    // ── Setup SVG ──
-    const svgEl = svg as unknown as SVGSVGElement;
+    // Clear
     let child = svgEl.lastChild;
-    while (child) {
-      svgEl.removeChild(child);
-      child = svgEl.lastChild;
-    }
+    while (child) { svgEl.removeChild(child); child = svgEl.lastChild; }
 
     // Root group for zoom
     const root = document.createElementNS(NS, "g");
-    root.setAttribute("class", "root");
     svgEl.appendChild(root);
 
     // Defs
     const defs = document.createElementNS(NS, "defs");
+    // Arrows
     const marker = document.createElementNS(NS, "marker");
     marker.setAttribute("id", "arrow");
     marker.setAttribute("viewBox", "0 -5 10 10");
-    marker.setAttribute("refX", "20");
+    marker.setAttribute("refX", "25");
     marker.setAttribute("refY", "0");
     marker.setAttribute("markerWidth", "6");
     marker.setAttribute("markerHeight", "6");
     marker.setAttribute("orient", "auto");
     const arrowPath = document.createElementNS(NS, "path");
     arrowPath.setAttribute("d", "M0,-5L10,0L0,5");
-    arrowPath.setAttribute("fill", "#a1a1aa");
+    arrowPath.setAttribute("fill", "#4ba0fa");
     marker.appendChild(arrowPath);
     defs.appendChild(marker);
+
+    // Glow filters
+    for (const [type, cfg] of Object.entries(TYPE_CONFIG)) {
+      const filter = document.createElementNS(NS, "filter");
+      filter.setAttribute("id", `glow-${type}`);
+      filter.setAttribute("x", "-50%");
+      filter.setAttribute("y", "-50%");
+      filter.setAttribute("width", "200%");
+      filter.setAttribute("height", "200%");
+      const blur = document.createElementNS(NS, "feGaussianBlur");
+      blur.setAttribute("stdDeviation", "6");
+      blur.setAttribute("result", "blur");
+      filter.appendChild(blur);
+      const merge = document.createElementNS(NS, "feMerge");
+      const mn1 = document.createElementNS(NS, "feMergeNode");
+      mn1.setAttribute("in", "blur");
+      merge.appendChild(mn1);
+      const mn2 = document.createElementNS(NS, "feMergeNode");
+      mn2.setAttribute("in", "SourceGraphic");
+      merge.appendChild(mn2);
+      filter.appendChild(merge);
+      defs.appendChild(filter);
+    }
     root.appendChild(defs);
 
-    // ── Physics ──
+    // Physics
     const simulation = forceSimulation<GraphNode>(nodes)
-      .force(
-        "link",
-        forceLink<GraphNode, GraphLink>(links)
-          .id((d) => d.id)
-          .distance(120)
-      )
-      .force("charge", forceManyBody().strength(-250))
+      .force("link", forceLink<GraphNode, GraphLink>(links).id((d) => d.id).distance(130))
+      .force("charge", forceManyBody().strength(-300))
       .force("center", forceCenter(width / 2, height / 2))
-      .force("collision", forceCollide<GraphNode>().radius((d) => d.radius + 12));
-
+      .force("collision", forceCollide<GraphNode>().radius((d) => d.radius + 15));
     simRef.current = simulation;
 
-    // ── Link lines ──
+    // Links
     const linkGroup = document.createElementNS(NS, "g");
-    linkGroup.setAttribute("class", "links");
-    const linkElements: SVGLineElement[] = [];
+    const linkEls: SVGLineElement[] = [];
     for (const _ of links) {
       const line = document.createElementNS(NS, "line");
-      line.setAttribute("stroke", "#d4d4d8");
+      line.setAttribute("stroke", "#263348");
       line.setAttribute("stroke-width", "1.5");
-      line.setAttribute("stroke-dasharray", "4 2");
+      line.setAttribute("stroke-dasharray", "4 3");
       line.setAttribute("marker-end", "url(#arrow)");
       linkGroup.appendChild(line);
-      linkElements.push(line);
+      linkEls.push(line);
     }
     root.appendChild(linkGroup);
 
-    // ── Link labels ──
-    const labelGroup = document.createElementNS(NS, "g");
-    labelGroup.setAttribute("class", "link-labels");
-    const labelElements: SVGTextElement[] = [];
+    // Link labels
+    const llGroup = document.createElementNS(NS, "g");
+    const llEls: SVGTextElement[] = [];
     for (const l of links) {
       if (l.label) {
-        const text = document.createElementNS(NS, "text");
-        text.setAttribute("font-size", "9");
-        text.setAttribute("fill", "#71717a");
-        text.setAttribute("text-anchor", "middle");
-        text.textContent = l.label;
-        labelGroup.appendChild(text);
-        labelElements.push(text);
+        const t = document.createElementNS(NS, "text");
+        t.setAttribute("font-size", "8");
+        t.setAttribute("fill", "#a0aec4");
+        t.setAttribute("text-anchor", "middle");
+        t.textContent = l.label;
+        llGroup.appendChild(t);
+        llEls.push(t);
       }
     }
-    root.appendChild(labelGroup);
+    root.appendChild(llGroup);
 
-    // ── Nodes ──
+    // Nodes
     const nodeGroup = document.createElementNS(NS, "g");
-    nodeGroup.setAttribute("class", "nodes");
-    const nodeRects: Record<string, SVGGElement> = {};
+    const nodeMap = new Map<string, SVGGElement>();
 
     for (const n of nodes) {
       const g = document.createElementNS(NS, "g");
       g.setAttribute("cursor", "pointer");
+      const cfg = TYPE_CONFIG[n.type] ?? { color: "#52525b", emoji: "📄", glow: "rgba(82,82,91,0.3)" };
 
+      // Glow circle (behind)
+      const glow = document.createElementNS(NS, "circle");
+      glow.setAttribute("r", String(n.radius + 4));
+      glow.setAttribute("fill", "none");
+      glow.setAttribute("stroke", cfg.color);
+      glow.setAttribute("stroke-width", "1.5");
+      glow.setAttribute("opacity", "0.4");
+      glow.setAttribute("filter", `url(#glow-${n.type})`);
+      g.appendChild(glow);
+
+      // Main circle
       const circle = document.createElementNS(NS, "circle");
       circle.setAttribute("r", String(n.radius));
-      circle.setAttribute("fill", TYPE_COLORS[n.type] ?? "#6b7280");
-      circle.setAttribute("stroke", "#fff");
+      circle.setAttribute("fill", "#101822");
+      circle.setAttribute("stroke", cfg.color);
       circle.setAttribute("stroke-width", "2");
-      circle.setAttribute("opacity", "0.85");
       g.appendChild(circle);
 
+      // Emoji
       const emoji = document.createElementNS(NS, "text");
       emoji.setAttribute("text-anchor", "middle");
       emoji.setAttribute("dy", "0.35em");
-      emoji.setAttribute("font-size", String(Math.max(10, n.radius * 0.6)));
-      emoji.textContent = TYPE_EMOJIS[n.type] ?? "📄";
+      emoji.setAttribute("font-size", String(Math.max(11, n.radius * 0.65)));
+      emoji.textContent = cfg.emoji;
       g.appendChild(emoji);
 
+      // Label below
       const label = document.createElementNS(NS, "text");
       label.setAttribute("text-anchor", "middle");
-      label.setAttribute("dy", String(n.radius + 14));
-      label.setAttribute("font-size", "10");
-      label.setAttribute("fill", "#52525b");
+      label.setAttribute("dy", String(n.radius + 16));
+      label.setAttribute("font-size", "9");
+      label.setAttribute("fill", "#a0aec4");
       label.textContent = n.label + (n.label.length >= 40 ? "…" : "");
       g.appendChild(label);
 
-      const title = document.createElementNS(NS, "title");
-      title.textContent = `${memoryTypeLabel(n.type)} | 置信度: ${Math.round(n.score * 100)}%\n${n.label}`;
-      g.appendChild(title);
+      // Hover
+      g.addEventListener("mouseenter", () => setHoveredId(n.id));
+      g.addEventListener("mouseleave", () => setHoveredId(null));
 
       // Click
       g.addEventListener("click", (e) => {
@@ -258,8 +278,7 @@ export function KnowledgeGraph({
         e.stopPropagation();
         dragActive = true;
         simulation.alphaTarget(0.3).restart();
-        n.fx = n.x;
-        n.fy = n.y;
+        n.fx = n.x; n.fy = n.y;
         window.addEventListener("mousemove", dragMove);
         window.addEventListener("mouseup", dragEnd);
       };
@@ -272,66 +291,66 @@ export function KnowledgeGraph({
       const dragEnd = () => {
         dragActive = false;
         simulation.alphaTarget(0);
-        n.fx = null;
-        n.fy = null;
+        n.fx = null; n.fy = null;
         window.removeEventListener("mousemove", dragMove);
         window.removeEventListener("mouseup", dragEnd);
       };
       g.addEventListener("mousedown", dragStart);
 
       nodeGroup.appendChild(g);
-      nodeRects[n.id] = g;
+      nodeMap.set(n.id, g);
     }
     root.appendChild(nodeGroup);
 
-    // ── Apply zoom ──
-    root.setAttribute(
-      "transform",
+    // Zoom
+    root.setAttribute("transform",
       `translate(${width / 2},${height / 2}) scale(${zoomLevel}) translate(${-width / 2},${-height / 2})`
     );
 
-    // ── Tick ──
+    // Tick
     simulation.on("tick", () => {
-      for (let i = 0; i < linkElements.length; i++) {
+      for (let i = 0; i < linkEls.length; i++) {
         const d = links[i];
-        const sx = (d.source as GraphNode)?.x ?? 0;
-        const sy = (d.source as GraphNode)?.y ?? 0;
-        const tx = (d.target as GraphNode)?.x ?? 0;
-        const ty = (d.target as GraphNode)?.y ?? 0;
-        linkElements[i].setAttribute("x1", String(sx));
-        linkElements[i].setAttribute("y1", String(sy));
-        linkElements[i].setAttribute("x2", String(tx));
-        linkElements[i].setAttribute("y2", String(ty));
+        const s = d.source as GraphNode;
+        const t = d.target as GraphNode;
+        linkEls[i].setAttribute("x1", String(s.x ?? 0));
+        linkEls[i].setAttribute("y1", String(s.y ?? 0));
+        linkEls[i].setAttribute("x2", String(t.x ?? 0));
+        linkEls[i].setAttribute("y2", String(t.y ?? 0));
       }
-      for (let i = 0; i < labelElements.length; i++) {
-        const d = links.filter((l) => l.label)[i];
-        if (!d) continue;
-        const sx = (d.source as GraphNode)?.x ?? 0;
-        const sy = (d.source as GraphNode)?.y ?? 0;
-        const tx = (d.target as GraphNode)?.x ?? 0;
-        const ty = (d.target as GraphNode)?.y ?? 0;
-        labelElements[i].setAttribute("x", String((sx + tx) / 2));
-        labelElements[i].setAttribute("y", String((sy + ty) / 2));
+      let li = 0;
+      for (const l of links) {
+        if (!l.label) continue;
+        const s = l.source as GraphNode;
+        const t = l.target as GraphNode;
+        if (llEls[li]) {
+          llEls[li].setAttribute("x", String(((s.x ?? 0) + (t.x ?? 0)) / 2));
+          llEls[li].setAttribute("y", String(((s.y ?? 0) + (t.y ?? 0)) / 2));
+        }
+        li++;
       }
       for (const n of nodes) {
-        const g = nodeRects[n.id];
-        if (g) {
-          g.setAttribute("transform", `translate(${n.x ?? 0},${n.y ?? 0})`);
-        }
+        const g = nodeMap.get(n.id);
+        if (g) g.setAttribute("transform", `translate(${n.x ?? 0},${n.y ?? 0})`);
       }
     });
 
-    return () => {
-      simulation.stop();
-    };
-  }, [memories, dimensions, graphData, onNodeClick, zoomLevel]);
+    return () => { simulation.stop(); };
+  }, [nodes, links, dimensions, zoomLevel, onNodeClick, memories]);
+
+  const hoveredMemory = hoveredId ? memories.find((m) => m.id === hoveredId) : null;
 
   if (memories.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[400px] text-zinc-400">
-        <p>搜索记忆后将在图谱中展示</p>
+      <div className="flex h-full min-h-[400px] items-center justify-center text-fg-subtle">
+        <p className="text-sm">Search memories to see the graph</p>
       </div>
     );
+  }
+
+  const typeCounts = { fact: 0, preference: 0, episodic: 0 };
+  for (const m of memories) {
+    if (m.memory_type in typeCounts) typeCounts[m.memory_type as keyof typeof typeCounts]++;
   }
 
   return (
@@ -343,12 +362,28 @@ export function KnowledgeGraph({
         className="overflow-visible"
         style={{ minHeight: "500px" }}
       />
-      <div className="pointer-events-none absolute bottom-3 left-3 flex gap-3 text-xs text-zinc-400">
-        <span>📌 事实</span>
-        <span>❤️ 偏好</span>
-        <span>💭 情节</span>
-        <span className="ml-2 text-zinc-300">| 拖拽节点调整布局</span>
+
+      {/* Legend */}
+      <div className="pointer-events-none absolute bottom-4 left-4 flex items-center gap-4 rounded-[18px] border border-surface-border bg-surface-card/60 px-4 py-2 backdrop-blur-md shadow-[0_12px_40px_rgba(0,0,0,0.22)]">
+        {Object.entries(TYPE_CONFIG).map(([type, cfg]) => (
+          <span key={type} className="flex items-center gap-1.5 text-[11px] text-fg-muted">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: cfg.color }} />
+            {cfg.emoji} {memoryTypeLabel(type)}
+            <span className="text-fg-faint">({typeCounts[type as keyof typeof typeCounts]})</span>
+          </span>
+        ))}
+        <span className="text-fg-faint text-[10px]">| Drag to rearrange</span>
       </div>
+
+      {/* Hover popover */}
+      {hoveredMemory && (
+        <div className="pointer-events-none absolute top-4 right-4 max-w-xs rounded-[18px] border border-surface-border bg-surface-card/80 p-3 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.34)]">
+          <p className="text-xs font-medium text-fg-primary">{truncate(hoveredMemory.content, 120)}</p>
+          {hoveredMemory.summary && (
+            <p className="mt-1 text-[10px] text-fg-muted">{hoveredMemory.summary}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
