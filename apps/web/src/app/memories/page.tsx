@@ -138,10 +138,10 @@ function MemoriesShell() {
             />
 
             {/* Filter bar */}
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900">
-              <Filter className="ml-1 h-3.5 w-3.5 text-zinc-400" />
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-2">
+              <Filter className="ml-1 h-3.5 w-3.5 text-fg-subtle" />
               
-              <div className="flex gap-0.5 rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
+              <div className="flex gap-0.5 rounded-md bg-surface-hover p-0.5">
                 {filterModes.map((f) => (
                   <button
                     key={f.key}
@@ -151,8 +151,8 @@ function MemoriesShell() {
                     }}
                     className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-all ${
                       filterMode === f.key
-                        ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100"
-                        : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400"
+                        ? "bg-surface-card text-fg-primary shadow-xs"
+                        : "text-fg-subtle hover:text-fg-muted"
                     }`}
                   >
                     <f.icon className="h-3 w-3" />
@@ -161,7 +161,7 @@ function MemoriesShell() {
                 ))}
               </div>
 
-              <div className="h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
+              <div className="h-4 w-px bg-surface-border" />
 
               <div className="flex gap-1">
                 {typeFilters.map((t) => (
@@ -173,8 +173,8 @@ function MemoriesShell() {
                     }}
                     className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
                       typeFilter === t.key
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
-                        : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        ? "bg-brand-accent-subtle text-brand-accent"
+                        : "text-fg-subtle hover:bg-surface-hover"
                     }`}
                   >
                     {t.label}
@@ -186,7 +186,7 @@ function MemoriesShell() {
                 {searchQuery && (
                   <button
                     onClick={() => doSearch("")}
-                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
                   >
                     <X className="h-3 w-3" />
                     清除

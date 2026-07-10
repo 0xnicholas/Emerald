@@ -10,7 +10,7 @@ export function DemoBanner() {
   if (!demoMode) return null;
 
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+    <div className="flex items-center justify-between gap-3 border-b border-surface-border bg-bg-warning px-4 py-2 text-sm text-text-warning">
       <div className="flex items-center gap-2">
         <EyeIcon className="h-4 w-4" />
         <span>

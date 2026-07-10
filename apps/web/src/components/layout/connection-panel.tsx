@@ -58,17 +58,17 @@ export function ConnectionPanel() {
 
   if (connected) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm dark:border-emerald-800 dark:bg-emerald-950/30">
-        <PlugZap className="h-4 w-4 text-emerald-600" />
-        <span className="text-emerald-700 dark:text-emerald-300">
+      <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-card px-3 py-1.5 text-sm">
+        <PlugZap className="h-4 w-4 text-brand-accent" />
+        <span className="text-fg-primary">
           已连接
         </span>
-        <Badge className="ml-1 bg-emerald-200 text-emerald-800 dark:bg-emerald-800 dark:text-emerald-200">
+        <Badge className="bg-brand-accent-subtle text-brand-accent">
           {entityId || "未指定实体"}
         </Badge>
         <button
           onClick={() => setConnected(false)}
-          className="ml-2 text-xs text-zinc-500 underline hover:text-zinc-700"
+          className="ml-2 text-xs text-fg-subtle underline hover:text-fg-muted"
         >
           断开
         </button>
@@ -86,7 +86,7 @@ export function ConnectionPanel() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-500">API 地址</label>
+          <label className="text-xs font-medium text-fg-muted">API 地址</label>
           <Input
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -94,7 +94,7 @@ export function ConnectionPanel() {
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-500">API Key</label>
+          <label className="text-xs font-medium text-fg-muted">API Key</label>
           <Input
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
@@ -103,7 +103,7 @@ export function ConnectionPanel() {
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-500">
+          <label className="text-xs font-medium text-fg-muted">
             实体 ID（用户/项目）
           </label>
           <Input
@@ -114,7 +114,7 @@ export function ConnectionPanel() {
         </div>
 
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          <p className="text-sm text-text-error">{error}</p>
         )}
 
         <Button onClick={testConnection} disabled={testing} className="w-full">
@@ -130,10 +130,10 @@ export function ConnectionPanel() {
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-zinc-200 dark:border-zinc-700" />
+            <div className="w-full border-t border-surface-border" />
           </div>
           <div className="relative flex justify-center text-xs">
-            <span className="bg-white px-2 text-zinc-400 dark:bg-zinc-900">
+            <span className="bg-surface-card px-2 text-fg-subtle">
               或
             </span>
           </div>

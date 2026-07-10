@@ -33,13 +33,14 @@ export function memoryTypeLabel(type: string): string {
 
 export function memoryTypeColor(type: string): string {
   const map: Record<string, string> = {
-    fact: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+    fact:
+      "bg-memory-fact-bg text-memory-fact",
     preference:
-      "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+      "bg-memory-preference-bg text-memory-preference",
     episodic:
-      "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+      "bg-memory-episodic-bg text-memory-episodic",
   };
-  return map[type] ?? "bg-gray-100 text-gray-800";
+  return map[type] ?? "bg-surface-hover text-fg-muted";
 }
 
 export function confidenceColor(score: number): string {

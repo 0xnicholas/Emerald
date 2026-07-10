@@ -51,13 +51,13 @@ export function MemoryCard({ memory, onClick }: MemoryCardProps) {
     >
       <div
         onClick={onClick}
-        className={`group cursor-pointer rounded-xl border border-zinc-100 border-t-4 bg-white shadow-sm transition-all hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 ${borderColor}`}
+        className={`group cursor-pointer rounded-xl border border-surface-border border-t-4 bg-surface-card shadow-sm transition-all hover:shadow-md ${borderColor}`}
       >
         {/* Top accent bar */}
         <div className="p-4">
           {/* Header row */}
           <div className="mb-2.5 flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-surface-hover text-fg-muted">
               <Icon className="h-3.5 w-3.5" />
             </div>
             <Badge className={memoryTypeColor(memory.memory_type)}>
@@ -73,24 +73,24 @@ export function MemoryCard({ memory, onClick }: MemoryCardProps) {
           </div>
 
           {/* Content */}
-          <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+          <p className="text-sm leading-relaxed text-fg-primary">
             {truncate(memory.content, 180)}
           </p>
 
           {/* Summary */}
           {memory.summary && (
-            <div className="mt-2 flex gap-1.5 rounded-md bg-zinc-50 p-2 dark:bg-zinc-800/50">
-              <Quote className="mt-0.5 h-3 w-3 shrink-0 text-zinc-400" />
-              <p className="text-xs italic text-zinc-500 dark:text-zinc-400">
+            <div className="mt-2 flex gap-1.5 rounded-md bg-surface-hover p-2">
+              <Quote className="mt-0.5 h-3 w-3 shrink-0 text-fg-subtle" />
+              <p className="text-xs italic text-fg-muted">
                 {truncate(memory.summary, 100)}
               </p>
             </div>
           )}
 
           {/* Footer */}
-          <div className="mt-3 flex items-center gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+          <div className="mt-3 flex items-center gap-2 border-t border-surface-border pt-3">
             {memory.source && (
-              <span className="flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+              <span className="flex items-center gap-1 rounded-md bg-surface-hover px-1.5 py-0.5 text-[10px] font-medium text-fg-muted">
                 {memory.source === "rag" ? (
                   <BookOpen className="h-3 w-3" />
                 ) : (

@@ -30,15 +30,17 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col border-r border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 transition-all duration-200",
+        "flex flex-col border-r border-surface-border bg-surface-base transition-all duration-200",
         sidebarOpen ? "w-56" : "w-14"
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-700">
-        <Brain className="h-6 w-6 shrink-0 text-emerald-600" />
+      <div className="flex h-14 items-center gap-2 border-b border-surface-border px-3">
+        <Brain className="h-6 w-6 shrink-0 text-brand-accent" />
         {sidebarOpen && (
-          <span className="text-sm font-semibold tracking-tight">Emerald</span>
+          <span className="text-sm font-semibold tracking-tight text-fg-primary">
+            Emerald
+          </span>
         )}
       </div>
 
@@ -53,8 +55,8 @@ export function Sidebar() {
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 active
-                  ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200"
-                  : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  ? "bg-brand-accent-subtle text-brand-accent"
+                  : "text-fg-muted hover:bg-surface-hover hover:text-fg-primary"
               )}
             >
               <item.icon className="h-5 w-5 shrink-0" />
@@ -65,7 +67,7 @@ export function Sidebar() {
       </nav>
 
       {/* Toggle */}
-      <div className="border-t border-zinc-200 p-2 dark:border-zinc-700">
+      <div className="border-t border-surface-border p-2">
         <Button
           variant="ghost"
           size="icon"

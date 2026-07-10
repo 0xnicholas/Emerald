@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/stores/app";
 import { ConnectionPanel } from "@/components/layout/connection-panel";
+import { DemoBanner } from "@/components/layout/demo-banner";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -98,6 +99,7 @@ function SettingsShell() {
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex flex-1 flex-col overflow-auto">
+        <DemoBanner />
         <div className="flex-1 p-6">
           <h1 className="text-2xl font-bold tracking-tight">设置</h1>
           <p className="mt-1 text-sm text-zinc-500">管理 Emerald 连接和配置</p>
@@ -123,7 +125,7 @@ function SettingsShell() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-zinc-500">
+                  <label className="text-xs font-medium text-fg-muted">
                     API 地址
                   </label>
                   <Input
@@ -132,7 +134,7 @@ function SettingsShell() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-zinc-500">
+                  <label className="text-xs font-medium text-fg-muted">
                     API Key
                   </label>
                   <div className="flex gap-2">
@@ -156,7 +158,7 @@ function SettingsShell() {
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-zinc-500">
+                  <label className="text-xs font-medium text-fg-muted">
                     实体 ID（默认）
                   </label>
                   <Input
