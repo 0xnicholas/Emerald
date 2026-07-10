@@ -18,7 +18,7 @@ import { AddMemoryModal } from "@/components/add-memory-modal";
 import type { SearchMemory } from "@/lib/types";
 import {
   Brain, Search, ArrowRight, Zap, Layers, Network, Bookmark, Activity,
-  Star, MessageSquare, FileText, Lightbulb, Sparkles, Clock, Calendar, Plus,
+  Star, MessageSquare, FileText, Lightbulb, Sparkles, Clock, Calendar, Plus, Folder,
 } from "lucide-react";
 
 // ─── Animation ───────────────────────────────────────────────────────
@@ -198,14 +198,24 @@ export function DashboardView({ entityId }: { entityId: string }) {
   const demoMode = useAppStore((s) => s.demoMode);
   const [addOpen, setAddOpen] = useState(false);
 
+  // Use URL-based space selection (client-side safe, no Suspense needed)
+  const [selectedSpaceTag, setSelectedSpaceTag] = useState(() => {
+    if (typeof window === "undefined") return "default";
+    return new URLSearchParams(window.location.search).get("space") ?? "default";
+  });
+
   const profileQuery = useQuery({
     queryKey: ["profile", entityId],
     queryFn: () => getClient().getProfile(entityId),
     enabled: !!entityId && !demoMode,
   });
   const searchQuery = useQuery({
-    queryKey: ["search-demo", entityId],
-    queryFn: () => getClient().search("", entityId, { searchMode: "memory", topK: 8 }),
+    queryKey: ["search-demo", entityId, selectedSpaceTag],
+    queryFn: () => getClient().search("", entityId, {
+      searchMode: "memory",
+      topK: 8,
+      filters: selectedSpaceTag !== "default" ? { container_tag: selectedSpaceTag } : undefined,
+    }),
     enabled: !!entityId && !demoMode,
   });
 

@@ -48,6 +48,10 @@ export default function MemoriesPage() {
 function MemoriesShell() {
   const entityId = useAppStore((s) => s.entityId);
   const demoMode = useAppStore((s) => s.demoMode);
+  const [selectedSpaceTag] = useState(() => {
+    if (typeof window === "undefined") return "default";
+    return new URLSearchParams(window.location.search).get("space") ?? "default";
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<SearchMemory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,6 +81,7 @@ function MemoriesShell() {
           const data = await getClient().search(q || "", entityId, {
             searchMode,
             topK: 50,
+            filters: selectedSpaceTag !== "default" ? { container_tag: selectedSpaceTag } : undefined,
           });
           let filtered = data.results;
           if (typeFilter !== "all") {
@@ -90,7 +95,7 @@ function MemoriesShell() {
         setLoading(false);
       }
     },
-    [entityId, filterMode, typeFilter, demoMode]
+    [entityId, filterMode, typeFilter, demoMode, selectedSpaceTag]
   );
 
   // Initial load

@@ -56,6 +56,10 @@ const typeIcons: Record<string, typeof FileText> = {
 function GraphShell() {
   const entityId = useAppStore((s) => s.entityId);
   const demoMode = useAppStore((s) => s.demoMode);
+  const [selectedSpaceTag] = useState(() => {
+    if (typeof window === "undefined") return "default";
+    return new URLSearchParams(window.location.search).get("space") ?? "default";
+  });
   const [memories, setMemories] = useState<SearchMemory[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -77,6 +81,7 @@ function GraphShell() {
           const data = await getClient().search(q, entityId, {
             searchMode: "memory",
             topK: 80,
+            filters: selectedSpaceTag !== "default" ? { container_tag: selectedSpaceTag } : undefined,
           });
           setMemories(data.results);
         }
@@ -90,7 +95,7 @@ function GraphShell() {
         setLoading(false);
       }
     },
-    [entityId, demoMode]
+    [entityId, demoMode, selectedSpaceTag]
   );
 
   useEffect(() => {
