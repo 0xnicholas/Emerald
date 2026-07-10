@@ -17,3 +17,6 @@ backups/*
 # Local secrets
 .env.local
 .env.docker
+
+# Brainstorming visual mockups
+.superpowers/
