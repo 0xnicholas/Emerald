@@ -87,6 +87,20 @@ export function Sidebar() {
         </button>
       </nav>
 
+      {/* Keyboard shortcut hints */}
+      {sidebarOpen && (
+        <div className="px-3 py-2 border-t border-surface-border/50">
+          <div className="flex items-center gap-2 text-[10px] text-fg-faint">
+            <kbd className="px-1.5 py-0.5 rounded bg-surface-hover border border-surface-border/50 font-mono text-[9px]">⌘K</kbd>
+            <span>Command palette</span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-fg-faint mt-1">
+            <kbd className="px-1.5 py-0.5 rounded bg-surface-hover border border-surface-border/50 font-mono text-[9px]">C</kbd>
+            <span>Add memory</span>
+          </div>
+        </div>
+      )}
+
       {/* Toggle */}
       <div className="border-t border-surface-border p-2">
         <Button
