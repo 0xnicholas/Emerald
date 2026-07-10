@@ -5,6 +5,7 @@ import type {
   PipelineStatus,
   Profile,
   SearchMemory,
+  Space,
 } from "./types";
 
 export class EmeraldApiError extends Error {
@@ -168,6 +169,45 @@ export class EmeraldClient {
       `/v1/pipelines/${encodeURIComponent(pipelineId)}`
     );
     return data.data;
+  }
+
+  // ─── Spaces ───────────────────────────────────────────────────────
+
+  async listSpaces(entityId: string): Promise<Space[]> {
+    const data = await this.request<{ data: Space[] }>(
+      "GET",
+      `/v1/spaces?entity_id=${encodeURIComponent(entityId)}`
+    );
+    return data.data;
+  }
+
+  async createSpace(name: string, emoji: string, entityId: string): Promise<Space> {
+    const data = await this.request<{ data: Space }>(
+      "POST",
+      "/v1/spaces",
+      { name, emoji, entity_id: entityId }
+    );
+    return data.data;
+  }
+
+  async updateSpace(
+    tag: string,
+    entityId: string,
+    data: { name?: string; emoji?: string }
+  ): Promise<Space> {
+    const res = await this.request<{ data: Space }>(
+      "PATCH",
+      `/v1/spaces/${encodeURIComponent(tag)}?entity_id=${encodeURIComponent(entityId)}`,
+      data
+    );
+    return res.data;
+  }
+
+  async deleteSpace(tag: string, entityId: string, migrateToDefault = true): Promise<void> {
+    await this.request(
+      "DELETE",
+      `/v1/spaces/${encodeURIComponent(tag)}?entity_id=${encodeURIComponent(entityId)}&migrate_to_default=${migrateToDefault}`
+    );
   }
 
   // ─── Health ───────────────────────────────────────────────────────

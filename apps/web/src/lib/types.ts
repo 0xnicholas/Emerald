@@ -27,6 +27,7 @@ export interface SearchMemory {
   score: number;
   source: string;
   memory_type: string;
+  container_tag?: string;
   is_latest: boolean;
   document_id?: string;
   document_title?: string;
@@ -81,6 +82,18 @@ export interface PipelineStatus {
   error_message?: string;
   fact_extraction_status?: string;
   memory_count: number;
+}
+
+// ─── Space ──────────────────────────────────────────────────────────
+
+export interface Space {
+  containerTag: string;
+  name: string;
+  emoji: string;
+  entityId: string;
+  memoryCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─── App Config ─────────────────────────────────────────────────────
