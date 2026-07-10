@@ -58,6 +58,7 @@ function MemoriesShell() {
   const [hasSearched, setHasSearched] = useState(false);
   const [filterMode, setFilterMode] = useState<FilterMode>("memory");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [tagFilter, setTagFilter] = useState("");
   const [selectedMemory, setSelectedMemory] = useState<SearchMemory | null>(
     null
   );
@@ -87,6 +88,11 @@ function MemoriesShell() {
           if (typeFilter !== "all") {
             filtered = filtered.filter((m) => m.memory_type === typeFilter);
           }
+          if (tagFilter) {
+            filtered = filtered.filter(
+              (m) => m.tags?.includes(tagFilter)
+            );
+          }
           setResults(filtered);
         }
       } catch {
@@ -95,7 +101,7 @@ function MemoriesShell() {
         setLoading(false);
       }
     },
-    [entityId, filterMode, typeFilter, demoMode, selectedSpaceTag]
+    [entityId, filterMode, typeFilter, tagFilter, demoMode, selectedSpaceTag]
   );
 
   // Initial load
@@ -187,10 +193,21 @@ function MemoriesShell() {
                 ))}
               </div>
 
+              {/* Tag filter */}
+              <input
+                value={tagFilter}
+                onChange={(e) => {
+                  setTagFilter(e.target.value);
+                  doSearch(searchQuery);
+                }}
+                placeholder="Filter by tag…"
+                className="w-24 rounded-md bg-surface-hover px-2 py-1 text-xs text-fg-primary placeholder:text-fg-faint border border-surface-border/50 focus:outline-none focus:ring-1 focus:ring-surface-ring"
+              />
+
               <div className="ml-auto flex items-center gap-1">
                 {searchQuery && (
                   <button
-                    onClick={() => doSearch("")}
+                    onClick={() => { doSearch(""); setTagFilter(""); }}
                     className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
                   >
                     <X className="h-3 w-3" />

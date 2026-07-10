@@ -29,6 +29,7 @@ export const MOCK_SPACES: Space[] = [
 const baseMemories: SearchMemory[] = [
   {
     id: "mem_001",
+    tags: ["work", "career"],
     content: "Alex 刚加入 Stripe 担任产品经理，负责支付基础设施团队，管理 5 人团队",
     summary: "Stripe PM 新职位，支付基础设施方向",
     score: 0.95,
@@ -40,6 +41,7 @@ const baseMemories: SearchMemory[] = [
   },
   {
     id: "mem_002",
+    tags: ["preference", "work"],
     content: "用户表示更喜欢在上午进行代码审查，下午专注编码",
     summary: "工作节奏偏好",
     score: 0.88,
@@ -51,6 +53,7 @@ const baseMemories: SearchMemory[] = [
   },
   {
     id: "mem_003",
+    tags: ["work", "architecture"],
     content: "周一和团队进行了支付系统架构评审，决定采用 CQRS 模式",
     summary: "架构决策：支付系统采用 CQRS",
     score: 0.82,
@@ -71,6 +74,7 @@ const baseMemories: SearchMemory[] = [
   },
   {
     id: "mem_005",
+    tags: ["ai", "interest"],
     content: "用户提到对 AI Agent 和记忆系统非常感兴趣，想深入这个领域",
     summary: "对 AI Agent 领域感兴趣",
     score: 0.91,
@@ -109,6 +113,7 @@ const baseMemories: SearchMemory[] = [
   },
   {
     id: "mem_009",
+    tags: ["research", "database"],
     content: "正在调研知识图谱数据库方案，对比 Neo4j 和 SurrealDB 的优劣",
     summary: "调研知识图谱数据库",
     score: 0.84,
@@ -167,6 +172,7 @@ const baseMemories: SearchMemory[] = [
   },
   {
     id: "mem_015",
+    tags: ["philosophy", "architecture"],
     content: "认为记忆系统不应该只是一个加了个用户 ID 的向量数据库，图谱结构才是核心",
     summary: "对记忆系统架构的核心观点",
     score: 0.94,
@@ -221,7 +227,8 @@ export const MOCK_SEARCH_RESULTS = {
 export function getMockSearchResults(
   query: string,
   typeFilter?: string,
-  containerTag?: string
+  containerTag?: string,
+  tagFilter?: string
 ): { results: SearchMemory[]; search_mode: string } {
   let filtered = [...baseMemories];
   if (containerTag && containerTag !== "default") {
@@ -238,6 +245,9 @@ export function getMockSearchResults(
   }
   if (typeFilter && typeFilter !== "all") {
     filtered = filtered.filter((m) => m.memory_type === typeFilter);
+  }
+  if (tagFilter) {
+    filtered = filtered.filter((m) => m.tags?.includes(tagFilter));
   }
   return { results: filtered, search_mode: "memory" };
 }
