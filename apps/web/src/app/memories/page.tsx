@@ -19,6 +19,9 @@ import {
   Brain,
   BookOpen,
   Clock,
+  Filter,
+  X,
+  Search,
 } from "lucide-react";
 
 type FilterMode = "all" | "memory" | "rag";
@@ -115,11 +118,15 @@ function MemoriesShell() {
       <main className="flex flex-1 flex-col overflow-auto">
         <DemoBanner />
         <div className="flex-1 p-6">
-          {/* Search header */}
+          {/* Header */}
           <div className="mb-6">
-            <h1 className="text-2xl font-bold tracking-tight">记忆浏览</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {searchQuery ? `搜索: ${searchQuery}` : "记忆浏览"}
+            </h1>
             <p className="mt-1 text-sm text-zinc-500">
-              搜索和浏览 Emerald 中存储的记忆
+              {results.length > 0
+                ? `找到 ${results.length} 条记忆`
+                : "搜索和浏览 Emerald 中存储的记忆"}
             </p>
           </div>
 
@@ -130,9 +137,11 @@ function MemoriesShell() {
               placeholder="搜索记忆内容…"
             />
 
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex gap-1 rounded-lg border border-zinc-200 p-1 dark:border-zinc-700">
+            {/* Filter bar */}
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900">
+              <Filter className="ml-1 h-3.5 w-3.5 text-zinc-400" />
+              
+              <div className="flex gap-0.5 rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
                 {filterModes.map((f) => (
                   <button
                     key={f.key}
@@ -140,48 +149,59 @@ function MemoriesShell() {
                       setFilterMode(f.key);
                       doSearch(searchQuery);
                     }}
-                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-all ${
                       filterMode === f.key
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
-                        : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100"
+                        : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400"
                     }`}
                   >
-                    <f.icon className="h-3.5 w-3.5" />
+                    <f.icon className="h-3 w-3" />
                     {f.label}
                   </button>
                 ))}
               </div>
 
-              <select
-                value={typeFilter}
-                onChange={(e) => {
-                  setTypeFilter(e.target.value as TypeFilter);
-                  doSearch(searchQuery);
-                }}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
-              >
+              <div className="h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
+
+              <div className="flex gap-1">
                 {typeFilters.map((t) => (
-                  <option key={t.key} value={t.key}>
+                  <button
+                    key={t.key}
+                    onClick={() => {
+                      setTypeFilter(t.key);
+                      doSearch(searchQuery);
+                    }}
+                    className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                      typeFilter === t.key
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
+                        : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    }`}
+                  >
                     {t.label}
-                  </option>
+                  </button>
                 ))}
-              </select>
+              </div>
 
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => doSearch("")}
-                disabled={loading}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                刷新
-              </Button>
-
-              {results.length > 0 && (
-                <span className="text-xs text-zinc-400">
-                  {results.length} 条结果
-                </span>
-              )}
+              <div className="ml-auto flex items-center gap-1">
+                {searchQuery && (
+                  <button
+                    onClick={() => doSearch("")}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <X className="h-3 w-3" />
+                    清除
+                  </button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => doSearch(searchQuery)}
+                  disabled={loading}
+                  className="h-7 px-2"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           </div>
 
