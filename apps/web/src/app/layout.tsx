@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { Toaster } from "@/components/ui/sonner";
+import { CommandPaletteProvider } from "@/components/command-palette";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -34,6 +35,7 @@ export default function RootLayout({
       <body className="h-full">
         <Providers>
           {children}
+          <CommandPaletteProvider />
           <ChatPanel />
           <Toaster />
         </Providers>

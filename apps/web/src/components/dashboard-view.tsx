@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -203,6 +203,18 @@ export function DashboardView({ entityId }: { entityId: string }) {
     if (typeof window === "undefined") return "default";
     return new URLSearchParams(window.location.search).get("space") ?? "default";
   });
+
+  // Read ?add=note from URL (set by CommandPalette)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("add") === "note") {
+      setAddOpen(true);
+      // Clean the URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete("add");
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, []);
 
   const profileQuery = useQuery({
     queryKey: ["profile", entityId],
