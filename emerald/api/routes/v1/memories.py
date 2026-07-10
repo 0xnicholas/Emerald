@@ -63,6 +63,7 @@ async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
         memory_type=body.memory_type,
         confidence=body.confidence,
         valid_until=body.valid_until,
+        container_tag=body.container_tag,
     )
 
     return {
@@ -90,6 +91,7 @@ async def get_memory(memory_id: str, request: Request) -> dict:
         content=memory["content"],
         summary=memory.get("summary", ""),
         memory_type=memory.get("memory_type", "fact"),
+        container_tag=memory.get("container_tag", "default"),
         is_latest=memory.get("is_latest", True),
         confidence=memory.get("confidence", 0.0),
         valid_from=memory.get("valid_from"),

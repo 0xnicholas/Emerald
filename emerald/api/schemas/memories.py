@@ -49,6 +49,13 @@ class AddMemoryRequest(BaseModel):
             "Useful for human-verified or operator-curated entries."
         ),
     )
+    container_tag: str | None = Field(
+        default=None,
+        description=(
+            "Optional space/container tag to associate this memory with. "
+            "Default is 'default' (My Space)."
+        ),
+    )
     valid_until: datetime | None = Field(
         default=None,
         description=(
@@ -77,6 +84,7 @@ class MemoryResponse(BaseModel):
     content: str
     summary: str = ""
     memory_type: str = "fact"
+    container_tag: str = "default"
     is_latest: bool = True
     confidence: float = 0.0
     valid_from: datetime | None = None

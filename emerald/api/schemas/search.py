@@ -24,6 +24,7 @@ class SearchResultItem(BaseModel):
     score: float = 0.0
     source: str = "memory"  # memory | rag
     memory_type: str = ""
+    container_tag: str = "default"
     is_latest: bool = True
     document_id: str | None = None
     document_title: str | None = None

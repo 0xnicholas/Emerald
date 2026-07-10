@@ -87,6 +87,7 @@ async def search(
                     "score": r.score,
                     "source": r.source,
                     "memory_type": r.memory_type,
+                    "container_tag": r.container_tag,
                     "is_latest": r.is_latest,
                     "document_id": r.document_id,
                     "document_title": r.document_title,
@@ -135,7 +136,7 @@ async def search_get(
     return {
         "data": {
             "results": [
-                {"id": r.id, "content": r.content, "score": r.score, "source": r.source}
+                {"id": r.id, "content": r.content, "score": r.score, "source": r.source, "container_tag": "default"}
                 for r in results.results
             ],
             "search_mode": results.search_mode.value,
