@@ -12,10 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/typography";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
 import { getClient, resetClient, EmeraldClient } from "@/lib/api";
 import {
   Save, CheckCircle2, XCircle, Loader, Eye, EyeOff,
-  Server, Key, Info, RefreshCw, Link2, Terminal,
+  Server, Key, Info, RefreshCw, Link2, Terminal, Download, Upload,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -63,6 +64,10 @@ function SettingsShell() {
                 <Info className="h-4 w-4 mr-1.5" />
                 System Info
               </TabsTrigger>
+              <TabsTrigger value="data" className="flex-1">
+                <Download className="h-4 w-4 mr-1.5" />
+                Data
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="connection" className="mt-6">
@@ -75,6 +80,10 @@ function SettingsShell() {
 
             <TabsContent value="info" className="mt-6">
               <SystemInfoPanel />
+            </TabsContent>
+
+            <TabsContent value="data" className="mt-6">
+              <DataPanel />
             </TabsContent>
           </Tabs>
         </div>
@@ -255,6 +264,66 @@ function SystemInfoPanel() {
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function DataPanel() {
+  const entityId = useAppStore((s) => s.entityId);
+  const demoMode = useAppStore((s) => s.demoMode);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      let memories;
+      if (demoMode) {
+        const { MOCK_MEMORIES } = await import("@/lib/mock-data");
+        memories = MOCK_MEMORIES;
+      } else {
+        const data = await getClient().search("", entityId, {
+          searchMode: "memory",
+          topK: 500,
+        });
+        memories = data.results;
+      }
+
+      const blob = new Blob([JSON.stringify({ memories, exportedAt: new Date().toISOString() }, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `emerald-memories-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Memories exported!");
+    } catch {
+      toast.error("Failed to export memories");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-fg-primary">
+            <Download className="h-5 w-5" />
+            Export Memories
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-fg-muted">
+            Download all your memories as a JSON file.
+          </p>
+          <Button onClick={handleExport} disabled={exporting}>
+            {exporting ? <Loader className="h-4 w-4 animate-spin mr-1" /> : <Download className="h-4 w-4 mr-1" />}
+            Export as JSON
+          </Button>
         </CardContent>
       </Card>
     </div>
