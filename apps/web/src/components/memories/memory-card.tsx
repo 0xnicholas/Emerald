@@ -11,7 +11,6 @@ import { motion } from "motion/react";
 import {
   FileText, Star, MessageSquare, BookOpen, Brain, Quote, FolderOpen,
 } from "lucide-react";
-import { useAppStore } from "@/stores/app";
 
 interface MemoryCardProps {
   memory: SearchMemory;
