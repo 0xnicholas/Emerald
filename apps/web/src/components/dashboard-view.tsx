@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { motion } from "motion/react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getClient } from "@/lib/api";
 import { MOCK_PROFILE, MOCK_MEMORIES } from "@/lib/mock-data";
 import { useAppStore } from "@/stores/app";
@@ -14,11 +14,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Heading, Label } from "@/components/ui/typography";
 import { Separator } from "@/components/ui/separator";
 import { memoryTypeLabel, memoryTypeColor } from "@/lib/utils";
+import { toast } from "sonner";
 import { AddMemoryModal } from "@/components/add-memory-modal";
 import type { SearchMemory } from "@/lib/types";
 import {
   Brain, Search, ArrowRight, Zap, Layers, Network, Bookmark, Activity,
   Star, MessageSquare, FileText, Lightbulb, Sparkles, Clock, Calendar, Plus, Folder,
+  Send, Loader,
 } from "lucide-react";
 
 // ─── Animation ───────────────────────────────────────────────────────
@@ -197,6 +199,29 @@ function StatFactsCard() {
 export function DashboardView({ entityId }: { entityId: string }) {
   const demoMode = useAppStore((s) => s.demoMode);
   const [addOpen, setAddOpen] = useState(false);
+  const [quickNote, setQuickNote] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const queryClient = useQueryClient();
+
+  const handleQuickSave = useCallback(async () => {
+    if (!quickNote.trim() || savingNote) return;
+    setSavingNote(true);
+    try {
+      if (demoMode) {
+        // In demo mode, just clear the input
+        setQuickNote("");
+        return;
+      }
+      await getClient().addMemory(quickNote.trim(), entityId, { contentType: "text" });
+      setQuickNote("");
+      toast.success("Note saved!");
+      queryClient.invalidateQueries({ queryKey: ["search-demo", entityId] });
+    } catch {
+      toast.error("Failed to save note");
+    } finally {
+      setSavingNote(false);
+    }
+  }, [quickNote, entityId, demoMode, savingNote, queryClient]);
 
   // Use URL-based space selection (client-side safe, no Suspense needed)
   const [selectedSpaceTag, setSelectedSpaceTag] = useState(() => {
@@ -283,6 +308,44 @@ export function DashboardView({ entityId }: { entityId: string }) {
             <Clock className="h-3 w-3" />
             {new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}
           </div>
+        </div>
+      </motion.div>
+
+      {/* Quick Note */}
+      <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.03 }}>
+        <div className="rounded-[18px] border border-surface-border bg-surface-card/60 p-4 shadow-sm backdrop-blur-md">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="h-4 w-4 text-brand-accent" />
+            <span className="text-xs font-medium text-fg-faint">QUICK NOTE</span>
+          </div>
+          <div className="flex gap-2">
+            <textarea
+              value={quickNote}
+              onChange={(e) => setQuickNote(e.target.value)}
+              placeholder="Write a quick note..."
+              rows={2}
+              className="flex-1 rounded-xl border border-surface-border bg-surface-hover/50 px-3 py-2 text-sm text-fg-primary placeholder:text-fg-faint focus:outline-none focus:ring-2 focus:ring-surface-ring resize-none"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  handleQuickSave();
+                }
+              }}
+            />
+            <button
+              onClick={handleQuickSave}
+              disabled={!quickNote.trim() || savingNote}
+              className="self-end flex items-center gap-1.5 rounded-xl bg-brand-accent px-3 py-2 text-xs font-medium text-white hover:bg-brand-accent/90 transition-colors disabled:opacity-40"
+            >
+              {savingNote ? (
+                <Loader className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+              Save
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-fg-faint">⌘+Enter to save</p>
         </div>
       </motion.div>
 
