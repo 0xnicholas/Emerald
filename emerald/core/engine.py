@@ -123,6 +123,7 @@ class MemoryEngine:
         memory_type: str | None = None,
         confidence: float | None = None,
         valid_until: datetime | None = None,
+        container_tag: str | None = None,
     ) -> AddResult:
         """Add content to the memory graph (synchronous path).
 
@@ -190,6 +191,7 @@ class MemoryEngine:
                         "memory_type": memory_type,
                         "confidence": confidence,
                         "valid_until": valid_until,
+                        "container_tag": container_tag,
                     },
                 )
 
@@ -388,9 +390,15 @@ class MemoryEngine:
                 (metadata or {}).get("valid_until"),
                 chunk.valid_until,
             )
+            overridden_container_tag = _resolve_override(
+                (overrides or {}).get("container_tag"),
+                (metadata or {}).get("container_tag"),
+                "default",
+            )
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,
+                container_tag=overridden_container_tag,
                 memory_type=overridden_type,
                 internal_type=chunk.internal_type,
                 confidence=overridden_confidence,
