@@ -47,6 +47,7 @@ class GraphStore:
         content: str,
         *,
         entity_id: str,
+        container_tag: str = "default",
         memory_type: str = "fact",
         internal_type: str | None = None,
         confidence: float = 0.8,
@@ -79,7 +80,8 @@ class GraphStore:
                     MERGE (e:Entity {id: $entity_id})
                     ON CREATE SET e.created_at = datetime(), e.type = "user"
                     CREATE (m:Memory {
-                        id: $id, entity_id: $entity_id, content: $content,
+                        id: $id, entity_id: $entity_id, container_tag: $container_tag,
+                        content: $content,
                         summary: $summary,
                         memory_type: $memory_type, internal_type: $internal_type,
                         confidence: $confidence,
@@ -104,6 +106,7 @@ class GraphStore:
                     content=content,
                     entity_id=entity_id,
                     summary=summary or content[:200],
+                    container_tag=container_tag,
                     memory_type=memory_type,
                     internal_type=internal_type,
                     confidence=confidence,
@@ -121,6 +124,7 @@ class GraphStore:
             memory = {
                 "id": memory_id,
                 "entity_id": entity_id,
+                "container_tag": container_tag,
                 "content": content,
                 "summary": summary or content[:200],
                 "memory_type": memory_type,
