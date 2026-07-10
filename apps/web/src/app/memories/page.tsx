@@ -6,6 +6,7 @@ import { ConnectionPanel } from "@/components/layout/connection-panel";
 import { Sidebar } from "@/components/layout/sidebar";
 import { SearchBar } from "@/components/search/search-bar";
 import { MemoriesGrid } from "@/components/memories/memories-grid";
+import { TimelineView } from "@/components/memories/timeline-view";
 import { MemoryDetailModal } from "@/components/memories/memory-detail-modal";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { getClient } from "@/lib/api";
@@ -22,6 +23,8 @@ import {
   Filter,
   X,
   Search,
+  LayoutList,
+  Grid3X3,
 } from "lucide-react";
 
 type FilterMode = "all" | "memory" | "rag";
@@ -59,6 +62,7 @@ function MemoriesShell() {
   const [filterMode, setFilterMode] = useState<FilterMode>("memory");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [tagFilter, setTagFilter] = useState("");
+  const [viewMode, setViewMode] = useState<"grid" | "timeline">("grid");
   const [selectedMemory, setSelectedMemory] = useState<SearchMemory | null>(
     null
   );
@@ -148,7 +152,7 @@ function MemoriesShell() {
               placeholder="搜索记忆内容…"
             />
 
-            {/* Filter bar */}
+            {/* View toggle + Filter bar */}
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-2">
               <Filter className="ml-1 h-3.5 w-3.5 text-fg-subtle" />
               
@@ -204,6 +208,32 @@ function MemoriesShell() {
                 className="w-24 rounded-md bg-surface-hover px-2 py-1 text-xs text-fg-primary placeholder:text-fg-faint border border-surface-border/50 focus:outline-none focus:ring-1 focus:ring-surface-ring"
               />
 
+              {/* View toggle */}
+              <div className="flex gap-0.5 rounded-md bg-surface-hover p-0.5">
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-all ${
+                    viewMode === "grid"
+                      ? "bg-surface-card text-fg-primary shadow-xs"
+                      : "text-fg-subtle hover:text-fg-muted"
+                  }`}
+                >
+                  <Grid3X3 className="h-3 w-3" />
+                  Grid
+                </button>
+                <button
+                  onClick={() => setViewMode("timeline")}
+                  className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-all ${
+                    viewMode === "timeline"
+                      ? "bg-surface-card text-fg-primary shadow-xs"
+                      : "text-fg-subtle hover:text-fg-muted"
+                  }`}
+                >
+                  <LayoutList className="h-3 w-3" />
+                  Timeline
+                </button>
+              </div>
+
               <div className="ml-auto flex items-center gap-1">
                 {searchQuery && (
                   <button
@@ -228,13 +258,23 @@ function MemoriesShell() {
           </div>
 
           {/* Results */}
-          <MemoriesGrid
-            memories={results}
-            onMemoryClick={(m) => setSelectedMemory(m)}
-            emptyMessage={
-              hasSearched ? "没有匹配的记忆" : "正在加载…"
-            }
-          />
+          {viewMode === "grid" ? (
+            <MemoriesGrid
+              memories={results}
+              onMemoryClick={(m) => setSelectedMemory(m)}
+              emptyMessage={
+                hasSearched ? "没有匹配的记忆" : "正在加载…"
+              }
+            />
+          ) : (
+            <TimelineView
+              memories={results}
+              onMemoryClick={(m) => setSelectedMemory(m)}
+              emptyMessage={
+                hasSearched ? "没有匹配的记忆" : "正在加载…"
+              }
+            />
+          )}
         </div>
       </main>
 

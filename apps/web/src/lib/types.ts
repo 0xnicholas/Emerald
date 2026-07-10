@@ -32,6 +32,7 @@ export interface SearchMemory {
   is_latest: boolean;
   document_id?: string;
   document_title?: string;
+  created_at?: string;
 }
 
 export interface Profile {
