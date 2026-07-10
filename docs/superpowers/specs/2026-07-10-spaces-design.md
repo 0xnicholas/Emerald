@@ -258,27 +258,69 @@ Sidebar
 - 创建按钮
 - 对齐 Supermemory 的 `AddSpaceModal` 组件
 
-### 4.3 Zustand Store 变更
+### 4.3 Space 状态管理：URL 优先（对齐 Supermemory）
+
+与 Supermemory 一致，使用 **URL query param** 存储当前选中的 Space：
 
 ```typescript
-// apps/web/src/stores/app.ts (扩展)
-interface AppState {
-  // ... 现有字段
+// apps/web/src/hooks/use-space.ts (新增)
+import { useSearchParams } from "next/navigation"
+import { useCallback } from "react"
 
-  // Spaces
-  selectedSpaceTag: string;      // 当前选中的 Space tag
-  spaces: Space[];               // Spaces 列表
-  spacesLoading: boolean;
+export const DEFAULT_SPACE_TAG = "default"
+const SPACE_PARAM = "space"
 
-  // Actions
-  setSelectedSpaceTag: (tag: string) => void;
-  setSpaces: (spaces: Space[]) => void;
-  setSpacesLoading: (v: boolean) => void;
+export function useSelectedSpace() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedSpaceTag = searchParams.get(SPACE_PARAM) ?? DEFAULT_SPACE_TAG
 
-  // Space CRUD helpers
-  createSpace: (name: string, emoji: string) => Promise<Space>;
-  updateSpace: (tag: string, data: Partial<Space>) => Promise<void>;
-  deleteSpace: (tag: string) => Promise<void>;
+  const setSelectedSpaceTag = useCallback((tag: string) => {
+    const next = new URLSearchParams(searchParams.toString())
+    if (tag === DEFAULT_SPACE_TAG) {
+      next.delete(SPACE_PARAM)
+    } else {
+      next.set(SPACE_PARAM, tag)
+    }
+    setSearchParams(next, { scroll: false })
+  }, [searchParams, setSearchParams])
+
+  return { selectedSpaceTag, setSelectedSpaceTag }
+}
+```
+
+> **理由**：URL 方式让 Space 选择反映在 URL（`?space=work`），可分享、可刷新保留，
+> 浏览器前进/后退自动切换 Space。default Space 不显示在 URL 中保持简洁。
+
+#### 配套 Hook：useContainerTags
+
+```typescript
+// apps/web/src/hooks/use-container-tags.ts (新增)
+export function useContainerTags(entityId: string) {
+  const { data: spaces = [], isLoading } = useQuery({
+    queryKey: ["container-tags", entityId],
+    queryFn: () => getClient().listSpaces(entityId),
+    staleTime: 30_000,
+  })
+  return { spaces, isLoading }
+}
+```
+
+#### Space 排序规则
+
+```typescript
+// apps/web/src/lib/spaces.ts (新增)
+export function compareSpaces(a: Space, b: Space): number {
+  // 1. default 始终在第一位
+  if (a.containerTag === "default") return -1
+  if (b.containerTag === "default") return 1
+  // 2. 用户创建的有名 Space 其次
+  // 3. 自动创建的 Space（name === `Space ${tag}`）排最后
+  const aAuto = a.name === `Space ${a.containerTag}`
+  const bAuto = b.name === `Space ${b.containerTag}`
+  if (aAuto && !bAuto) return 1
+  if (!aAuto && bAuto) return -1
+  // 4. 按名称字母序
+  return a.name.localeCompare(b.name)
 }
 ```
 
@@ -320,9 +362,11 @@ export const MOCK_SPACES: Space[] = [
 ## 5. 页面集成
 
 ### 5.1 Dashboard
-- 加载时读取 `selectedSpaceTag`
+- 页面从 URL 读取 `selectedSpaceTag`（`useSelectedSpace()`）
+- 顶部区域显示当前 Space 名称作为上下文标识
 - 统计卡片显示当前 Space 的记忆数量
 - "Recently Saved" 列表按 Space 过滤
+- 空 Space 显示 "This space is empty. Add your first memory!" 提示
 
 ### 5.2 Memories 页面
 - 搜索时自动传入 `filters.containerTag`
@@ -341,28 +385,76 @@ export const MOCK_SPACES: Space[] = [
 ## 6. 数据流
 
 ```
-1. 用户打开应用
-   → useAppStore.hydrateFromStorage()
-   → 恢复 selectedSpaceTag (默认 "default")
+1. 用户打开应用（/ 或 /memories）
+   → URL 参数 ?space=work（若无则默认 "default"）
    → API: GET /v1/spaces?entity_id=xxx
-   → Store: setSpaces([])
+   → React Query 缓存 spaces 列表
+   → 各页面根据 selectedSpaceTag 过滤查询
 
 2. 用户切换 Space
    → SpaceSelector 点击 → SelectSpacesModal 打开
    → 用户选择某个 Space
-   → Store: setSelectedSpaceTag("work")
-   → localStorage: 保存选择
-   → 所有页面 reactively 更新查询
+   → useSelectedSpace().setSelectedSpaceTag("work")
+   → URL 更新为 ?space=work
+   → React Query keys 变化 → 所有页面自动重新查询
 
 3. 用户添加记忆到 Space
-   → AddMemoryModal 提交
+   → AddMemoryModal 提交，携带当前 selectedSpaceTag
    → API: POST /v1/memories { container_tag: "work" }
+   → 成功后 invalidate 查询
 
 4. 用户创建 Space
    → AddSpaceModal 提交
    → API: POST /v1/spaces { name: "Ideas", emoji: "💡" }
-   → Store: 刷新 spaces 列表
-   → 自动切换到新 Space
+   → invalidateQueries(["container-tags"])
+   → URL 切换到新 Space（setSelectedSpaceTag(newTag)）
+
+5. 用户重命名 Space（乐观更新）
+   → mutate 立即更新缓存中的 Space 名称
+   → API: PATCH /v1/spaces/{tag}
+   → 成功：保持更新
+   → 失败：回滚缓存，toast 提示错误
+```
+
+#### 乐观更新模式（重命名）
+
+```typescript
+// hooks/use-project-mutations.ts
+const renameSpaceMutation = useMutation({
+  mutationFn: ({ tag, name }: { tag: string; name: string }) =>
+    getClient().updateSpace(tag, { name }),
+  onMutate: async ({ tag, name }) => {
+    await queryClient.cancelQueries({ queryKey: ["container-tags"] })
+    const previous = queryClient.getQueryData(["container-tags"])
+    queryClient.setQueryData<Space[]>(["container-tags"], (old) =>
+      old?.map(s => s.containerTag === tag ? { ...s, name } : s)
+    )
+    return { previous }
+  },
+  onError: (_err, _vars, context) => {
+    if (context?.previous) {
+      queryClient.setQueryData(["container-tags"], context.previous)
+    }
+    toast.error("Failed to rename space")
+  },
+  onSettled: () => {
+    queryClient.invalidateQueries({ queryKey: ["container-tags"] })
+  },
+})
+```
+
+#### 批量删除流程
+
+```
+1. SelectSpacesModal 中点击 "Bulk delete" 按钮
+   → 切换到批量删除模式：checkbox 替代 radio
+   → 底部显示 "Delete selected" 按钮
+2. 用户选择多个 Space（default 不可选）
+   → 支持 Shift 范围多选
+3. 点击 "Delete selected"
+   → Dialog 确认：列出所选 Space，输入 DELETE 确认
+   → 逐条调用 DELETE /v1/spaces/{tag}
+   → 显示进度，完成后 invalidate
 ```
 
 ---
@@ -424,15 +516,17 @@ SET m.container_tag = 'default'
 | 5 | 后端: 启动时 ensure_default_spaces | 1 | ~10min |
 | 6 | 前端: types.ts 新增 Space 类型 | - | ~10min |
 | 7 | 前端: API client 新增 spaces 方法 | 6 | ~20min |
-| 8 | 前端: Zustand store 增加 space 状态 | 6 | ~20min |
-| 9 | 前端: 创建 SpaceGlyph 组件 | - | ~10min |
-| 10 | 前端: 创建 AddSpaceModal 组件 | 9 | ~30min |
-| 11 | 前端: 创建 SelectSpacesModal 组件 | 9, 10 | ~1h |
-| 12 | 前端: 创建 SpaceSelector 组件 | 11 | ~20min |
-| 13 | 前端: Sidebar 集成 SpaceSelector | 12 | ~15min |
-| 14 | 前端: Spaces 集成到所有页面 | 8 | ~20min |
-| 15 | 前端: 更新 mock-data | 6 | ~20min |
-| 16 | 完整测试验收 | 全部 | ~30min |
+| 8 | 前端: hooks/use-space.ts (URL query state) | - | ~15min |
+| 9 | 前端: hooks/use-container-tags.ts | 7 | ~15min |
+| 10 | 前端: lib/spaces.ts (排序 + 工具函数) | 6 | ~10min |
+| 11 | 前端: 创建 SpaceGlyph 组件 | - | ~10min |
+| 12 | 前端: 创建 AddSpaceModal 组件 | 11 | ~30min |
+| 13 | 前端: 创建 SelectSpacesModal 组件 | 11, 12 | ~1h |
+| 14 | 前端: 创建 SpaceSelector 组件 | 13 | ~20min |
+| 15 | 前端: Sidebar 集成 SpaceSelector | 14 | ~15min |
+| 16 | 前端: Spaces 集成到所有页面（Dashboard/Memories/Graph） | 8, 9 | ~20min |
+| 17 | 前端: 更新 mock-data | 6 | ~20min |
+| 18 | 完整测试验收 | 全部 | ~30min |
 
 **总计：~5-6 小时**
 
