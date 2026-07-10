@@ -172,10 +172,11 @@ export class EmeraldClient {
 
   // ─── Health ───────────────────────────────────────────────────────
 
-  async health(): Promise<{ status: string; version: string }> {
+  async health(): Promise<{ status: string; version: string; checks?: Record<string, string> }> {
     const data = await this.request<{
       status: string;
       version: string;
+      checks?: Record<string, string>;
     }>("GET", "/v1/health");
     return data;
   }
