@@ -9,6 +9,9 @@ import { Label } from "@/components/ui/typography";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { getClient } from "@/lib/api";
+import { useSelectedSpace } from "@/hooks/use-space";
+import { useContainerTags } from "@/hooks/use-container-tags";
+import { SpaceGlyph } from "@/components/spaces/space-glyph";
 
 interface AddMemoryModalProps {
   isOpen: boolean;
@@ -51,6 +54,9 @@ export function AddMemoryModal({ isOpen, onClose, onAdd }: AddMemoryModalProps) 
 }
 
 function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: string) => Promise<boolean>; onClose: () => void }) {
+  const { selectedSpaceTag, setSelectedSpaceTag } = useSelectedSpace();
+  const { spaces } = useContainerTags();
+  const selectedSpace = spaces.find((s) => s.containerTag === selectedSpaceTag);
   const [note, setNote] = useState("");
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -135,6 +141,31 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
 
         <TabsContent value="link" className="mt-4 space-y-3">
           <Label>Paste a URL</Label>
+          {/* Space selector */}
+          <div>
+            <Label>Save to space</Label>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {spaces.length > 0 ? (
+                spaces.slice(0, 6).map((s) => (
+                  <button
+                    key={s.containerTag}
+                    onClick={() => setSelectedSpaceTag(s.containerTag)}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      selectedSpaceTag === s.containerTag
+                        ? "bg-brand-accent-subtle text-brand-accent ring-1 ring-brand-accent/30"
+                        : "bg-surface-hover text-fg-muted hover:text-fg-primary"
+                    }`}
+                  >
+                    <SpaceGlyph emoji={s.emoji} size={14} />
+                    {s.name}
+                  </button>
+                ))
+              ) : (
+                <span className="text-xs text-fg-faint">Default space</span>
+              )}
+            </div>
+          </div>
+
           <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
