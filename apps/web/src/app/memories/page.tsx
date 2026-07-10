@@ -150,6 +150,7 @@ function MemoriesShell() {
               onSearch={doSearch}
               loading={loading}
               placeholder="搜索记忆内容…"
+              autoSearch
             />
 
             {/* View toggle + Filter bar */}
