@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -14,10 +14,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Heading, Label } from "@/components/ui/typography";
 import { Separator } from "@/components/ui/separator";
 import { memoryTypeLabel, memoryTypeColor } from "@/lib/utils";
+import { AddMemoryModal } from "@/components/add-memory-modal";
 import type { SearchMemory } from "@/lib/types";
 import {
   Brain, Search, ArrowRight, Zap, Layers, Network, Bookmark, Activity,
-  Star, MessageSquare, FileText, Lightbulb, Sparkles, Clock, Calendar,
+  Star, MessageSquare, FileText, Lightbulb, Sparkles, Clock, Calendar, Plus,
 } from "lucide-react";
 
 // ─── Animation ───────────────────────────────────────────────────────
@@ -195,6 +196,7 @@ function StatFactsCard() {
 
 export function DashboardView({ entityId }: { entityId: string }) {
   const demoMode = useAppStore((s) => s.demoMode);
+  const [addOpen, setAddOpen] = useState(false);
 
   const profileQuery = useQuery({
     queryKey: ["profile", entityId],
@@ -303,6 +305,8 @@ export function DashboardView({ entityId }: { entityId: string }) {
           <CardContent className="flex flex-wrap items-center gap-1 p-3">
             <Link href="/memories"><Button variant="ghost" size="sm"><Search className="h-4 w-4" /> Search</Button></Link>
             <Separator orientation="vertical" className="h-5" />
+            <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" /> Add</Button>
+            <Separator orientation="vertical" className="h-5" />
             <Link href="/graph"><Button variant="ghost" size="sm"><Network className="h-4 w-4" /> Graph</Button></Link>
             <Separator orientation="vertical" className="h-5" />
             <Link href="/settings"><Button variant="ghost" size="sm"><Zap className="h-4 w-4" /> API</Button></Link>
@@ -342,6 +346,7 @@ export function DashboardView({ entityId }: { entityId: string }) {
           </motion.div>
         </div>
       </div>
+      <AddMemoryModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
       <div className="h-8" />
     </div>
   );
