@@ -59,6 +59,7 @@ class GraphStore:
         source_type: str = "conversation",
         document_id: str | None = None,
         valid_until: datetime | None = None,
+        tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """Create a Memory node linked to an Entity.
@@ -94,6 +95,7 @@ class GraphStore:
                         source_document_id: $document_id,
                         source_type: $source_type,
                         tokens_estimate: $tokens,
+                        tags: $tags,
                         access_count: 0,
                         last_accessed_at: null,
                         created_at: datetime(),
@@ -117,6 +119,7 @@ class GraphStore:
                     valid_until=valid_until.isoformat() if valid_until else None,
                     document_id=document_id,
                     source_type=source_type,
+                    tags=tags or [],
                     tokens=len(content) // 4,
                     metadata=metadata_json,
                 )
@@ -141,6 +144,7 @@ class GraphStore:
                 "replaced_by": None,
                 "source_document_id": document_id,
                 "source_type": source_type,
+                "tags": tags or [],
                 "tokens_estimate": len(content) // 4,
                 "access_count": 0,
                 "last_accessed_at": None,
@@ -380,6 +384,32 @@ class GraphStore:
                         m["replaced_by"] = replaced_by
                     return
 
+    async def update_memory_tags(
+        self,
+        memory_id: str,
+        tags: list[str],
+    ) -> None:
+        """Replace the tags on a memory."""
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (m:Memory {id: $id})
+                    SET m.tags = $tags, m.updated_at = datetime()
+                    """,
+                    id=memory_id,
+                    tags=tags,
+                )
+            return
+
+        for memories in self._memories.values():
+            for m in memories:
+                if m["id"] == memory_id:
+                    m["tags"] = tags
+                    m["updated_at"] = datetime.now(UTC)
+                    return
+
     async def update_memory(
         self,
         memory_id: str,
@@ -388,8 +418,9 @@ class GraphStore:
         summary: str | None = None,
         memory_type: str | None = None,
         confidence: float | None = None,
+        tags: list[str] | None = None,
     ) -> None:
-        """Update a memory's content, summary, type, and/or confidence."""
+        """Update a memory's content, summary, type, confidence, and/or tags."""
         self._init_driver()
         sets = []
         params: dict[str, object] = {"id": memory_id}
@@ -407,6 +438,9 @@ class GraphStore:
         if confidence is not None:
             sets.append("m.confidence = $confidence")
             params["confidence"] = confidence
+        if tags is not None:
+            sets.append("m.tags = $tags")
+            params["tags"] = tags
 
         if not sets:
             return  # nothing to update
@@ -433,6 +467,8 @@ class GraphStore:
                         m["memory_type"] = memory_type
                     if confidence is not None:
                         m["confidence"] = confidence
+                    if tags is not None:
+                        m["tags"] = tags
                     m["updated_at"] = now
                     return
 
