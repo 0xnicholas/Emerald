@@ -69,7 +69,7 @@ function MemoriesShell() {
       setHasSearched(true);
       try {
         if (demoMode) {
-          const data = getMockSearchResults(q, typeFilter);
+          const data = getMockSearchResults(q, typeFilter, selectedSpaceTag);
           setResults(data.results);
         } else {
           const searchMode =

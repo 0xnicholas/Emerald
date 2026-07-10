@@ -1,4 +1,4 @@
-import type { Memory, Profile, SearchMemory } from "./types";
+import type { Memory, Profile, SearchMemory, Space } from "./types";
 
 export const MOCK_PROFILE: Profile = {
   entity_id: "demo_user",
@@ -19,6 +19,13 @@ export const MOCK_PROFILE: Profile = {
   version: 3,
 };
 
+export const MOCK_SPACES: Space[] = [
+  { containerTag: "default", name: "My Space", emoji: "📁", entityId: "demo_user", memoryCount: 8, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-07-10T00:00:00Z" },
+  { containerTag: "work", name: "Work", emoji: "💼", entityId: "demo_user", memoryCount: 5, createdAt: "2026-02-15T00:00:00Z", updatedAt: "2026-07-09T00:00:00Z" },
+  { containerTag: "ideas", name: "Ideas", emoji: "💡", entityId: "demo_user", memoryCount: 3, createdAt: "2026-03-10T00:00:00Z", updatedAt: "2026-07-08T00:00:00Z" },
+  { containerTag: "research", name: "Research", emoji: "📚", entityId: "demo_user", memoryCount: 2, createdAt: "2026-04-01T00:00:00Z", updatedAt: "2026-07-07T00:00:00Z" },
+];
+
 const baseMemories: SearchMemory[] = [
   {
     id: "mem_001",
@@ -27,6 +34,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.95,
     source: "memory",
     memory_type: "fact",
+    container_tag: "work",
     is_latest: true,
     document_title: "入职对话",
   },
@@ -37,6 +45,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.88,
     source: "memory",
     memory_type: "preference",
+    container_tag: "work",
     is_latest: true,
     document_title: "工作习惯记录",
   },
@@ -47,6 +56,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.82,
     source: "memory",
     memory_type: "episodic",
+    container_tag: "work",
     is_latest: true,
     document_title: "架构评审会议",
   },
@@ -75,6 +85,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.85,
     source: "memory",
     memory_type: "episodic",
+    container_tag: "ideas",
     is_latest: true,
   },
   {
@@ -103,6 +114,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.84,
     source: "memory",
     memory_type: "episodic",
+    container_tag: "research",
     is_latest: true,
     document_title: "技术调研文档",
   },
@@ -150,6 +162,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.83,
     source: "memory",
     memory_type: "episodic",
+    container_tag: "research",
     is_latest: true,
   },
   {
@@ -159,6 +172,7 @@ const baseMemories: SearchMemory[] = [
     score: 0.94,
     source: "memory",
     memory_type: "fact",
+    container_tag: "ideas",
     is_latest: true,
     document_title: "架构笔记",
   },
@@ -206,9 +220,13 @@ export const MOCK_SEARCH_RESULTS = {
 
 export function getMockSearchResults(
   query: string,
-  typeFilter?: string
+  typeFilter?: string,
+  containerTag?: string
 ): { results: SearchMemory[]; search_mode: string } {
   let filtered = [...baseMemories];
+  if (containerTag && containerTag !== "default") {
+    filtered = filtered.filter((m) => m.container_tag === containerTag);
+  }
   if (query) {
     const q = query.toLowerCase();
     filtered = filtered.filter(

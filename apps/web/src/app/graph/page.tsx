@@ -75,7 +75,7 @@ function GraphShell() {
       setLoading(true);
       try {
         if (demoMode) {
-          const data = getMockSearchResults(q);
+          const data = getMockSearchResults(q, undefined, selectedSpaceTag);
           setMemories(data.results);
         } else {
           const data = await getClient().search(q, entityId, {
