@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   X, FileText, Star, MessageSquare, Brain, Pencil, Trash2,
@@ -41,10 +41,16 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
   const demoMode = useAppStore((s) => s.demoMode);
 
   const [memory, setMemory] = useState(initialMemory);
+
+  // Sync memory state with prop changes (e.g. different memory selected)
+  useEffect(() => {
+    setMemory(initialMemory);
+  }, [initialMemory]);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editType, setEditType] = useState("");
+  const [editTags, setEditTags] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Reset when memory changes
@@ -53,6 +59,7 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
     setEditContent(memory.content);
     setEditSummary(memory.summary);
     setEditType(memory.memory_type);
+    setEditTags((memory.tags ?? []).join(", "));
     setIsEditing(true);
   }, [memory]);
 
@@ -75,10 +82,17 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
       return;
     }
 
-    const data: Record<string, string> = {};
+    const data: Record<string, string | string[]> = {};
     if (editContent !== memory.content) data.content = editContent;
     if (editSummary !== memory.summary) data.summary = editSummary;
     if (editType !== memory.memory_type) data.memory_type = editType;
+
+    // Parse tags
+    const newTags = editTags.split(",").map((t) => t.trim()).filter(Boolean);
+    const oldTags = memory.tags ?? [];
+    if (JSON.stringify(newTags) !== JSON.stringify(oldTags)) {
+      data.tags = newTags;
+    }
 
     if (Object.keys(data).length === 0) {
       setIsEditing(false);
@@ -88,7 +102,7 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
     await updateMemoryMutation.mutateAsync({ id: memory.id, data });
     setMemory((prev) => (prev ? { ...prev, ...data } : prev));
     setIsEditing(false);
-  }, [memory, demoMode, editContent, editSummary, editType, updateMemoryMutation]);
+  }, [memory, demoMode, editContent, editSummary, editType, editTags, updateMemoryMutation]);
 
   const handleDelete = useCallback(async () => {
     if (!memory) return;
@@ -235,6 +249,16 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
                           className="mt-1 w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-fg-primary placeholder:text-fg-faint focus:outline-none focus:ring-2 focus:ring-surface-ring resize-none"
                         />
                       </div>
+                      <div>
+                        <Label level="2" weight="medium" className="text-fg-faint">TAGS</Label>
+                        <input
+                          value={editTags}
+                          onChange={(e) => setEditTags(e.target.value)}
+                          placeholder="tag1, tag2, tag3"
+                          className="mt-1 w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-fg-primary placeholder:text-fg-faint focus:outline-none focus:ring-2 focus:ring-surface-ring"
+                        />
+                        <p className="text-[10px] text-fg-faint mt-1">Separate tags with commas</p>
+                      </div>
                       <div className="flex justify-end gap-2 pt-2">
                         <Button variant="ghost" size="sm" onClick={cancelEditing} disabled={isPending}>
                           Cancel
@@ -267,6 +291,24 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
                           </div>
                         </>
                       )}
+                      {memory.tags && memory.tags.length > 0 && (
+                        <>
+                          <Separator />
+                          <div>
+                            <Label level="2" weight="medium" className="text-fg-faint">TAGS</Label>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {memory.tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="inline-flex items-center px-2 py-0.5 rounded-md bg-surface-hover text-xs text-fg-faint border border-surface-border/50"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
                 </TabsContent>
@@ -292,6 +334,19 @@ export function MemoryDetailModal({ memory: initialMemory, onClose }: MemoryDeta
                     <div className="rounded-lg bg-surface-hover/50 p-3">
                       <Label level="3" weight="medium" className="text-fg-faint">CONFIDENCE</Label>
                       <p className="mt-1 text-sm text-fg-primary">{Math.round(memory.score * 100)}%</p>
+                    </div>
+                  )}
+
+                  {memory.tags && memory.tags.length > 0 && (
+                    <div className="rounded-lg bg-surface-hover/50 p-3">
+                      <Label level="3" weight="medium" className="text-fg-faint">TAGS</Label>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {memory.tags.map((tag) => (
+                          <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-md bg-surface-hover text-xs text-fg-faint border border-surface-border/50">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
 

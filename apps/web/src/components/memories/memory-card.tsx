@@ -87,6 +87,20 @@ export function MemoryCard({ memory, onClick }: MemoryCardProps) {
             </div>
           )}
 
+          {/* Tags */}
+          {memory.tags && memory.tags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {memory.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-surface-hover text-[10px] text-fg-faint border border-surface-border/50"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Footer */}
           <div className="mt-3 flex items-center gap-2 border-t border-surface-border pt-3">
             {memory.source && (

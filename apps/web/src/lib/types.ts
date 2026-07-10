@@ -28,6 +28,7 @@ export interface SearchMemory {
   source: string;
   memory_type: string;
   container_tag?: string;
+  tags?: string[];
   is_latest: boolean;
   document_id?: string;
   document_title?: string;

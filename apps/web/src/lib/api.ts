@@ -149,9 +149,13 @@ export class EmeraldClient {
 
   async updateMemory(
     id: string,
-    data: { content?: string; summary?: string; memory_type?: string; confidence?: number }
+    data: { content?: string; summary?: string; memory_type?: string; confidence?: number; tags?: string[] }
   ): Promise<void> {
     await this.request("PATCH", `/v1/memories/${encodeURIComponent(id)}`, data);
+  }
+
+  async updateMemoryTags(id: string, tags: string[]): Promise<void> {
+    await this.request("PATCH", `/v1/memories/${encodeURIComponent(id)}`, { tags });
   }
 
   async deleteMemory(id: string): Promise<void> {
