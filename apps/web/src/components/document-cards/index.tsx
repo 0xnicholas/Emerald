@@ -4,7 +4,9 @@ import { type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Badge } from "@/components/ui/badge";
 import { memoryTypeLabel, memoryTypeColor, truncate } from "@/lib/utils";
-import { Brain, Quote } from "lucide-react";
+import { Brain, Quote, FileText, ExternalLink, MessageSquare } from "lucide-react";
+
+type CardPreviewProps = { memory: SearchMemory; onClick?: () => void };
 
 interface CardWrapperProps {
   memory: SearchMemory;
@@ -50,7 +52,7 @@ export function CardWrapper({ memory, children, icon, onClick, className }: Card
   );
 }
 
-export function NotePreview({ memory, onClick }: { memory: SearchMemory; onClick?: () => void }) {
+export function NotePreview({ memory, onClick }: CardPreviewProps) {
   return (
     <CardWrapper memory={memory} icon={<Brain className="h-3.5 w-3.5" />} onClick={onClick}>
       <p className="text-xs leading-relaxed text-fg-primary">{truncate(memory.content, 200)}</p>
@@ -64,7 +66,7 @@ export function NotePreview({ memory, onClick }: { memory: SearchMemory; onClick
   );
 }
 
-export function FilePreview({ memory, onClick }: { memory: SearchMemory; onClick?: () => void }) {
+export function FilePreview({ memory, onClick }: CardPreviewProps) {
   return (
     <CardWrapper memory={memory} icon={<span className="text-xs">📄</span>} onClick={onClick}>
       <div className="flex items-center gap-2 rounded-lg bg-surface-hover/50 p-2">
@@ -79,7 +81,7 @@ export function FilePreview({ memory, onClick }: { memory: SearchMemory; onClick
   );
 }
 
-export function WebsitePreview({ memory, onClick }: { memory: SearchMemory; onClick?: () => void }) {
+export function WebsitePreview({ memory, onClick }: CardPreviewProps) {
   return (
     <CardWrapper memory={memory} icon={<span className="text-xs">🌐</span>} onClick={onClick}>
       <div className="flex items-center gap-2">
@@ -93,7 +95,7 @@ export function WebsitePreview({ memory, onClick }: { memory: SearchMemory; onCl
   );
 }
 
-export function YoutubePreview({ memory, onClick }: { memory: SearchMemory; onClick?: () => void }) {
+export function YoutubePreview({ memory, onClick }: CardPreviewProps) {
   return (
     <CardWrapper memory={memory} icon={<span className="text-xs">▶️</span>} onClick={onClick}>
       <div className="flex items-center gap-2">
@@ -104,6 +106,81 @@ export function YoutubePreview({ memory, onClick }: { memory: SearchMemory; onCl
         </div>
       </div>
       <p className="mt-1.5 text-xs text-fg-muted line-clamp-2">{truncate(memory.content, 120)}</p>
+    </CardWrapper>
+  );
+}
+
+// ─── Google Docs Preview ────────────────────────────────────────────
+
+export function GoogleDocsPreview({ memory, onClick }: CardPreviewProps) {
+  return (
+    <CardWrapper memory={memory} icon={<FileText className="h-3.5 w-3.5 text-blue-400" />} onClick={onClick}>
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-900/30 text-xs">
+          <FileText className="h-3.5 w-3.5 text-blue-400" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-fg-primary truncate">{memory.document_title || "Google Doc"}</p>
+          <p className="text-[10px] text-fg-faint">Google Docs</p>
+        </div>
+      </div>
+      <p className="mt-1.5 text-xs text-fg-muted line-clamp-3">{truncate(memory.content, 180)}</p>
+    </CardWrapper>
+  );
+}
+
+// ─── Notion Preview ─────────────────────────────────────────────────
+
+export function NotionPreview({ memory, onClick }: CardPreviewProps) {
+  return (
+    <CardWrapper memory={memory} icon={<span className="text-xs text-white">N</span>} onClick={onClick}>
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-white">N</div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-fg-primary truncate">{memory.document_title || "Notion Page"}</p>
+          <p className="text-[10px] text-fg-faint">Notion</p>
+        </div>
+      </div>
+      <p className="mt-1.5 text-xs text-fg-muted line-clamp-3">{truncate(memory.content, 180)}</p>
+    </CardWrapper>
+  );
+}
+
+// ─── Tweet Preview ──────────────────────────────────────────────────
+
+export function TweetPreview({ memory, onClick }: CardPreviewProps) {
+  const tweetText = memory.content.replace(/https?:\/\/t\.co\/\S+/g, "").trim();
+  return (
+    <CardWrapper memory={memory} icon={<MessageSquare className="h-3.5 w-3.5 text-sky-400" />} onClick={onClick}>
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-900/30 text-xs">
+          <MessageSquare className="h-3.5 w-3.5 text-sky-400" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-fg-primary truncate">{memory.document_title || "Tweet"}</p>
+          <p className="text-[10px] text-fg-faint">Twitter / X</p>
+        </div>
+      </div>
+      <p className="mt-1.5 text-xs text-fg-muted line-clamp-3 italic">{truncate(tweetText || memory.content, 180)}</p>
+    </CardWrapper>
+  );
+}
+
+// ─── MCP Preview ────────────────────────────────────────────────────
+
+export function MCPPreview({ memory, onClick }: CardPreviewProps) {
+  return (
+    <CardWrapper memory={memory} icon={<ExternalLink className="h-3.5 w-3.5 text-emerald-400" />} onClick={onClick}>
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-900/30 text-xs">
+          <ExternalLink className="h-3.5 w-3.5 text-emerald-400" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-fg-primary truncate">{memory.document_title || "MCP Resource"}</p>
+          <p className="text-[10px] text-fg-faint">MCP</p>
+        </div>
+      </div>
+      <p className="mt-1.5 text-xs text-fg-muted line-clamp-2">{truncate(memory.content, 150)}</p>
     </CardWrapper>
   );
 }

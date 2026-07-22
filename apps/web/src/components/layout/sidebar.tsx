@@ -12,11 +12,14 @@ import {
   Brain,
   MessageSquare,
   Plug,
+  X,
+  Menu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
 import { Button } from "@/components/ui/button";
 import { SpaceSelector } from "@/components/spaces/space-selector";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -28,14 +31,104 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const isMobile = useIsMobile();
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const setChatOpen = useAppStore((s) => s.setChatOpen);
 
+  // Mobile: slide-over drawer
+  if (isMobile) {
+    return (
+      <>
+        {/* Mobile hamburger */}
+        <button
+          onClick={toggleSidebar}
+          className="fixed top-3 left-3 z-50 flex h-9 w-9 items-center justify-center rounded-xl bg-surface-card/80 border border-surface-border/50 backdrop-blur-md md:hidden"
+          aria-label={sidebarOpen ? "关闭菜单" : "打开菜单"}
+        >
+          {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+        </button>
+
+        {/* Overlay */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+            onClick={toggleSidebar}
+          />
+        )}
+
+        {/* Drawer */}
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-surface-base border-r border-surface-border transition-transform duration-200 md:hidden",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          )}
+        >
+          {/* Logo */}
+          <div className="flex h-14 items-center gap-2 px-4 border-b border-surface-border">
+            <Brain className="h-6 w-6 text-brand-accent" />
+            <span className="text-sm font-semibold tracking-tight text-fg-primary">
+              Emerald
+            </span>
+          </div>
+
+          {/* Space selector */}
+          <div className="px-3 py-2 border-b border-surface-border/50">
+            <SpaceSelector />
+          </div>
+
+          {/* Nav */}
+          <nav className="flex-1 space-y-1 p-2">
+            {navItems.map((item) => {
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={toggleSidebar}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-brand-accent-subtle text-brand-accent"
+                      : "text-fg-muted hover:bg-surface-hover hover:text-fg-primary"
+                  )}
+                >
+                  <item.icon className="h-5 w-5 shrink-0" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+
+            {/* Chat button */}
+            <button
+              onClick={() => {
+                setChatOpen(true);
+                toggleSidebar();
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-primary"
+            >
+              <MessageSquare className="h-5 w-5 shrink-0" />
+              <span>Memory Chat</span>
+            </button>
+          </nav>
+
+          {/* Close */}
+          <div className="border-t border-surface-border p-3">
+            <Button variant="ghost" size="sm" onClick={toggleSidebar} className="w-full">
+              <X className="h-4 w-4 mr-2" />
+              Close
+            </Button>
+          </div>
+        </aside>
+      </>
+    );
+  }
+
+  // Desktop: persistent sidebar
   return (
     <aside
       className={cn(
-        "flex flex-col border-r border-surface-border bg-surface-base transition-all duration-200",
+        "hidden md:flex flex-col border-r border-surface-border bg-surface-base transition-all duration-200",
         sidebarOpen ? "w-56" : "w-14"
       )}
     >

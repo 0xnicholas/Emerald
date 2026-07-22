@@ -2,10 +2,11 @@ import type { SearchMemory } from "@/lib/types";
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
   relatedMemories?: SearchMemory[];
+  reasoning?: string; // Chain of thought / reasoning text
 }
 
 export interface ChatSession {
@@ -14,14 +15,32 @@ export interface ChatSession {
   messages: ChatMessage[];
   createdAt: Date;
   updatedAt: Date;
+  model?: string;
 }
+
+export type ChatModelId = "gpt-4o" | "gpt-4o-mini" | "claude-sonnet-4" | "auto";
+
+export interface ChatModel {
+  id: ChatModelId;
+  label: string;
+  provider: string;
+  description: string;
+}
+
+export const CHAT_MODELS: ChatModel[] = [
+  { id: "auto", label: "Auto (default)", provider: "Emerald", description: "Let Emerald choose the best model" },
+  { id: "gpt-4o", label: "GPT-4o", provider: "OpenAI", description: "Best quality, slower" },
+  { id: "gpt-4o-mini", label: "GPT-4o Mini", provider: "OpenAI", description: "Fast, cost-effective" },
+  { id: "claude-sonnet-4", label: "Claude Sonnet 4", provider: "Anthropic", description: "Great for analysis" },
+];
 
 let messageCounter = 0;
 
 export function createMessage(
-  role: "user" | "assistant",
+  role: "user" | "assistant" | "system",
   content: string,
-  relatedMemories?: SearchMemory[]
+  relatedMemories?: SearchMemory[],
+  reasoning?: string,
 ): ChatMessage {
   messageCounter++;
   return {
@@ -30,6 +49,7 @@ export function createMessage(
     content,
     timestamp: new Date(),
     relatedMemories,
+    reasoning,
   };
 }
 
@@ -71,4 +91,20 @@ export function formatMemoryResponse(
     text: parts.join("\n\n"),
     memories: results.slice(0, 8),
   };
+}
+
+const SESSIONS_KEY = "emerald:chat-sessions";
+
+export function readSessions(): ChatSession[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+export function writeSessions(sessions: ChatSession[]) {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+  } catch { /* noop */ }
 }

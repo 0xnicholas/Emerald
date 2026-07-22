@@ -4,11 +4,13 @@ import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/stores/app";
 import { ConnectionPanel } from "@/components/layout/connection-panel";
 import { Sidebar } from "@/components/layout/sidebar";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { SearchBar } from "@/components/search/search-bar";
 import { MemoriesGrid } from "@/components/memories/memories-grid";
 import { TimelineView } from "@/components/memories/timeline-view";
 import { MemoryDetailModal } from "@/components/memories/memory-detail-modal";
 import { DemoBanner } from "@/components/layout/demo-banner";
+import { AddMemoryModal } from "@/components/add-memory-modal";
 import { getClient } from "@/lib/api";
 import type { SearchMemory } from "@/lib/types";
 import { getMockSearchResults } from "@/lib/mock-data";
@@ -51,6 +53,7 @@ export default function MemoriesPage() {
 function MemoriesShell() {
   const entityId = useAppStore((s) => s.entityId);
   const demoMode = useAppStore((s) => s.demoMode);
+  const [addOpen, setAddOpen] = useState(false);
   const [selectedSpaceTag] = useState(() => {
     if (typeof window === "undefined") return "default";
     return new URLSearchParams(window.location.search).get("space") ?? "default";
@@ -130,9 +133,9 @@ function MemoriesShell() {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex flex-1 flex-col overflow-auto">
+      <main className="flex flex-1 flex-col overflow-auto pb-16 md:pb-0">
         <DemoBanner />
-        <div className="flex-1 p-6">
+        <div className="flex-1 p-4 md:p-6">
           {/* Header */}
           <div className="mb-6">
             <h1 className="text-2xl font-bold tracking-tight">
@@ -283,6 +286,8 @@ function MemoriesShell() {
         memory={selectedMemory}
         onClose={() => setSelectedMemory(null)}
       />
+      <MobileBottomNav onAddMemory={() => setAddOpen(true)} />
+      <AddMemoryModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }

@@ -5,6 +5,8 @@ import { Providers } from "./providers";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { Toaster } from "@/components/ui/sonner";
 import { CommandPaletteProvider } from "@/components/command-palette";
+import { KeyboardShortcutsProvider } from "@/components/keyboard-shortcuts";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -34,8 +36,11 @@ export default function RootLayout({
       </head>
       <body className="h-full">
         <Providers>
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
           <CommandPaletteProvider />
+          <KeyboardShortcutsProvider />
           <ChatPanel />
           <Toaster />
         </Providers>

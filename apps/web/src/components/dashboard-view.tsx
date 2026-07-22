@@ -7,6 +7,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getClient } from "@/lib/api";
 import { MOCK_PROFILE, MOCK_MEMORIES } from "@/lib/mock-data";
 import { useAppStore } from "@/stores/app";
+import { useProfile } from "@/hooks/use-profile";
+import { useSearchMemories } from "@/hooks/use-search-memories";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,7 @@ import type { SearchMemory } from "@/lib/types";
 import {
   Brain, Search, ArrowRight, Zap, Layers, Network, Bookmark, Activity,
   Star, MessageSquare, FileText, Lightbulb, Sparkles, Clock, Calendar, Plus, Folder,
-  Send, Loader,
+  Send, Loader, RefreshCw, Quote, Hexagon,
 } from "lucide-react";
 
 // ─── Animation ───────────────────────────────────────────────────────
@@ -156,11 +158,7 @@ function MemoryOfDayCard({ memory }: { memory: SearchMemory }) {
 function StatFactsCard() {
   const demoMode = useAppStore((s) => s.demoMode);
   const entityId = useAppStore((s) => s.entityId);
-  const profileQuery = useQuery({
-    queryKey: ["profile", entityId],
-    queryFn: () => getClient().getProfile(entityId),
-    enabled: !!entityId && !demoMode,
-  });
+  const profileQuery = useProfile(entityId, { enabled: !demoMode });
   const profile = demoMode ? MOCK_PROFILE : profileQuery.data;
   if (!profile?.static.length) return null;
 
@@ -191,6 +189,181 @@ function StatFactsCard() {
         ))}
       </div>
     </div>
+  );
+}
+
+// ─── Static Graph Preview ───────────────────────────────────────────
+
+function StaticGraphPreview({ entityId, demoMode }: { entityId: string; demoMode: boolean }) {
+  const queryClient = useQueryClient();
+
+  const graphQuery = useQuery({
+    queryKey: ["graph", entityId],
+    queryFn: () => getClient().getGraph(entityId, 30),
+    enabled: !!entityId && !demoMode,
+    staleTime: 60_000,
+  });
+
+  const [hovered, setHovered] = useState(false);
+
+  const nodeCount = demoMode ? 12 : graphQuery.data?.nodes.length ?? 0;
+  const edgeCount = demoMode ? 8 : graphQuery.data?.edges.length ?? 0;
+
+  return (
+    <Link href="/graph">
+      <GlassCard
+        className="group relative overflow-hidden p-4 transition-all hover:shadow-[0_12px_40px_rgba(0,0,0,0.34)]"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <div className="relative z-10 flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Network className="h-4 w-4 text-brand-accent" />
+            <Label level="3" weight="medium" className="text-fg-faint">KNOWLEDGE GRAPH</Label>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-fg-faint">
+            <span>{nodeCount} nodes</span>
+            <span className="text-fg-faint/50">·</span>
+            <span>{edgeCount} edges</span>
+            <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+          </div>
+        </div>
+
+        {/* Mini graph visualization */}
+        <div className="relative h-32 w-full overflow-hidden rounded-xl bg-surface-hover/30">
+          {/* Decorative node dots */}
+          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 400 120">
+            {/* Edges */}
+            {demoMode
+              ? generateDemoEdges(12).map((e, i) => (
+                  <line
+                    key={`e${i}`}
+                    x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+                    stroke="rgb(38, 51, 72)"
+                    strokeWidth="0.8"
+                    className="transition-all"
+                    style={{ opacity: hovered ? 0.8 : 0.5 }}
+                  />
+                ))
+              : null}
+            {/* Nodes */}
+            {demoMode
+              ? generateDemoNodes(12).map((n, i) => (
+                  <g key={`n${i}`}>
+                    <circle
+                      cx={n.x} cy={n.y} r={n.r}
+                      fill={n.color}
+                      opacity={hovered ? 0.9 : 0.6}
+                      className="transition-all"
+                    />
+                  </g>
+                ))
+              : null}
+          </svg>
+
+          {/* Loading state */}
+          {graphQuery.isLoading && !demoMode && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Loader className="h-5 w-5 animate-spin text-fg-muted" />
+            </div>
+          )}
+        </div>
+
+        <p className="mt-2 text-xs text-fg-muted">
+          Click to explore memory connections in the full graph view
+        </p>
+      </GlassCard>
+    </Link>
+  );
+}
+
+function generateDemoNodes(count: number) {
+  const types = ["#34d399", "#a78bfa", "#fbbf24"];
+  return Array.from({ length: count }, (_, i) => ({
+    x: 30 + Math.random() * 340,
+    y: 15 + Math.random() * 90,
+    r: 4 + Math.random() * 6,
+    color: types[i % 3],
+  }));
+}
+
+function generateDemoEdges(count: number) {
+  const edges = [];
+  for (let i = 0; i < count; i++) {
+    const nodes = generateDemoNodes(2);
+    edges.push({ x1: nodes[0].x, y1: nodes[0].y, x2: nodes[1].x, y2: nodes[1].y });
+  }
+  return edges;
+}
+
+// ─── Tip Rotation ───────────────────────────────────────────────────
+
+const TIPS = [
+  { icon: <Sparkles className="h-4 w-4" />, text: "Press ⌘K to quickly search or navigate anywhere" },
+  { icon: <MessageSquare className="h-4 w-4" />, text: "Use the Chat panel to ask questions about your memories" },
+  { icon: <Network className="h-4 w-4" />, text: "Explore memory connections in the Knowledge Graph" },
+  { icon: <Lightbulb className="h-4 w-4" />, text: "Press C to quickly add a new memory from anywhere" },
+  { icon: <Search className="h-4 w-4" />, text: "Use hybrid search to find both documents and memories" },
+  { icon: <Calendar className="h-4 w-4" />, text: "Memories automatically expire based on temporal relevance" },
+  { icon: <Zap className="h-4 w-4" />, text: "Connect external services via the Integrations page" },
+  { icon: <Bookmark className="h-4 w-4" />, text: "Profile facts are always injected before any search" },
+];
+
+function TipRotationCard() {
+  const [index, setIndex] = useState(0);
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFading(true);
+      setTimeout(() => {
+        setIndex((i) => (i + 1) % TIPS.length);
+        setFading(false);
+      }, 300);
+    }, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const tip = TIPS[index];
+
+  return (
+    <GlassCard className="p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Quote className="h-4 w-4 text-amber-500" />
+        <Label level="3" weight="medium" className="text-fg-faint">TIP OF THE DAY</Label>
+        <button
+          onClick={() => { setIndex((i) => (i + 1) % TIPS.length); }}
+          className="ml-auto rounded-md p-1 text-fg-faint hover:bg-surface-hover hover:text-fg-muted transition-colors"
+          title="Next tip"
+        >
+          <RefreshCw className="h-3 w-3" />
+        </button>
+      </div>
+      <div
+        className={`flex items-start gap-3 transition-opacity duration-300 ${
+          fading ? "opacity-30" : "opacity-100"
+        }`}
+      >
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-accent-subtle text-brand-accent">
+          {tip.icon}
+        </div>
+        <p className="text-sm leading-relaxed text-fg-primary">{tip.text}</p>
+      </div>
+      {/* Dots */}
+      <div className="mt-3 flex items-center gap-1.5">
+        {TIPS.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => setIndex(i)}
+            className={`h-1.5 rounded-full transition-all ${
+              i === index
+                ? "w-4 bg-brand-accent"
+                : "w-1.5 bg-surface-border hover:bg-fg-faint"
+            }`}
+          />
+        ))}
+      </div>
+    </GlassCard>
   );
 }
 
@@ -241,19 +414,11 @@ export function DashboardView({ entityId }: { entityId: string }) {
     }
   }, []);
 
-  const profileQuery = useQuery({
-    queryKey: ["profile", entityId],
-    queryFn: () => getClient().getProfile(entityId),
-    enabled: !!entityId && !demoMode,
-  });
-  const searchQuery = useQuery({
-    queryKey: ["search-demo", entityId, selectedSpaceTag],
-    queryFn: () => getClient().search("", entityId, {
-      searchMode: "memory",
-      topK: 8,
-      filters: selectedSpaceTag !== "default" ? { container_tag: selectedSpaceTag } : undefined,
-    }),
-    enabled: !!entityId && !demoMode,
+  const profileQuery = useProfile(entityId, { enabled: !demoMode });
+  const searchQuery = useSearchMemories("", entityId, {
+    searchMode: "memory",
+    topK: 8,
+    filters: selectedSpaceTag !== "default" ? { container_tag: selectedSpaceTag } : undefined,
   });
 
   const profile = demoMode ? MOCK_PROFILE : profileQuery.data;
@@ -394,6 +559,8 @@ export function DashboardView({ entityId }: { entityId: string }) {
             <Separator orientation="vertical" className="h-5" />
             <Link href="/graph"><Button variant="ghost" size="sm"><Network className="h-4 w-4" /> Graph</Button></Link>
             <Separator orientation="vertical" className="h-5" />
+            <Link href="/integrations"><Button variant="ghost" size="sm"><Hexagon className="h-4 w-4" /> Integrations</Button></Link>
+            <Separator orientation="vertical" className="h-5" />
             <Link href="/settings"><Button variant="ghost" size="sm"><Zap className="h-4 w-4" /> API</Button></Link>
             <div className="ml-auto hidden items-center gap-1.5 text-xs text-fg-subtle md:flex">
               <Lightbulb className="h-3 w-3 text-amber-500" />
@@ -402,6 +569,20 @@ export function DashboardView({ entityId }: { entityId: string }) {
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Graph Preview + Tip */}
+      <div className="grid gap-6 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.12 }}>
+            <StaticGraphPreview entityId={entityId} demoMode={demoMode} />
+          </motion.div>
+        </div>
+        <div className="lg:col-span-2">
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.14 }}>
+            <TipRotationCard />
+          </motion.div>
+        </div>
+      </div>
 
       {/* Recent + Profile */}
       <div className="grid gap-6 lg:grid-cols-5">

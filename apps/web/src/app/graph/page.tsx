@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAppStore } from "@/stores/app";
 import { ConnectionPanel } from "@/components/layout/connection-panel";
 import { Sidebar } from "@/components/layout/sidebar";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
+import { AddMemoryModal } from "@/components/add-memory-modal";
 import { KnowledgeGraph } from "@/components/graph/knowledge-graph";
 import { MemoryDetailModal } from "@/components/memories/memory-detail-modal";
 import { DemoBanner } from "@/components/layout/demo-banner";
@@ -43,6 +45,7 @@ export default function GraphPage() {
 function GraphShell() {
   const entityId = useAppStore((s) => s.entityId);
   const demoMode = useAppStore((s) => s.demoMode);
+  const [addOpen, setAddOpen] = useState(false);
   const [selectedSpaceTag] = useState(() => {
     if (typeof window === "undefined") return "default";
     return new URLSearchParams(window.location.search).get("space") ?? "default";
@@ -259,6 +262,8 @@ function GraphShell() {
           )}
         </div>
       </main>
+      <MobileBottomNav onAddMemory={() => setAddOpen(true)} />
+      <AddMemoryModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }
@@ -267,10 +272,11 @@ function LoadingShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex flex-1 flex-col">
+      <main className="flex flex-1 flex-col pb-16 md:pb-0">
         <DemoBanner />
         {children}
       </main>
+      <MobileBottomNav />
     </div>
   );
 }

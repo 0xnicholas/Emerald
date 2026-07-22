@@ -1,21 +1,24 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Send, Bot, User, Brain, Loader, Sparkles, Search, MessageSquare,
+  Send, Bot, User, Brain, Loader, Sparkles, Search,
+  X, ChevronDown, Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { memoryTypeLabel, memoryTypeColor } from "@/lib/utils";
 import { getClient } from "@/lib/api";
 import { useAppStore } from "@/stores/app";
 import { getMockSearchResults } from "@/lib/mock-data";
 import {
-  createMessage, formatMemoryResponse,
-  type ChatMessage, type ChatSession,
+  createMessage, formatMemoryResponse, readSessions, writeSessions,
+  CHAT_MODELS, type ChatMessage, type ChatSession, type ChatModelId,
 } from "./types";
 import type { SearchMemory } from "@/lib/types";
 
@@ -23,37 +26,63 @@ interface ChatInterfaceProps {
   onClose?: () => void;
 }
 
-const SESSIONS_KEY = "emerald:chat-sessions";
+const WELCOME_MSG: ChatMessage = {
+  id: "welcome",
+  role: "assistant",
+  content: "I'm your memory assistant. I can search through your saved memories to answer questions about what you've learned, your preferences, and past events. Try asking me something!",
+  timestamp: new Date(),
+};
 
-function readSessions(): ChatSession[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+// ─── @-mention search ─────────────────────────────────────────────────
+
+function useAtMentionSearch(entityId: string, demoMode: boolean) {
+  const [results, setResults] = useState<SearchMemory[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const search = useCallback((q: string) => {
+    if (!q.trim()) { setResults([]); setIsOpen(false); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = demoMode
+          ? getMockSearchResults(q)
+          : await getClient().search(q, entityId, { searchMode: "memory", topK: 6 });
+        setResults(data.results.slice(0, 6));
+        setIsOpen(true);
+      } catch { setResults([]); }
+    }, 200);
+  }, [entityId, demoMode]);
+
+  const close = useCallback(() => { setIsOpen(false); setResults([]); }, []);
+  return { results, isOpen, search, close };
 }
 
-function saveSessions(sessions: ChatSession[]) {
-  try {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
-  } catch { /* noop */ }
-}
-
-const WELCOME = "I'm your memory assistant. I can search through your saved memories to answer questions about what you've learned, your preferences, and past events. Try asking me something!";
+// ─── Main Component ───────────────────────────────────────────────────
 
 export function ChatInterface({ onClose }: ChatInterfaceProps) {
   const entityId = useAppStore((s) => s.entityId);
   const demoMode = useAppStore((s) => s.demoMode);
 
-  const [sessions, setSessions] = useState<ChatSession[]>(readSessions);
-  const [activeSession, setActiveSession] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    createMessage("assistant", WELCOME),
-  ]);
+  // Sessions
+  const [sessions, setSessions] = useState<ChatSession[]>(() => readSessions());
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  // Messages
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MSG]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [selectedModel, setSelectedModel] = useState<ChatModelId>("gpt-4o-mini");
+
+  // @-mention
+  const atMention = useAtMentionSearch(entityId, demoMode);
+  const [showAtMention, setShowAtMention] = useState(false);
+  const [atMentionIndex, setAtMentionIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const atTriggerPos = useRef<number>(-1);
+
+  // ─── Effects ─────────────────────────────────────────────────────
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -61,81 +90,156 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
     }
   }, [messages]);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, [activeSession]);
+  // ─── Session management ──────────────────────────────────────────
 
-  const saveCurrentSession = useCallback((msgs: ChatMessage[]) => {
+  const currentSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId]
+  );
+
+  const persistSessions = useCallback((updated: ChatSession[]) => {
+    setSessions(updated);
+    writeSessions(updated);
+  }, []);
+
+  const saveSession = useCallback((msgs: ChatMessage[]) => {
     const title = msgs.find((m) => m.role === "user")?.content.slice(0, 60) || "Chat";
     const session: ChatSession = {
-      id: activeSession || `session_${Date.now()}`,
+      id: activeSessionId || `session_${Date.now()}`,
       title,
       messages: msgs,
-      createdAt: new Date(),
+      createdAt: currentSession?.createdAt ?? new Date(),
       updatedAt: new Date(),
+      model: selectedModel,
     };
     const updated = [session, ...sessions.filter((s) => s.id !== session.id)];
-    setSessions(updated);
-    saveSessions(updated);
-    if (!activeSession) setActiveSession(session.id);
-  }, [activeSession, sessions]);
+    persistSessions(updated);
+    if (!activeSessionId) setActiveSessionId(session.id);
+  }, [activeSessionId, sessions, selectedModel, currentSession, persistSessions]);
 
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || isLoading) return;
-    const q = input.trim();
+  const handleNewChat = useCallback(() => {
+    setActiveSessionId(null);
+    setMessages([WELCOME_MSG]);
+    setInput("");
+    setShowAtMention(false);
+  }, []);
 
+  const handleLoadSession = useCallback((session: ChatSession) => {
+    setActiveSessionId(session.id);
+    setMessages(session.messages);
+    setShowAtMention(false);
+  }, []);
+
+  const handleDeleteSession = useCallback((e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    persistSessions(sessions.filter((s) => s.id !== id));
+    if (activeSessionId === id) handleNewChat();
+  }, [sessions, activeSessionId, persistSessions, handleNewChat]);
+
+  // ─── Send / Search ──────────────────────────────────────────────
+
+  const handleSend = useCallback(async (q: string) => {
+    if (!q.trim() || isLoading) return;
     const userMsg = createMessage("user", q);
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput("");
     setIsLoading(true);
+    setShowAtMention(false);
 
     try {
-      // Search memories
-      let results: SearchMemory[];
-      if (demoMode) {
-        const data = getMockSearchResults(q);
-        results = data.results.slice(0, 8);
-      } else {
-        const data = await getClient().search(q, entityId, {
-          searchMode: "hybrid",
-          topK: 8,
-        });
-        results = data.results;
-      }
+      const results = demoMode
+        ? getMockSearchResults(q).results.slice(0, 8)
+        : (await getClient().search(q, entityId, { searchMode: "hybrid", topK: 8 })).results;
 
-      await new Promise((r) => setTimeout(r, 300 + Math.random() * 200));
+      // Simulate small delay for natural feel
+      if (demoMode) await new Promise((r) => setTimeout(r, 300 + Math.random() * 200));
 
       const { text, memories } = formatMemoryResponse(q, results);
       const botMsg = createMessage("assistant", text, memories);
-      const finalMessages = [...newMessages, botMsg];
-      setMessages(finalMessages);
-      saveCurrentSession(finalMessages);
+      const final = [...newMessages, botMsg];
+      setMessages(final);
+      saveSession(final);
     } catch {
-      const errorMsg = createMessage("assistant", "Sorry, I encountered an error searching your memories. Please try again.");
-      const finalMessages = [...newMessages, errorMsg];
-      setMessages(finalMessages);
+      const errMsg = createMessage("assistant", "Sorry, I encountered an error searching your memories. Please try again.");
+      const final = [...newMessages, errMsg];
+      setMessages(final);
     } finally {
       setIsLoading(false);
     }
-  }, [input, isLoading, messages, entityId, demoMode, saveCurrentSession]);
+  }, [messages, isLoading, entityId, demoMode, saveSession]);
 
-  const handleNewChat = useCallback(() => {
-    setActiveSession(null);
-    setMessages([createMessage("assistant", WELCOME)]);
-  }, []);
+  // ─── Input handling ──────────────────────────────────────────────
 
-  const loadSession = useCallback((session: ChatSession) => {
-    setActiveSession(session.id);
-    setMessages(session.messages);
-  }, []);
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setInput(value);
+
+    // @-mention detection
+    const cursorPos = e.target.selectionStart ?? value.length;
+    const beforeCursor = value.slice(0, cursorPos);
+    const atIdx = beforeCursor.lastIndexOf("@");
+
+    if (atIdx >= 0 && (atIdx === 0 || beforeCursor[atIdx - 1] === " ")) {
+      const query = beforeCursor.slice(atIdx + 1);
+      if (!query.includes(" ")) {
+        atTriggerPos.current = atIdx;
+        setShowAtMention(true);
+        atMention.search(query);
+        setAtMentionIndex(0);
+        return;
+      }
+    }
+    setShowAtMention(false);
+    atMention.close();
+  }, [atMention]);
+
+  const handleSelectMention = useCallback((memory: SearchMemory) => {
+    if (atTriggerPos.current < 0) return;
+    const before = input.slice(0, atTriggerPos.current);
+    const after = input.slice(input.indexOf(" ", atTriggerPos.current) >= 0
+      ? input.indexOf(" ", atTriggerPos.current)
+      : input.length);
+    const newInput = before + `@${memory.content.slice(0, 40)}... ` + after;
+    setInput(newInput);
+    setShowAtMention(false);
+    atMention.close();
+    inputRef.current?.focus();
+  }, [input, atMention]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (showAtMention && atMention.results.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setAtMentionIndex((i) => Math.min(i + 1, atMention.results.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setAtMentionIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        handleSelectMention(atMention.results[atMentionIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowAtMention(false);
+        atMention.close();
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      handleSend(input.trim());
     }
-  }, [handleSend]);
+  }, [showAtMention, atMention, atMentionIndex, handleSelectMention, handleSend, input]);
+
+  // ─── Render ──────────────────────────────────────────────────────
+
+  const currentModelLabel = CHAT_MODELS.find((m) => m.id === selectedModel)?.label ?? "Auto";
 
   return (
     <div className="flex h-full flex-col">
@@ -152,30 +256,75 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleNewChat} title="New chat">
-            <MessageSquare className="h-3.5 w-3.5" />
+            <Plus className="h-3.5 w-3.5" />
           </Button>
+          {onClose && (
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} title="Close">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Sessions list (collapsed) */}
-      {sessions.length > 0 && (
-        <div className="border-b border-surface-border/30 px-3 py-1.5 flex gap-1.5 overflow-x-auto scrollbar-thin">
-          {sessions.slice(0, 5).map((s) => (
-            <button
-              key={s.id}
-              onClick={() => loadSession(s)}
-              className={cn(
-                "shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors whitespace-nowrap",
-                activeSession === s.id
-                  ? "bg-brand-accent-subtle text-brand-accent"
-                  : "bg-surface-hover text-fg-muted hover:text-fg-primary"
-              )}
-            >
-              {s.title.slice(0, 24)}{s.title.length > 24 ? "…" : ""}
+      {/* Model selector + Session pills */}
+      <div className="flex items-center gap-2 border-b border-surface-border/30 px-3 py-1.5">
+        <Popover>
+          <PopoverTrigger asChild>
+            <button className="flex items-center gap-1 shrink-0 rounded-full px-2.5 py-1 bg-surface-hover hover:bg-surface-border/50 text-[10px] font-medium text-fg-muted transition-colors">
+              <Brain className="h-3 w-3" />
+              {currentModelLabel}
+              <ChevronDown className="h-2.5 w-2.5" />
             </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-56 p-1.5 rounded-2xl border-surface-border bg-surface-card shadow-xl" side="top">
+            {CHAT_MODELS.map((model) => (
+              <button
+                key={model.id}
+                onClick={() => setSelectedModel(model.id)}
+                className={cn(
+                  "flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
+                  selectedModel === model.id
+                    ? "bg-brand-accent-subtle text-brand-accent"
+                    : "text-fg-primary hover:bg-surface-hover"
+                )}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium">{model.label}</p>
+                  <p className="text-xs text-fg-muted">{model.description}</p>
+                </div>
+                <Badge className="shrink-0 bg-surface-hover text-fg-faint text-[10px]">
+                  {model.provider}
+                </Badge>
+              </button>
+            ))}
+          </PopoverContent>
+        </Popover>
+
+        {/* Session pills */}
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-thin">
+          {sessions.slice(0, 4).map((s) => (
+            <div key={s.id} className="relative group shrink-0">
+              <button
+                onClick={() => handleLoadSession(s)}
+                className={cn(
+                  "px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors whitespace-nowrap max-w-[120px] truncate",
+                  activeSessionId === s.id
+                    ? "bg-brand-accent-subtle text-brand-accent"
+                    : "bg-surface-hover text-fg-muted hover:text-fg-primary"
+                )}
+              >
+                {s.title}
+              </button>
+              <button
+                onClick={(e) => handleDeleteSession(e, s.id)}
+                className="absolute -top-1 -right-1 hidden group-hover:flex h-3.5 w-3.5 items-center justify-center rounded-full bg-bg-error text-text-error"
+              >
+                <X className="h-2 w-2" />
+              </button>
+            </div>
           ))}
         </div>
-      )}
+      </div>
 
       {/* Messages */}
       <ScrollArea ref={scrollRef} className="flex-1">
@@ -187,24 +336,19 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
-                className={cn(
-                  "flex gap-3",
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                )}
+                className={cn("flex gap-3", msg.role === "user" ? "justify-end" : "justify-start")}
               >
                 {msg.role === "assistant" && (
                   <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-accent/20">
                     <Bot className="h-3.5 w-3.5 text-brand-accent" />
                   </div>
                 )}
-                <div
-                  className={cn(
-                    "max-w-[85%] rounded-[18px] px-4 py-2.5",
-                    msg.role === "user"
-                      ? "bg-brand-accent text-white"
-                      : "border border-surface-border bg-surface-card/60 backdrop-blur-md"
-                  )}
-                >
+                <div className={cn(
+                  "max-w-[85%] rounded-[18px] px-4 py-2.5",
+                  msg.role === "user"
+                    ? "bg-brand-accent text-white"
+                    : "border border-surface-border bg-surface-card/60 backdrop-blur-md"
+                )}>
                   <div className={cn(
                     "text-sm leading-relaxed whitespace-pre-wrap",
                     msg.role === "user" ? "text-white" : "text-fg-primary"
@@ -212,26 +356,29 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
                     {msg.content}
                   </div>
 
-                  {/* Related memories citations */}
+                  {/* Related memories */}
                   {msg.role === "assistant" && msg.relatedMemories && msg.relatedMemories.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-surface-border/30 space-y-1">
                       <div className="flex items-center gap-1 text-[10px] text-fg-faint">
                         <Brain className="h-3 w-3" />
-                        Sources
+                        Sources ({msg.relatedMemories.length})
                       </div>
                       {msg.relatedMemories.slice(0, 3).map((mem) => (
                         <div key={mem.id} className="flex items-start gap-1.5 text-[10px] text-fg-muted">
                           <Search className="h-2.5 w-2.5 mt-0.5 shrink-0" />
                           <span className="line-clamp-1">{mem.content}</span>
+                          <Badge className={cn(memoryTypeColor(mem.memory_type), "text-[8px] px-1 py-0 shrink-0")}>
+                            {memoryTypeLabel(mem.memory_type)}
+                          </Badge>
                         </div>
                       ))}
+                      {msg.relatedMemories.length > 3 && (
+                        <p className="text-[10px] text-fg-faint pl-4">+{msg.relatedMemories.length - 3} more</p>
+                      )}
                     </div>
                   )}
 
-                  <p className={cn(
-                    "mt-1 text-[10px]",
-                    msg.role === "user" ? "text-white/60" : "text-fg-faint"
-                  )}>
+                  <p className={cn("mt-1 text-[10px]", msg.role === "user" ? "text-white/60" : "text-fg-faint")}>
                     {new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
@@ -262,21 +409,64 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
         </div>
       </ScrollArea>
 
+      {/* @-mention dropdown */}
+      <AnimatePresence>
+        {showAtMention && atMention.results.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.95 }}
+            className="mx-3 border border-surface-border bg-surface-card/95 backdrop-blur-xl rounded-2xl shadow-xl overflow-hidden"
+          >
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-fg-faint font-medium border-b border-surface-border/30">
+              @ Mention — Search memories
+            </div>
+            <div className="max-h-40 overflow-y-auto p-1">
+              {atMention.results.map((mem, i) => (
+                <button
+                  key={mem.id}
+                  onClick={() => handleSelectMention(mem)}
+                  className={cn(
+                    "flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors",
+                    i === atMentionIndex ? "bg-brand-accent-subtle" : "hover:bg-surface-hover"
+                  )}
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-surface-hover text-fg-muted">
+                    <Search className="h-3 w-3" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-fg-primary truncate">{mem.content}</p>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <Badge className={cn(memoryTypeColor(mem.memory_type), "text-[9px] px-1 py-0")}>
+                        {memoryTypeLabel(mem.memory_type)}
+                      </Badge>
+                      {mem.score !== undefined && (
+                        <span className="text-[10px] text-fg-faint">{Math.round(mem.score * 100)}%</span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Input */}
       <div className="border-t border-surface-border/50 p-3">
-        <div className="flex items-center gap-2 rounded-[18px] border border-surface-border bg-surface-card/60 p-1.5 backdrop-blur-md focus-within:border-brand-accent/50 transition-colors">
+        <div className="relative flex items-center gap-2 rounded-[18px] border border-surface-border bg-surface-card/60 p-1.5 backdrop-blur-md focus-within:border-brand-accent/50 transition-colors">
           <Input
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about your memories..."
+            placeholder="Ask about your memories... (@ to mention)"
             className="border-0 bg-transparent focus:ring-0 text-sm h-9"
           />
           <Button
             size="icon"
             variant="ghost"
-            onClick={handleSend}
+            onClick={() => handleSend(input.trim())}
             disabled={!input.trim() || isLoading}
             className="h-8 w-8 shrink-0 rounded-xl"
           >
@@ -287,6 +477,9 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
             )}
           </Button>
         </div>
+        <p className="mt-1 text-[9px] text-fg-faint text-center">
+          Type <kbd className="px-0.5 rounded bg-surface-hover font-mono">@</kbd> to search memories · Press ↑↓ to navigate suggestions
+        </p>
       </div>
     </div>
   );

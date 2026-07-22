@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAppStore } from "@/stores/app";
 import { ConnectionPanel } from "@/components/layout/connection-panel";
 import { Sidebar } from "@/components/layout/sidebar";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { getClient } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -119,7 +120,7 @@ function IntegrationsShell() {
 
   return (
     <Shell>
-      <div className="mx-auto w-full max-w-3xl flex-1 p-6 space-y-6">
+      <div className="mx-auto w-full max-w-3xl flex-1 p-4 md:p-6 space-y-6">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-fg-primary">Integrations</h1>
@@ -288,10 +289,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex flex-1 flex-col overflow-auto">
+      <main className="flex flex-1 flex-col overflow-auto pb-16 md:pb-0">
         <DemoBanner />
         {children}
       </main>
+      <MobileBottomNav />
     </div>
   );
 }

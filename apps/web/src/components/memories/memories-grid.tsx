@@ -3,7 +3,10 @@
 import { useRef, useCallback } from "react";
 import { Masonry, useInfiniteLoader } from "masonic";
 import type { SearchMemory } from "@/lib/types";
-import { NotePreview, FilePreview, WebsitePreview, YoutubePreview } from "@/components/document-cards";
+import {
+  NotePreview, FilePreview, WebsitePreview, YoutubePreview,
+  GoogleDocsPreview, NotionPreview, TweetPreview, MCPPreview,
+} from "@/components/document-cards";
 import { detectCardType } from "@/components/document-cards/utils";
 import { Brain } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +27,10 @@ function CardRenderer({ data }: { data: GridItem }) {
     case "website": return <WebsitePreview memory={data} onClick={data._onClick} />;
     case "youtube": return <YoutubePreview memory={data} onClick={data._onClick} />;
     case "file": return <FilePreview memory={data} onClick={data._onClick} />;
+    case "google_docs": return <GoogleDocsPreview memory={data} onClick={data._onClick} />;
+    case "notion": return <NotionPreview memory={data} onClick={data._onClick} />;
+    case "tweet": return <TweetPreview memory={data} onClick={data._onClick} />;
+    case "mcp": return <MCPPreview memory={data} onClick={data._onClick} />;
     default: return <NotePreview memory={data} onClick={data._onClick} />;
   }
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAppStore } from "@/stores/app";
 import { ConnectionPanel } from "@/components/layout/connection-panel";
 import { Sidebar } from "@/components/layout/sidebar";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -42,9 +43,9 @@ function SettingsShell() {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex flex-1 flex-col overflow-auto">
+      <main className="flex flex-1 flex-col overflow-auto pb-16 md:pb-0">
         <DemoBanner />
-        <div className="mx-auto w-full max-w-3xl flex-1 p-6">
+        <div className="mx-auto w-full max-w-3xl flex-1 p-4 md:p-6">
           <div className="mb-6">
             <h1 className="text-2xl font-bold tracking-tight text-fg-primary">Settings</h1>
             <p className="mt-1 text-sm text-fg-muted">Manage your Emerald connection and configuration</p>
@@ -88,6 +89,7 @@ function SettingsShell() {
           </Tabs>
         </div>
       </main>
+      <MobileBottomNav />
     </div>
   );
 }

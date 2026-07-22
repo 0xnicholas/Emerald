@@ -1,6 +1,6 @@
 # Emerald Frontend — Gap Analysis vs Supermemory
 
-> 最后更新: 2026-07-10
+> 最后更新: 2026-07-22
 > 参考仓库: `_references/supermemory-main/apps/web`
 
 ## 概述
@@ -217,6 +217,8 @@ Supermemory 是 Emerald 的对标项目，前端代码约 **35,134 行**（111 �
 ``` 
 日期        组件数    UI组件    代码行    差距倍率
 2026-07-10    41       28       ~5,800     6x
+2026-07-22    45       30       ~7,200     5x
+2026-07-22(b) 50       30       ~8,500     4x
 目标         111       37      ~35,134     1x
 ```
 
@@ -227,25 +229,43 @@ Supermemory 是 Emerald 的对标项目，前端代码约 **35,134 行**（111 �
 | 领域 | 权重 | 进度 | 加权 |
 |---|---|---|---|
 | 设计系统 | 10% | 100% | 10% |
-| UI 组件库 | 15% | 76% | 11.4% |
-| 页面路由 | 15% | 33% | 5% |
-| Dashboard | 15% | 60% | 9% |
-| Memories Grid | 15% | 40% | 6% |
+| UI 组件库 | 15% | 81% | 12.2% |
+| 页面路由 | 15% | 50% | 7.5% |
+| Dashboard | 15% | 70% | 10.5% |
+| Memories Grid | 15% | 55% | 8.25% |
 | Graph | 10% | 50% | 5% |
 | Chat | 10% | 30% | 3% |
-| Settings | 5% | 40% | 2% |
-| 其他功能 | 5% | 5% | 0.25% |
-| **合计** | **100%** | — | **~51.65%** |
+| Settings | 5% | 50% | 2.5% |
+| 其他功能 | 5% | 30% | 1.5% |
+| **合计** | **100%** | — | **~60.5%** |
 
 > 注：按代码量算约 16%，但核心功能覆盖度和视觉质量拉高了加权进度。
 
 ---
 
-## 7. 下一步优先级
+## 7. 已完成（2026-07-22 · 两轮）
 
-1. **修复构建** — `next build` 当前超时，需排查 cmdk/vaul 集成
-2. **命令面板** — Command 组件已就绪，接入 Cmd+K 全局搜索
-3. **移动端适配** — 响应式 sidebar + bottom navigation
-4. **Hooks 提炼** — 把 useQuery + api client 调用抽成 useProfile / useSearchMemories 等
-5. **Keyboard shortcuts** — HotkeysProvider 全局快捷键
-6. **登录页** — 基本 API Key 登录页面
+| # | 任务 | 状态 |
+|---|------|------|
+| 1 | **修复构建** — Node 23 正常工作 | ✅ |
+| 2 | **命令面板** — Cmd+K 全局搜索 | ✅ |
+| 3 | **移动端适配** — 响应式 sidebar + 底部导航 | ✅ |
+| 4 | **Hooks 提炼** — useProfile, useSearchMemories, useGraphData, useConnectors, useAddMemory | ✅ |
+| 5 | **Keyboard shortcuts** — C/M/G/D/T/? 全局快捷键 | ✅ |
+| 6 | **登录页 `/login`** — API Key 连接 + Demo 模式 | ✅ |
+| 7 | **集成管理页 `/integrations`** — 连接器状态查看/断连 | ✅ |
+| 8 | **错误边界 ErrorBoundary** — 全局 error + per-component | ✅ |
+| 9 | **Dashboard 增强** — StaticGraphPreview, TipRotationCard, Quick Actions 改进 | ✅ |
+| 10 | **Memories Grid 卡片补全** — GoogleDocs/Notion/Tweet/MCP 卡片 | ✅ |
+| 11 | **Dashboard 重构** — 使用 useProfile/useSearchMemories hooks | ✅ |
+
+## 8. 下一批可做
+
+| 方向 | 说明 | 优先级 |
+|------|------|--------|
+| **Chat 完善** | 流式响应 (AI SDK), 模型选择器, @提及, 会话管理 | 高 |
+| **Graph 升级** | Canvas 渲染 (替代 SVG), 分享, 版本链, 幻灯片模式 | 中 |
+| **Auth 完善** | Better Auth OAuth, 注册, 密码重置 | 中 |
+| **Memories 批量操作** | 多选/删除/移动, Facet 筛选 | 中 |
+| **PWA 支持** | manifest + service worker | 低 |
+| **移动端完善** | 移动端搜索栏优化, 手势操作 | 低 |
