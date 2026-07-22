@@ -20,3 +20,6 @@ backups/*
 
 # Brainstorming visual mockups
 .superpowers/
+
+# pi subagent artifacts
+.pi-subagents/
