@@ -10,6 +10,7 @@ import { useAppStore } from "@/stores/app";
 import { useProfile } from "@/hooks/use-profile";
 import { useSearchMemories } from "@/hooks/use-search-memories";
 import { Card, CardContent } from "@/components/ui/card";
+import { GlassCard } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,19 +33,6 @@ const fadeUp = {
   animate: { opacity: 1, y: 0 },
   transition: { duration: 0.3, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] },
 };
-
-// ─── Glowing card wrapper ────────────────────────────────────────────
-
-function GlassCard({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={`rounded-[18px] border border-surface-border bg-surface-card/60 shadow-[0_12px_40px_rgba(0,0,0,0.22)] backdrop-blur-md ${className ?? ""}`}
-      {...props}
-    >
-      {children}
-    </div>
-  );
-}
 
 // ─── Stat Card ───────────────────────────────────────────────────────
 

@@ -11,7 +11,7 @@ import { MemoryDetailModal } from "@/components/memories/memory-detail-modal";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { SearchBar } from "@/components/search/search-bar";
 import { getClient } from "@/lib/api";
-import type { SearchMemory, GraphNode, GraphEdge } from "@/lib/types";
+import type { GraphNode, GraphEdge } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
