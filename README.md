@@ -312,7 +312,7 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**当前版本：v0.4.0**（2026-07-03）。本版本合并了 v0.3.0 之后的所有 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）工作项。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
+**当前版本：v0.4.0**（2026-07-03）。本版本合并了 v0.3.0 之后的所有 M1（部署加固、OTel、CI 自动化）与 M2（API / SDK / 安全加固）工作项。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 **测试规模**：657 测试 pass / 1 skip / 0 fail。最新一次 M2 安全加固在 601 → 657 之间增加 56 个测试（typed 异常、OpenAPI drift、v2 route parity、OAuth state、CORS 校验、SDK override、chunk_task 守卫）。
 
@@ -330,7 +330,7 @@ docker compose up -d mcp
 | Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status，typed 异常 + async context manager |
 | 连接器 | ✅ 完整 | GitHub、Google Drive、Gmail、Notion（OAuth + 增量同步，OAuth state 存 Redis） |
 | MCP Server | ✅ 完整 | stdio + SSE 双模式，3 个工具（add / search / profile） |
-| 基准测试 | ✅ 完整 | LongMemEval / LoCoMo / ConvoMem 风格评估脚本，6 维度 + JSON 报告 |
+| 基准测试 | 🟡 基建就位 | 6 维度合成对抗场景（LongMemEval / LoCoMo / ConvoMem 风格）；真实嵌入绝对分报告公开进行中（ADR-0001，见 `docs/adr/`） |
 | 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + OpenTelemetry 手动 span 集成 |
 | Docker E2E | ✅ 完整 | `docker-compose.test.yml` + `.env.test`，全栈集成测试通过 |
 

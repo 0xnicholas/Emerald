@@ -2,7 +2,7 @@
 
 > **更新日期：2026-06-21（v2 重写），基于 Emerald 当前 HEAD（b301cfa）与 Supermemory 公开文档/API**
 >
-> **对比基线**：Supermemory 公开能力 + Emerald 源码 + 6 次真实基准运行报告（`reports/benchmark-20260615-*.json`）
+> **对比基线**：Supermemory 公开能力 + Emerald 源码。注：早期引用的 `reports/benchmark-20260615-*.json` 运行报告**从未纳入版本库**；2026-08-09 起按 ADR-0001，基准改为「合成对抗场景 + 真实嵌入绝对分」并承诺公开入库。
 >
 > **变更摘要**：相比 2026-06-09 的 v1 版本，Emerald 在 12 天内通过 33 个提交完成了**三项 P0 致命差距中两项的实质性修复**。本文档重写差距矩阵、优先路径与结论。
 
@@ -165,7 +165,7 @@ async def classify_relation(self, new_content: str, old_content: str):
     return RelationType.NONE
 ```
 
-### 3.2 真实基准分数（来自 reports/benchmark-20260615-075836.json）
+### 3.2 基准分数（mock 嵌入，2026-06-15 运行；报告未入库，分数按 ADR-0001 将重跑并以真实嵌入公开）
 
 `Relationship Classification` 维度（18 个关系对，规则路径，LLM 关闭）：
 
@@ -268,7 +268,7 @@ production 阶段仍从 development 阶段拷贝整个 site-packages：
 
 ---
 
-## 6. 基准测试 —— 从「空骨架」到「真实跑分」🟡
+## 6. 基准测试 —— 基础设施就位，真实分数待发布（ADR-0001）
 
 ### 6.1 现状
 
@@ -483,7 +483,7 @@ Emerald v0.3.0+ HEAD 已完成 **核心记忆引擎能力的实质性构建**。
 - 支持图谱关系遍历的混合搜索
 - 支持多模态摄入（PDF/图片/音频/视频/代码/对话）
 - 支持本地嵌入（无需 API key，无需 GPU）
-- 已有 6 维度基准测试套件（含真实运行报告）
+- 已有 6 维度基准测试套件（绝对分报告将按 ADR-0001 公开入库）
 
 ⚠️ **建议延后宣称**：
 - 「达到 Supermemory 同等水平」—— 真实跑分未公开
@@ -492,4 +492,4 @@ Emerald v0.3.0+ HEAD 已完成 **核心记忆引擎能力的实质性构建**。
 
 ---
 
-*本对比基于对 Emerald 当前 HEAD（commit b301cfa, 2026-06-17）源码的完整审查、Supermemory 公开文档与 API 规范、以及 6 次实际基准运行报告（`reports/benchmark-20260615-*.json`）。*
+*本对比基于对 Emerald 当前 HEAD（commit b301cfa, 2026-06-17）源码的完整审查、Supermemory 公开文档与 API 规范，以及一次 mock 嵌入下的本地基准运行（`reports/` 未入库，2026-08-09 按 ADR-0001 修正叙事）。*

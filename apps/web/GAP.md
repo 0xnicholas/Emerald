@@ -1,5 +1,7 @@
 # Emerald Frontend — Gap Analysis vs Supermemory
 
+> **⚠️ 2026-08-09 降级声明（ADR-0003）**：本文件是**能力差距清单**，**不再是进度指标**。前端评价标准为「核心循环完整性」（摄入 → 搜索 → 画像 → 对话；自托管单机可跑；移动端可用），不是与 Supermemory 的覆盖率。以下数据保留作参照系参考。
+
 > 最后更新: 2026-07-22
 > 参考仓库: `_references/supermemory-main/apps/web`
 

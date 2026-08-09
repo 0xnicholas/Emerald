@@ -7,6 +7,8 @@
 > **依赖基线**：所有估算假设 1 名全职工程师（senior level），并行工作按主题划分。
 >
 > **更新触发**：每完成一个里程碑、或外部条件（如 Supermemory 新版本、Python 生态变化）发生重大变化时，重新审视本路线图。
+>
+> **⚠️ 2026-08-09 审视重标定**：项目审视决议落地（详见 `docs/adr/0001`、`0002`、`0003`）：① 北极星从「≥ Supermemory 的 80%」改为独立度量体系（§1.3）；② v0.5.0（M2）范围重新裁剪（§四 M2）；③ out-of-scope #2 修正——web UI 是产品层，插件生态不在范围（§七）；④ 新功能须过「功能三问」立项 gate（AGENTS.md 开发指南 #11）。
 
 ---
 
@@ -32,7 +34,7 @@
 
 | 指标 | 当前（v0.4.0，2026-07-03 发布） | 目标（v0.8.0） |
 |---|---|---|
-| **公开基准分数** | mock 嵌入下 4/6 通过（0.667） | 真实 LLM 嵌入下 ≥5/6 通过 |
+| **独立度量体系** | 合成场景 + mock 嵌入 4/6 通过；无公开报告 | 套件全绿（时序正确性 / 遗忘有效性 / 图谱精度）+ 真实嵌入绝对分报告公开 + SLA 达成（画像 <100ms、搜索 P50/P99） |
 | **生产部署就绪度** | Productionizing 70%（生产化进行中，见 production-readiness 评估） | GA（生产 SLA 保障） |
 | **开发者采用度** | 2 SDK（Python + TypeScript）+ Pandaria 集成 | 4 SDK（Python/TS/Java/Go）+ 5 框架集成 |
 
@@ -76,7 +78,7 @@
 | ⚪ | v2 API 实质改进 | **方向调整**：v2 路由已下线并合并回 v1，错误码 / 分页 / 限流头 / OpenAPI 自动化在 v1 上落地 | comparison-supermemory §10 P1 |
 | ✅ | TypeScript SDK v1 | M2 已完成（`sdk/typescript/`，对齐 Python SDK） | comparison-supermemory §10 P1 |
 | 🟡 | 框架集成生态空白（仅 Pandaria） | LangChain.js / Vercel AI / Mastra 仍在 M3 计划中 | comparison-supermemory §10 P1 |
-| 🟡 | 真实 LLM 嵌入下的基准分数未发布 | mock 嵌入下 4/6 通过 | comparison-supermemory §10 P0 |
+| ⚪ | 真实基准策略 | **方向调整**：不追字面 LongMemEval/LoCoMo/ConvoMem 跑分（agent+memory 端到端基准，无法归因 memory 层）；改为合成对抗场景 + 真实嵌入绝对分 + 独立侧套件（ADR-0001） | comparison-supermemory §10 P0 |
 | ✅ | Cross-encoder 重排序 | M2 已完成：三级降级链 | production-readiness §5 |
 | 🟡 | NER 实体抽取层未实现 | M3 计划中 | comparison-supermemory §10 P2 |
 | ✅ | 分布式追踪（OpenTelemetry） | M1 已完成（手动 + 自动 instrumentation） | production-readiness §4 |
@@ -227,26 +229,25 @@ M2 ─┤              ├─→ M3 ─────────────┘
 
 ### 里程碑 M2：质量与稳定（v0.5.0）
 
-**前置依赖**：M1 完成
+**前置依赖**：M1 完成（原 M2 工作项 A3/C1 已在 v0.4.0 落地，B1/B2 已提前完成；剩余 A6 安全审计保留）
 
-**包含工作项**：A3 + C1 + A6（B1 cross-encoder + B2 LLM-first rel 已提前完成）
-
-**可发布物**：
-- v2 API 实质改进（分页、限流、`customId` 幂等、业务错误码体系）
-- **TypeScript SDK v1**（首个非 Python SDK）
-- 安全审计报告（无 P0/P1 漏洞）
-
-> **注**：Cross-encoder 重排序（B1）和 LLM-first 关系推断（B2）已于 2026-06-22 提前完成，从 M2 范围移除。
+**包含工作项**（2026-08-09 重标定）：
+- 独立侧质量套件：时序正确性（矛盾消解）、遗忘有效性（噪音去除 vs 信号保留）、图谱关系精度
+- 合成对抗场景升级（矛盾链、噪音注入、跨实体隔离、规模 P/R）+ 真实嵌入绝对分数报告公开（`docs/benchmarks/`）+ CI 防回归
+- 性能 SLA 验证（画像 <100ms、搜索 P50/P99）
+- `container_tag` 可空修复（移除 `"default"` 伪空间，ADR-0002 约束落地）
+- 安全审计（原 A6，无 P0/P1 漏洞）
 
 **版本号**：v0.5.0
 
-**工作量**：~8 人周
+**工作量**：~3-4 人周（按真实节奏重标定，不再沿用原 8 人周估算）
 
 **成功标准**：
-- ✅ TS SDK 方法集 ≥ Python SDK 的 80%
-- ✅ v2 API 至少 3 项实质改进
+- ✅ 三个独立侧套件全绿并接入 CI
+- ✅ 绝对分数报告公开（真实嵌入）
+- ✅ SLA 验证达成（画像 <100ms、搜索 P50/P99）
 - ✅ 安全扫描 0 个 P0/P1 漏洞
-- ✅ Cross-encoder 重排序 & LLM-first 关系推断（已提前完成）
+- ✅ `container_tag` 可空，无默认伪空间
 
 ---
 
@@ -379,7 +380,7 @@ B6 (实时整合) ← 技术验证：图谱压缩算法是否对真实工作负�
 为防止范围蔓延，明确以下事项**不在本路线图内**：
 
 1. ❌ **多租户 SaaS 化**：本路线图聚焦私有化部署，不做 Emerald-as-a-Service
-2. ❌ **消费者产品**：Web App、浏览器扩展、Raycast 等 Supermemory 已有的产品形态
+2. ❌ **消费者插件生态**：浏览器扩展、Raycast 等 Supermemory 已有的产品形态。**web UI 除外**——它是私有化部署的产品层（ADR-0003），在本范围内
 3. ❌ **企业 SSO/SAML 集成**：当前 API Key 认证足够，后续按需添加
 4. ❌ **图数据库替换**：不引入新的图数据库选项（如 SurrealDB）
 5. ❌ **多模态输出**：Emerald 是记忆基础设施，不做图像/视频生成
@@ -467,7 +468,7 @@ v1.0.0 是重大承诺事件，**不会**因功能完成自动触发。必须在
 |---|---|---|
 | 1 | v0.8.0 / v0.9.0 在 ≥ 2 个真实生产环境运行 ≥ 3 个月 | 部署清单 + 客户访谈 |
 | 2 | API 在最近 3 个 minor 版本内**未发生**破坏性变更 | git history 审查 |
-| 3 | 公开基准分数 ≥ Supermemory 同等水平的 80% | `docs/benchmarks/` 实测报告 |
+| 3 | 独立度量套件全绿 + 绝对分数报告公开（ADR-0001） | `docs/benchmarks/` 实测报告 |
 | 4 | TypeScript SDK + 至少 2 个框架集成被实际项目使用 | npm 下载量 + GitHub issues |
 | 5 | 安全审计 0 个 P0/P1 漏洞 | 独立审计报告 |
 | 6 | 至少 1 个公开承诺的 SLA 文档 | 已发布的 SLA |
