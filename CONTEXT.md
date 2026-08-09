@@ -56,9 +56,9 @@ _Avoid_: 处理流程、工作流
 在嵌入之前将内容拆分为语义单元；策略取决于内容类型（代码用 AST、Markdown 用标题层级、PDF 用章节、对话按轮次）。
 _Avoid_: 切分、字符分割
 
-**连接器（Connector）**:
-通过 Webhook 将外部数据源（Google Drive、Notion、Gmail、GitHub）同步到 Emerald 的集成模块。
-_Avoid_: 集成、插件
+**数据源绑定（Source Binding）**:
+一个外部账户经连接中心（StackOne）授权后在 Emerald 中的绑定：授权关系 + 数据源身份。集成能力（OAuth、同步、webhook）在连接中心侧；Emerald 通过事件驱动摄入外部内容。
+_Avoid_: 连接器、集成、插件（连接器一词让位给 hub 侧）
 
 **空间（Space）**:
 实体记忆的命名子集视图，由用户显式创建（产品层意图），不改变上下文池边界。搜索默认全池，空间仅为可选过滤；画像跨空间聚合；系统不自动创建或推断空间。

@@ -148,7 +148,7 @@
 |---|---|---|
 | 单元测试数量 | 🟢 | 629 个测试函数通过（不含 Docker/fastembed ONNX），覆盖核心引擎、搜索、画像、认证、限流、异常、边缘情况 |
 | 测试类型 | 🟢 | 单元测试、集成测试（Docker Compose）、负向测试、边缘情况、并发测试 |
-| 连接器测试 | 🟢 | GitHub / Google Drive / Gmail / Notion 连接器均有 E2E 测试，27 个集成测试通过 |
+| 连接器测试 | 🟡 迁移中 | 自研连接器 E2E 测试（27 个集成测试）将在连接中心 Pilot 验证后随旧代码删除（ADR-0004） |
 | 端到端测试 | 🟢 | `docker-compose.test.yml` + `.env.test`，629 tests passing |
 | 覆盖率配置 | 🟡 | `.coveragerc` omit 了 8 个文件（连接器任务、音视频提取等） |
 | 测试运行 | 🟢 | `pytest` 全量测试通过，< 30s |
@@ -167,7 +167,7 @@
 | **自动遗忘** | 🟡 | 三种策略定义清晰，但 Neo4j 实现可能不完整（代码操作 `graph._memories`） |
 | **内容提取** | 🟢 | 7 种提取器（text/url/pdf/image/audio/video/code） |
 | **分块** | 🟢 | 5 种分块器（text/conversation/markdown/pdf/code） |
-| **连接器** | 🟡 | GitHub 完整实现，其他连接器（Gmail/Drive/Notion）存在但 coverage omit |
+| **连接器** | 🟡 迁移中 | 接入连接中心 StackOne（ADR-0004）：OAuth/同步/webhook 外包；旧自研实现 Pilot 后删除 |
 | **MCP Server** | 🟢 | stdio + SSE 双模式，3 个工具 |
 | **Python SDK** | 🟢 | async client，4 核心方法 + 辅助方法 |
 | **文档列表** | 🟢 | `GET /v1/files` 已实现 Document 分页查询（7 个集成测试覆盖） |

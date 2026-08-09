@@ -1,550 +1,62 @@
-# 连接器架构
+# 数据源绑定架构（原连接器）
 
-连接器负责将外部数据源（Google Drive、Gmail、Notion、GitHub 等）内容同步到 Emerald，使外部文档自动进入处理管线并融入知识图谱。
+> **2026-08-09 决策（ADR-0004）**：连接器外包给连接中心 StackOne。本文档描述新架构；
+> 旧的自研连接器（`emerald/connectors/`）在 Pilot 验证后删除。
 
 ---
 
 ## 1. 架构概览
 
 ```
-┌──────────────────────────────────────────────────┐
-│                    连接器管理器                    │
-│                                                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
-│  │ OAuth    │  │ Webhook  │  │ 定时同步  │        │
-│  │ 模块     │  │ 处理器   │  │ 调度器    │        │
-│  └──────────┘  └──────────┘  └──────────┘        │
-│       │              │              │              │
-│       ▼              ▼              ▼              │
-│  ┌───────────────────────────────────────────┐    │
-│  │              连接器基类接口                │    │
-│  │  authenticate / sync / handle_webhook /   │    │
-│  │  revoke / status                           │    │
-│  └───────────────────────────────────────────┘    │
-│                                                    │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌────────┐  │
-│  │ Google  │ │ Gmail   │ │ Notion  │ │ GitHub │  │
-│  │ Drive   │ │         │ │         │ │        │  │
-│  └────┬────┘ └────┬────┘ └────┬────┘ └───┬────┘  │
-│       │          │          │          │          │
-└───────┼──────────┼──────────┼──────────┼──────────┘
-        │          │          │          │
-        ▼          ▼          ▼          ▼
-   外部 OAuth API     Webhook 回调     定时轮询
-        │          │          │          │
-        └──────────┴──────────┴──────────┘
-                      │
-                      ▼
-               Emerald 处理管线
+┌──────────────────────────────────────────────────────┐
+│                   连接中心（StackOne）                 │
+│  OAuth 流程 / 凭证管理 / token 刷新 / webhook 续期      │
+│  native + synthetic 事件 · 470+ 连接器（统一 API）      │
+└──────────────┬───────────────────────┬───────────────┘
+               │ webhook 事件（推送）     │ action RPC（按需拉内容）
+               ▼                       ▼
+┌──────────────────────────────────────────────────────┐
+│                   Emerald 摄入适配层                   │
+│                                                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │ 绑定管理      │  │ 事件接收器    │  │ HubAdapter │  │
+│  │ (Source      │  │ (webhook     │  │ (统一拉取   │  │
+│  │  Binding)    │  │  端点+签名)   │  │  映射为     │  │
+│  │              │  │              │  │  Document) │  │
+│  └──────────────┘  └──────────────┘  └────────────┘  │
+│                                                      │
+│  Celery Beat 定时兜底同步（防丢事件）                    │
+└──────────────────────────┬───────────────────────────┘
+                           ▼
+                    Emerald 处理管线
+                 （提取 → 分块 → 嵌入 → 图谱）
 ```
 
----
+## 2. 职责划分
 
-## 2. 连接器基类
+| 职责 | 归属 |
+|---|---|
+| OAuth 授权流程、凭证存储与加密、token 刷新 | 连接中心（StackOne） |
+| provider 差异抹平（统一 API / 数据模型） | 连接中心（StackOne） |
+| webhook 注册、续期、重试、日志 | 连接中心（StackOne） |
+| 数据源绑定（授权关系 + 数据源身份） | Emerald（新概念，见 CONTEXT.md） |
+| 事件接收（webhook 端点 + 签名验证） | Emerald |
+| 内容拉取与映射（action 结果 → Document → 管线） | Emerald（HubAdapter） |
+| 增量去重、兜底同步调度 | Emerald |
 
-```python
-# emerald/connectors/base.py
+## 3. 同步语义
 
-class BaseConnector(ABC):
-    """所有连接器的基类"""
+- **事件驱动**：StackOne webhook 推送变更事件（native + synthetic）→ Emerald 事件接收器 → HubAdapter 拉取变更内容 → 进管线
+- **定时兜底**：Celery Beat 定期全量/增量核对，防丢事件
+- **初始全量**：首次绑定后触发一次全量拉取
 
-    provider: str                  # "google_drive" | "gmail" | "notion" | "github"
-    entity_id: str
-    credentials: ConnectorCredentials | None = None
+## 4. 部署形态
 
-    @abstractmethod
-    async def get_auth_url(self, redirect_uri: str) -> tuple[str, str]:
-        """
-        获取 OAuth 授权 URL。
-        返回 (auth_url, state_token)。
-        """
-        ...
+- 当前：StackOne 托管云（Starter 免费额度起步）。数据边界让步：连接器是可选渠道，不启用则无数据出域
+- 未来：客户要求时切换 self-hosted（StackOne Enterprise 计划），适配器层可替换
 
-    @abstractmethod
-    async def handle_callback(self, code: str, state: str) -> ConnectorCredentials:
-        """
-        处理 OAuth 回调，用 code 换 token。
-        返回 credentials。
-        """
-        ...
+## 5. 迁移计划
 
-    @abstractmethod
-    async def sync(self, mode: SyncMode = SyncMode.INCREMENTAL) -> SyncResult:
-        """
-        执行同步。
-        - INCREMENTAL: 增量同步（webhook 或定时）
-        - FULL: 全量同步（首次连接或手动触发）
-        """
-        ...
-
-    @abstractmethod
-    async def handle_webhook(self, payload: dict, signature: str) -> bool:
-        """
-        处理外部 Webhook 通知。
-        返回 True 表示已触发同步。
-        """
-        ...
-
-    @abstractmethod
-    async def revoke(self) -> None:
-        """撤销 OAuth 授权，清理本地 token。"""
-        ...
-
-    @abstractmethod
-    async def status(self) -> ConnectorStatus:
-        """返回连接器当前状态。"""
-        ...
-
-
-@dataclass
-class ConnectorCredentials:
-    access_token: str
-    refresh_token: str | None
-    token_type: str
-    expires_at: datetime | None
-    scopes: list[str]
-
-@dataclass
-class SyncResult:
-    provider: str
-    files_synced: int
-    files_skipped: int         # 哈希去重
-    files_failed: int
-    duration_seconds: float
-    errors: list[str]
-
-class SyncMode(str, Enum):
-    INCREMENTAL = "incremental"
-    FULL = "full"
-
-@dataclass
-class ConnectorStatus:
-    provider: str
-    connected: bool
-    sync_status: str            # "active" | "paused" | "revoked" | "error"
-    last_synced_at: datetime | None
-    error_message: str | None
-```
-
----
-
-## 3. OAuth 认证流程
-
-### 3.1 完整流程
-
-```
-应用                    Emerald API              外部服务
- │                          │                        │
- │  POST /connectors/       │                        │
- │  {provider}/connect      │                        │
- │  ──────────────────────► │                        │
- │                          │ 生成 state_token       │
- │                          │ 构建 OAuth URL         │
- │  {auth_url, state}       │                        │
- │  ◄────────────────────── │                        │
- │                          │                        │
- │  用户浏览器 → auth_url ──────────────────────────►│
- │                          │                        │
- │  用户授权完成            │                        │
- │  ◄───────────────────────────────────────────────│
- │                          │                        │
- │  重定向到 callback       │                        │
- │  ?code=xxx&state=yyy     │                        │
- │  ──────────────────────► │                        │
- │                          │ 用 code 换 token─────► │
- │                          │ ◄───── access_token ── │
- │                          │                        │
- │                          │ 加密存储 credentials   │
- │                          │ 启动首次全量同步        │
- │                          │ 注册 Webhook（如支持）  │
- │  {status: "active"}      │                        │
- │  ◄────────────────────── │                        │
-```
-
-### 3.2 Token 安全存储
-
-```python
-# emerald/connectors/auth.py
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-import os
-
-# 加密密钥通过环境变量 ENCRYPTION_KEY 注入（64 位十六进制 = 32 bytes）
-ENCRYPTION_KEY = bytes.fromhex(os.environ["ENCRYPTION_KEY"])
-
-def encrypt_credentials(credentials: ConnectorCredentials) -> bytes:
-    """AES-256-GCM 加密，每次加密使用随机 nonce"""
-    data = json.dumps(vars(credentials)).encode("utf-8")
-    nonce = os.urandom(12)
-    aesgcm = AESGCM(ENCRYPTION_KEY)
-    ciphertext = aesgcm.encrypt(nonce, data, None)
-    return nonce + ciphertext  # 前 12 字节为 nonce
-
-def decrypt_credentials(encrypted: bytes) -> ConnectorCredentials:
-    nonce = encrypted[:12]
-    ciphertext = encrypted[12:]
-    aesgcm = AESGCM(ENCRYPTION_KEY)
-    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    return ConnectorCredentials(**json.loads(plaintext))
-```
-
-### 3.3 Token 刷新
-
-```python
-async def _refresh_if_needed(connector: BaseConnector):
-    if not connector.credentials.refresh_token:
-        return  # 无 refresh_token，需用户重新授权
-
-    if connector.credentials.expires_at and \
-       connector.credentials.expires_at > datetime.utcnow() + timedelta(minutes=5):
-        return  # token 仍有 5 分钟以上有效期
-
-    new_creds = await connector.refresh_token(connector.credentials.refresh_token)
-    encrypted = encrypt_credentials(new_creds)
-    await db.execute(
-        update(ConnectorTable)
-        .where(entity_id=..., provider=...)
-        .values(credentials=encrypted)
-    )
-```
-
----
-
-## 4. Webhook 处理
-
-### 4.1 Webhook 端点
-
-```
-POST /v1/connectors/{provider}/webhook
-```
-
-请求头必须包含提供商的签名（如 `X-Goog-Channel-Token` 用于 Google，`X-Hub-Signature-256` 用于 GitHub）。
-
-### 4.2 签名验证
-
-```python
-# emerald/api/routes/connectors.py
-
-@router.post("/{provider}/webhook")
-async def handle_webhook(
-    provider: str,
-    request: Request,
-    db: AsyncSession,
-):
-    # 1. 验证签名
-    signature = request.headers.get(webhook_signature_header(provider))
-    payload = await request.body()
-    entity_id = await extract_entity_from_webhook(provider, payload, signature)
-
-    if not entity_id:
-        raise HTTPException(400, "无法识别 webhook 来源")
-
-    # 2. 验证 webhook_secret（存储时比对）
-    connector = await get_connector(entity_id, provider)
-    if not verify_webhook_signature(provider, payload, signature, connector.webhook_secret):
-        raise HTTPException(401, "Webhook 签名验证失败")
-
-    # 3. 幂等处理（按 event_id 去重）
-    event_id = extract_event_id(provider, payload)
-    if await is_duplicate_event(provider, event_id):
-        return {"status": "duplicate"}
-
-    # 4. 提交增量同步任务
-    sync_connector.delay(str(entity_id), provider, SyncMode.INCREMENTAL)
-
-    return {"status": "accepted"}
-```
-
-### 4.3 各提供商的 Webhook 签名头
-
-| 提供商 | 签名头 | 签名算法 |
-|---|---|---|
-| Google Drive | `X-Goog-Channel-Token` | 自定义 token 匹配 |
-| Gmail (Pub/Sub) | 无（通过 topic 验证） | GCP IAM |
-| Notion | 无（SSE 推送） | 连接时验证 |
-| GitHub | `X-Hub-Signature-256` | HMAC-SHA256 |
-| OneDrive | `X-Client-State` | 自定义 state 匹配 |
-
----
-
-## 5. 同步策略
-
-### 5.1 各连接器同步模式
-
-| 连接器 | 实时同步 | 定时同步 | 手动触发 | 说明 |
-|---|---|---|---|---|
-| Google Drive | Webhook (7 天过期) | 每 4 小时 | 支持 | Webhook 到期后自动重新注册 |
-| Gmail | Pub/Sub (7 天过期) | 每 4 小时 | 支持 | 邮件触发增量，定期补全 |
-| Notion | Webhook | 每 4 小时 | 支持 | 页面/数据库变更触发 |
-| GitHub | Webhook | 每 4 小时 | 支持 | Push/PR/Issue 等事件 |
-| Web Crawler | 不支持 | 定时抓取（7 天+） | 支持 | 无推送，纯轮询 |
-
-### 5.2 定时同步调度 (Celery Beat)
-
-```python
-# emerald/connectors/scheduler.py
-
-app.conf.beat_schedule = {
-    "sync-google-drive": {
-        "task": "emerald.connectors.tasks.sync_all",
-        "schedule": crontab(minute=0, hour="*/4"),
-        "kwargs": {"provider": "google_drive"},
-    },
-    "sync-gmail": {
-        "task": "emerald.connectors.tasks.sync_all",
-        "schedule": crontab(minute=0, hour="*/4"),
-        "kwargs": {"provider": "gmail"},
-    },
-    "sync-notion": {
-        "task": "emerald.connectors.tasks.sync_all",
-        "schedule": crontab(minute=0, hour="*/4"),
-        "kwargs": {"provider": "notion"},
-    },
-    "sync-github": {
-        "task": "emerald.connectors.tasks.sync_all",
-        "schedule": crontab(minute=0, hour="*/4"),
-        "kwargs": {"provider": "github"},
-    },
-    "renew-webhooks": {
-        "task": "emerald.connectors.tasks.renew_webhooks",
-        "schedule": crontab(hour=2, minute=0),  # 每天凌晨 2 点
-    },
-}
-```
-
-### 5.3 增量同步逻辑
-
-```python
-# emerald/connectors/tasks.py
-
-@app.task(bind=True)
-def sync_all(self, provider: str):
-    """同步所有活跃的该类型连接器"""
-    connectors = get_active_connectors(provider)
-    for conn in connectors:
-        sync_single.delay(conn.entity_id, provider, SyncMode.INCREMENTAL)
-
-@app.task(bind=True, max_retries=2)
-def sync_single(self, entity_id: str, provider: str, mode: SyncMode):
-    connector = build_connector(entity_id, provider)
-    try:
-        result = connector.sync(mode=mode)
-        update_sync_status(entity_id, provider, result)
-        log_sync_result(result)
-    except TokenExpiredError:
-        handle_token_expired(entity_id, provider)
-    except Exception as e:
-        raise self.retry(exc=e)
-```
-
----
-
-## 6. 同步内容处理
-
-同步获取的文件进入标准管线：
-
-```python
-async def sync(self, mode: SyncMode) -> SyncResult:
-    changes = await self._fetch_changes(mode)
-    result = SyncResult(provider=self.provider)
-
-    for change in changes:
-        file_data = await self._download_file(change.file_id)
-
-        # 哈希去重
-        content_hash = sha256(file_data).hexdigest()
-        if await self._is_duplicate(content_hash):
-            result.files_skipped += 1
-            continue
-
-        # 提交到处理管线
-        try:
-            pipeline_id = await pipeline.process_async(
-                content=base64_encode(file_data),
-                content_type=change.mime_type,
-                entity_id=self.entity_id,
-                document_id=change.file_id,
-            )
-            result.files_synced += 1
-        except Exception as e:
-            result.files_failed += 1
-            result.errors.append(str(e))
-
-    return result
-```
-
----
-
-## 7. 连接器注册表
-
-```python
-# emerald/connectors/registry.py
-
-CONNECTORS: dict[str, type[BaseConnector]] = {}
-
-def register_connector(provider: str):
-    def decorator(cls):
-        CONNECTORS[provider] = cls
-        return cls
-    return decorator
-
-def get_connector_class(provider: str) -> type[BaseConnector]:
-    if provider not in CONNECTORS:
-        raise UnsupportedConnectorError(f"No connector for: {provider}")
-    return CONNECTORS[provider]
-
-# 逐一注册
-@register_connector("google_drive")
-class GoogleDriveConnector(BaseConnector): ...
-
-@register_connector("gmail")
-class GmailConnector(BaseConnector): ...
-
-@register_connector("notion")
-class NotionConnector(BaseConnector): ...
-
-@register_connector("github")
-class GitHubConnector(BaseConnector): ...
-```
-
----
-
-## 8. 错误处理与重试
-
-| 错误类型 | 重试策略 | 说明 |
-|---|---|---|
-| 网络超时 | 3 次，指数退避 (1s, 5s, 25s) | 临时故障 |
-| Token 过期 | 先刷新 token，再重试 1 次 | 自动刷新 |
-| 限流 (429) | 等待 Retry-After 头 + 1 次 | 遵守对方限制 |
-| 权限不足 (403) | 不重试，设置 sync_status=error | 需用户重新授权 |
-| Webhook 验证失败 | 不重试，返回 401 | 可能是攻击 |
-| 文件下载失败 | 3 次重试，跳过该文件继续 | 单文件不影响整体 |
-
----
-
-## 9. 已规划的连接器
-
-| 连接器 | 优先级 | 依赖 |
-|---|---|---|
-| GitHub | P0 (v1) | GitHub App OAuth |
-| Google Drive | P0 (v1) | Google Cloud OAuth |
-| Gmail | P1 | Google Cloud OAuth + Pub/Sub |
-| Notion | P1 | Notion OAuth |
-| OneDrive | P2 | Microsoft Graph OAuth |
-| Slack | P2 | Slack OAuth |
-| Discord | P3 | Discord OAuth |
-| Web Crawler | P3 | 无（纯 HTTP 抓取） |
-
----
-
-## 10. Post-v0.3.0 连接器增强（2026-06-02 之后）
-
-> 本节记录 v0.3.0 之后 33 个 commit 中影响连接器的重大变更。详见 [`docs/roadmap.md`](../roadmap.md)。
-
-### 10.1 连接器实施状态（实际 vs 规划）
-
-v0.3.0 已实现（4 个连接器，commit `b5dd940` + 后续增强）：
-
-| 连接器 | 文件 | 实施状态 |
-|---|---|---|
-| GitHub | `emerald/connectors/github.py` | ✅ 完成（358 行） |
-| Google Drive | `emerald/connectors/google_drive.py` | ✅ 完成（404 行） |
-| Gmail | `emerald/connectors/gmail.py` | ✅ 完成（367 行） |
-| Notion | `emerald/connectors/notion.py` | ✅ 完成（476 行） |
-| OneDrive / Slack / Discord / Web Crawler | — | ❌ 未开始 |
-
-### 10.2 Redis 分布式锁（多实例 Beat 防护）
-
-Post-v0.3.0 commit `83cba27` 引入 `emerald/core/lock.py`，**所有连接器定时同步任务都受影响**：
-
-```python
-from emerald.core.lock import beat_lock
-
-@beat_lock(ttl_seconds=3600)  # 1 小时锁
-@shared_task
-def sync_github_repos():
-    """同一小时只有一个 Beat 实例会真正执行同步。"""
-    ...
-```
-
-**部署影响：** 如果 K8s Deployment `replicas > 1`，不锁会导致：
-- 同一文件被多次同步（重复入库）
-- 触发 LLM 提取 API 额外调用
-- 浪费 OAuth API 配额
-
-**现有连接器是否应用锁：** v0.3.0 release 时连接器任务未应用锁，是 Post-v0.3.0 应当补齐的项（见 10.6）。
-
-### 10.3 Reconciliation 对连接器的影响
-
-Post-v0.3.0 commit `251e8ed` 引入 `ReconciliationEngine`：
-
-**问题：** 连接器同步路径为「外部 API → MinIO 存储 → 管线摄入」。如果管线摄入失败（如 LLM 提取服务临时不可用），文件已存储但未索引。
-
-**Reconciliation 解决方案：**
-- 每 30 分钟扫描最近 N 个图谱节点
-- 检查 pgvector 是否有匹配行
-- 缺失则标记 `is_latest=False` + `replaced_by="reconciliation_failed"`
-- 管理员可手动重试这些文件
-
-**对连接器任务的影响：** 重试失败的同步时，需要先过滤掉 `replaced_by="reconciliation_failed"` 的文件，避免重复处理。
-
-### 10.4 OAuth Token 刷新增强
-
-Post-v0.3.0 中 OAuth token 刷新路径统一使用 `emerald/connectors/auth.py:TokenManager`：
-
-```python
-class TokenManager:
-    async def get_valid_token(self, connector_id: str) -> str:
-        """获取有效 token，必要时自动刷新。"""
-        token = await self._load_token(connector_id)
-        if token.expires_at < now():
-            token = await self._refresh(connector_id)
-        return token.access_token
-```
-
-**之前：** 各连接器自行实现刷新逻辑，容易遗漏边界条件。
-
-### 10.5 Webhook 签名验证（Post-v0.3.0 增强）
-
-Post-v0.3.0 commit 增强了 webhook 签名验证（`emerald/api/routes/connectors.py`）：
-
-| 提供商 | 签名头 | 算法 |
-|---|---|---|
-| GitHub | `X-Hub-Signature-256` | HMAC-SHA256 |
-| Google Drive | `X-Goog-Channel-Token` | HMAC-SHA256 |
-| Gmail (Pub/Sub) | Pub/Sub JWT verification | JWT |
-| Notion | `X-Notion-Signature` | HMAC-SHA256 |
-
-**Post-v0.3.0 新增：** 统一签名验证中间件 `verify_connector_signature()`，避免每个连接器各自实现。
-
-### 10.6 连接器任务与管线集成（Post-v0.3.0 改变）
-
-**之前：** 连接器直接调用 `MemoryEngine.add()`，同步等待。
-
-**之后：** 连接器提交到 Celery 异步管线（与 `POST /v1/upload` 一致）：
-
-```python
-class BaseConnector:
-    async def submit_for_indexing(self, file_path: str, entity_id: str) -> str:
-        """提交文件到处理管线，返回 pipeline_id。"""
-        pipeline_job = await self._create_pipeline_job(file_path, entity_id)
-        await self._submit_celery_task(pipeline_job.id)
-        return pipeline_job.id
-```
-
-**好处：**
-- 统一管线状态管理
-- LLM 提取在 worker 中执行（不阻塞连接器任务）
-- 自动重试 + 死信处理
-
-### 10.7 实施缺失项（路线图补齐）
-
-| 项 | 优先级 | 说明 |
-|---|---|---|
-| `beat_lock` 应用到所有连接器同步任务 | P0 (M1) | 多实例 Beat 防重复 |
-| Reconciliation 对接连接器失败重试 | P0 (M1) | 失败文件可手动重试 |
-| OneDrive 连接器 | P2 (M3+) | 用户需求验证后启动 |
-| Slack 连接器 | P2 (M3+) | 同上 |
-| Web Crawler 连接器 | P3 (M3+) | 通用网页抓取 |
-
-详见 [`docs/roadmap.md`](../roadmap.md) 中主题 A（生产加固）和主题 C（生态扩展）。
+1. Pilot：实现 HubAdapter + 绑定管理 + 事件接收，选一个 provider（Drive 或 Notion）跑通全链路
+2. 验证通过后：删除 `emerald/connectors/`（2,194 行）及对应测试、路由、`.coveragerc` omit 条目
+3. `/v1/connectors/*` API 语义迁移为数据源绑定管理（connect session → 绑定记录）

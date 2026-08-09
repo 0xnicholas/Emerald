@@ -9,7 +9,7 @@ AI Agent 在每次对话之间会遗忘一切。Emerald 解决了这个问题。
 | **记忆引擎** | 从对话中提取事实。处理时序变化、矛盾解决和自动遗忘。 |
 | **用户画像** | 自动维护的用户上下文——稳定事实 + 近期动态。一次调用，~50ms。 |
 | **混合搜索** | 单次查询同时返回 RAG 结果和记忆结果，知识库文档与个性化上下文合为一体。 |
-| **连接器** | 通过 Webhook 自动同步 Google Drive、Notion、Gmail、GitHub 等外部数据源。 |
+| **连接器** | 接入连接中心 StackOne（ADR-0004）：OAuth/同步/webhook 外包，Emerald 维护数据源绑定；Pilot 验证中 |
 | **多模态提取** | PDF、图片（OCR）、视频（转录）、代码（AST 感知分块）。上传即可用。 |
 
 所有这一切运行在同一个记忆图谱之上——记忆、画像和搜索共享同一个上下文池。
@@ -26,7 +26,7 @@ AI Agent 在每次对话之间会遗忘一切。Emerald 解决了这个问题。
       ├── 记忆引擎     提取事实、追踪更新、解决矛盾、自动遗忘过期信息
       ├── 用户画像     静态事实 + 动态上下文，始终最新
       ├── 混合搜索     RAG + 记忆，一次查询
-      ├── 连接器       从外部数据源实时同步
+      ├── 数据源绑定  经连接中心接入外部数据源
       └── 文件处理     PDF、图片、视频、代码 → 可搜索的分块
 ```
 
@@ -328,7 +328,7 @@ docker compose up -d mcp
 | 遗忘引擎 | ✅ 完整 | 时间过期、噪音过滤、情节衰减（Celery Beat） |
 | REST API | ✅ 完整 | 17 个 v1 端点（memories/search/profiles/upload/pipelines/conflicts/sessions/connectors/system） |
 | Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status，typed 异常 + async context manager |
-| 连接器 | ✅ 完整 | GitHub、Google Drive、Gmail、Notion（OAuth + 增量同步，OAuth state 存 Redis） |
+| 连接器 | 🔄 迁移中 | 接入连接中心 StackOne（OAuth/同步/webhook 外包，Emerald 维护数据源绑定）；旧自研连接器 Pilot 后删除（ADR-0004） |
 | MCP Server | ✅ 完整 | stdio + SSE 双模式，3 个工具（add / search / profile） |
 | 基准测试 | 🟡 基建就位 | 6 维度合成对抗场景（LongMemEval / LoCoMo / ConvoMem 风格）；真实嵌入绝对分报告公开进行中（ADR-0001，见 `docs/adr/`） |
 | 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + OpenTelemetry 手动 span 集成 |
