@@ -225,6 +225,15 @@ class FastembedProvider(EmbeddingProvider):
         self._max_length = max_length
         self._model = None
         self._dimension = self.DEFAULT_DIMENSION
+        # Pre-check that fastembed is installed so callers can catch
+        # ImportError early and fall back to MockEmbeddingProvider.
+        try:
+            import fastembed  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "fastembed is required for local embeddings. "
+                "Install it with: pip install fastembed"
+            ) from exc
 
     def _load_model(self):
         if self._model is None:

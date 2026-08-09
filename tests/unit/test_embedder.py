@@ -263,12 +263,12 @@ async def test_fastembed_dimension_before_embed():
 
 
 @pytest.mark.asyncio
-async def test_fastembed_import_error_graceful():
-    """When fastembed is not importable, FastembedProvider raises ImportError on first use."""
-    with patch.dict("sys.modules", {"fastembed": None}):
-        provider = FastembedProvider()
-        with pytest.raises(ImportError, match="fastembed"):
-            await provider.embed(["test"])
+async def test_fastembed_import_error():
+    """When fastembed is not importable, FastembedProvider raises ImportError at construction."""
+    with patch.dict("sys.modules", {"fastembed": None}), pytest.raises(
+        ImportError, match="fastembed"
+    ):
+        FastembedProvider()
 
 
 # ---- SentenceTransformersProvider tests (keep for backward compat) ----
