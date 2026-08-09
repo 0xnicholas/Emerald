@@ -56,7 +56,7 @@ async def add_memory(body: AddMemoryRequest, request: Request) -> dict:
     result = await engine.add(
         content=body.content,
         entity_id=body.entity_id,
-        content_type=body.content_type or "text",
+        content_type=body.content_type,
         metadata=body.metadata,
         idempotency_key=body.idempotency_key,
         require_confirmation_for_high_impact=body.require_confirmation_for_high_impact,

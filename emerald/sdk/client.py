@@ -243,7 +243,7 @@ class EmeraldClient:
         content: str,
         *,
         entity_id: str,
-        content_type: str = "text",
+        content_type: str | None = None,
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
         require_confirmation_for_high_impact: bool = False,
@@ -256,7 +256,8 @@ class EmeraldClient:
         Args:
             content: Text content to ingest.
             entity_id: Entity (user, project, org) this content belongs to.
-            content_type: Content type hint (auto-detected if omitted).
+            content_type: Content type hint (auto-detected when omitted:
+                JSON/CSV content is sniffed and chunked structurally).
             title: Optional content title.
             metadata: Optional key-value metadata.
             require_confirmation_for_high_impact: Flag high-impact contradictions
@@ -280,9 +281,10 @@ class EmeraldClient:
         body: dict[str, Any] = {
             "content": content,
             "entity_id": entity_id,
-            "content_type": content_type,
             "require_confirmation_for_high_impact": require_confirmation_for_high_impact,
         }
+        if content_type is not None:
+            body["content_type"] = content_type
         if title:
             body["title"] = title
         if metadata:

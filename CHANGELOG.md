@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **结构化数据（JSON/CSV）分块与自动检测**（spec issue #1）：
+  - 新增 `json`/`csv` 分块器——JSON 按顶层结构（数组元素/对象键）分块，小元素合并为有界批次；CSV 每块携带表头，行按字符上限分批；畸形输入（JSON 解析失败、CSV 字段数不一致）记录 warning 并回退到 text 分块，不阻断管线。
+  - `content_type` 缺省时自动嗅探：可解析为 dict/list 的 JSON、分隔符与字段数（逐行校验）一致的 CSV 走结构化分块；显式声明（含显式 `text`）永远优先，现有显式调用行为不变。
+  - 结构化块携带来源元数据（记录索引/键/行范围），随记忆存入图谱（`chunk_source` 命名空间，不覆盖调用方 metadata），检索结果可溯源到原始记录。
+  - MIME → 管线内容类型解析（`emerald/pipeline/mime.py`）：上传与外部源携带的 `application/json`、`text/csv`、`application/pdf` 等 MIME 字符串正确解析到短类型，修复了此前上传路径在提取阶段即失败的问题。
+  - `.json`/`.csv` 文件扩展名加入上传 MIME 检测。
+  - 默认提取器/分块器注册表加入 `json`/`csv`；注册表断言测试同步更新（README 承诺 vs 实现的持续守卫）。
+
 ## [0.4.0] — 2026-07-03
 
 > 合并 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）全部工作项，发布 v0.4.0。M1 细节见 `git log --grep=feat\(m1\)`；M2 细节见 `git log --grep=feat\(m2\)`。本节仅列摘要。

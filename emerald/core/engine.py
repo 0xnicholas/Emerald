@@ -5,6 +5,7 @@ Routes incoming content through the pipeline: detect type → extract → chunk 
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -116,7 +117,7 @@ class MemoryEngine:
         content: str,
         *,
         entity_id: str,
-        content_type: str = "text",
+        content_type: str | None = None,
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
         require_confirmation_for_high_impact: bool = False,
@@ -138,6 +139,11 @@ class MemoryEngine:
         """
         tracer = get_tracer()
         with tracer.start_as_current_span("memory.add") as span:
+            # Content-type resolution: explicit declaration wins; when omitted,
+            # sniff JSON/CSV structure so structured data gets structural
+            # chunking (spec issue #1). Explicit "text" is never sniffed.
+            if content_type is None:
+                content_type = self._detect_content_type(content)
             span.set_attribute("entity_id", entity_id)
             span.set_attribute("content_type", content_type)
             with timed(memory_add_latency_seconds):
@@ -292,6 +298,32 @@ class MemoryEngine:
         except Exception:
             pass
 
+    @staticmethod
+    def _detect_content_type(content: str) -> str:
+        """Sniff the content type of undeclared text content.
+
+        JSON: the trimmed content parses to a dict or list.
+        CSV: at least two non-empty lines with a consistent single delimiter
+        (comma/semicolon/tab) and a consistent field count across lines.
+        Everything else falls back to text.
+        """
+        stripped = content.strip()
+        if not stripped:
+            return "text"
+        try:
+            parsed = json.loads(stripped)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            return "json"
+        lines = [ln for ln in stripped.splitlines() if ln.strip()]
+        if len(lines) >= 2:
+            for delim in (",", ";", "\t"):
+                counts = {len(ln.split(delim)) for ln in lines}
+                if len(counts) == 1 and counts != {1}:
+                    return "csv"
+        return "text"
+
     async def _extract(self, content: str, content_type: str) -> ExtractedContent:
         """Extract clean text from raw content."""
         return await self.extractors.extract(content, content_type)
@@ -395,6 +427,16 @@ class MemoryEngine:
                 (metadata or {}).get("container_tag"),
                 "default",
             )
+            # Structured chunks carry source provenance (spec issue #1): the
+            # record/key indices live on the memory so search results can be
+            # traced back to the original record. Namespaced so caller
+            # metadata is never clobbered.
+            memory_metadata = metadata
+            if content_type in ("json", "csv") and chunk.metadata:
+                memory_metadata = {
+                    **(metadata or {}),
+                    "chunk_source": chunk.metadata,
+                }
             memory_id = await self.graph.create_memory(
                 content=chunk.text,
                 entity_id=entity_id,
@@ -406,7 +448,7 @@ class MemoryEngine:
                 summary=chunk.summary or None,
                 source_type="conversation" if content_type == "conversation" else "document",
                 valid_until=overridden_valid_until,
-                metadata=metadata,
+                metadata=memory_metadata,
             )
             chunk.id = memory_id
 

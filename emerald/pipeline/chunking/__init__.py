@@ -8,6 +8,8 @@ def get_default_registry() -> ChunkerRegistry:
     """Return a pre-populated chunker registry with all built-in chunkers."""
     from emerald.pipeline.chunking.code import CodeChunker
     from emerald.pipeline.chunking.conversation import ConversationChunker
+    from emerald.pipeline.chunking.csv import CsvChunker
+    from emerald.pipeline.chunking.json import JsonChunker
     from emerald.pipeline.chunking.markdown import MarkdownChunker
     from emerald.pipeline.chunking.pdf import PDFChunker
     from emerald.pipeline.chunking.text import TextChunker
@@ -18,6 +20,8 @@ def get_default_registry() -> ChunkerRegistry:
     registry.register("markdown", MarkdownChunker())
     registry.register("pdf", PDFChunker())
     registry.register("conversation", ConversationChunker())
+    registry.register("json", JsonChunker())
+    registry.register("csv", CsvChunker())
     return registry
 
 

@@ -22,6 +22,9 @@ def get_default_registry() -> ExtractorRegistry:
     registry.register("image", ImageExtractor())
     registry.register("audio", AudioExtractor())
     registry.register("video", VideoExtractor())
+    # Structured data (JSON/CSV) is plain text — handled by the text extractor.
+    registry.register("json", TextExtractor())
+    registry.register("csv", TextExtractor())
     return registry
 
 

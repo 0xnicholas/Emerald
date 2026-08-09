@@ -240,6 +240,70 @@ async def test_upload_bytes(client):
 
 
 @pytest.mark.asyncio
+async def test_add_omits_content_type_when_undeclared(client):
+    """content_type=None (default) must omit the field from the request body
+    so the server-side sniffing can take effect (spec issue #1)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": {
+            "memory_ids": ["m1"],
+            "pipeline_status": "done",
+            "extracted_count": 1,
+            "conflicts_pending": [],
+        }
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    original_client = client._client
+    client._client = mock_http_client
+    try:
+        await client.add("hello", entity_id="user_123")
+    finally:
+        client._client = original_client
+
+    _args, kwargs = mock_http_client.request.call_args
+    assert "content_type" not in kwargs["json"], \
+        "undeclared content_type must not default to 'text' on the wire"
+
+
+@pytest.mark.asyncio
+async def test_add_sends_explicit_content_type(client):
+    """An explicitly declared content_type is forwarded in the body."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": {
+            "memory_ids": ["m1"],
+            "pipeline_status": "done",
+            "extracted_count": 1,
+            "conflicts_pending": [],
+        }
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    original_client = client._client
+    client._client = mock_http_client
+    try:
+        await client.add("hello", entity_id="user_123", content_type="json")
+    finally:
+        client._client = original_client
+
+    _args, kwargs = mock_http_client.request.call_args
+    assert kwargs["json"]["content_type"] == "json"
+
+
+@pytest.mark.asyncio
 async def test_upload_str_path(tmp_path, client):
     """upload() accepts file path string."""
     from unittest.mock import AsyncMock, MagicMock

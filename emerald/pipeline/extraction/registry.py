@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 
 from emerald.pipeline.extraction.base import BaseExtractor, ExtractedContent
+from emerald.pipeline.mime import resolve_pipeline_content_type
 
 logger = structlog.get_logger(__name__)
 
@@ -20,12 +21,14 @@ class ExtractorRegistry:
         logger.debug("extractor.registered", content_type=content_type)
 
     def get(self, content_type: str) -> BaseExtractor:
-        if content_type not in self._extractors:
+        # MIME strings ("application/json") resolve to short types ("json").
+        resolved = resolve_pipeline_content_type(content_type)
+        if resolved not in self._extractors:
             raise UnsupportedContentType(
                 f"No extractor for content_type='{content_type}'. "
                 f"Available: {list(self._extractors)}"
             )
-        return self._extractors[content_type]
+        return self._extractors[resolved]
 
     async def run(
         self, content: str | bytes, content_type: str = "text", **kwargs

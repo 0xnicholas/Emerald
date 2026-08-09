@@ -239,6 +239,8 @@ def _detect_mime(filename: str | None) -> str:
         "pdf": "application/pdf",
         "txt": "text/plain",
         "md": "text/markdown",
+        "json": "application/json",
+        "csv": "text/csv",
         "png": "image/png",
         "jpg": "image/jpeg",
         "jpeg": "image/jpeg",

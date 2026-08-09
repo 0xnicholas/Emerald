@@ -49,6 +49,15 @@ async def test_run_is_alias_for_chunk(registry):
     assert len(chunks) == 1
 
 
+async def test_get_normalizes_mime_prefix(registry):
+    """text/csv resolves to the registered csv chunker."""
+    from emerald.pipeline.chunking.csv import CsvChunker
+
+    chunker = CsvChunker()
+    registry.register("csv", chunker)
+    assert registry.get("text/csv") is chunker
+
+
 async def test_error_message_lists_available(registry):
     """Error message lists registered chunkers when no fallback."""
     # Register only non-text chunker to avoid fallback

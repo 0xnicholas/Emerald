@@ -15,13 +15,13 @@ from emerald.pipeline.orchestrator import PipelineOrchestrator
 
 async def test_default_extractor_registry_has_all_types():
     registry = get_default_extractors()
-    expected = {"text", "code", "pdf", "url", "image", "audio", "video"}
+    expected = {"text", "code", "pdf", "url", "image", "audio", "video", "json", "csv"}
     assert set(registry._extractors.keys()) == expected
 
 
 async def test_default_chunker_registry_has_all_types():
     registry = get_default_chunkers()
-    expected = {"text", "code", "markdown", "pdf", "conversation"}
+    expected = {"text", "code", "markdown", "pdf", "conversation", "json", "csv"}
     assert set(registry._chunkers.keys()) == expected
 
 

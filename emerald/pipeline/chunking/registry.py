@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 
 from emerald.pipeline.chunking.base import BaseChunker, Chunk
+from emerald.pipeline.mime import resolve_pipeline_content_type
 
 logger = structlog.get_logger(__name__)
 
@@ -20,7 +21,9 @@ class ChunkerRegistry:
         logger.debug("chunker.registered", content_type=content_type)
 
     def get(self, content_type: str) -> BaseChunker:
-        if content_type not in self._chunkers:
+        # MIME strings ("application/json") resolve to short types ("json").
+        resolved = resolve_pipeline_content_type(content_type)
+        if resolved not in self._chunkers:
             # Fallback to text chunker if available
             if "text" in self._chunkers:
                 return self._chunkers["text"]
@@ -28,7 +31,7 @@ class ChunkerRegistry:
                 f"No chunker for content_type='{content_type}'. "
                 f"Available: {list(self._chunkers)}"
             )
-        return self._chunkers[content_type]
+        return self._chunkers[resolved]
 
     async def run(self, text: str, content_type: str = "text", **kwargs) -> list[Chunk]:
         """Split text using the appropriate chunking strategy."""
