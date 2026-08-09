@@ -59,6 +59,7 @@
 
 ## 5. 迁移计划
 
-1. Pilot：实现 HubAdapter + 绑定管理 + 事件接收，选一个 provider（Drive 或 Notion）跑通全链路
-2. 验证通过后：删除 `emerald/connectors/`（2,194 行）及对应测试、路由、`.coveragerc` omit 条目
-3. `/v1/connectors/*` API 语义迁移为数据源绑定管理（connect session → 绑定记录）
+1. ~~Pilot：实现 HubAdapter + 绑定管理 + 事件接收，选一个 provider（Drive 或 Notion）跑通全链路~~ 已完成（2026-08-09，见 [Pilot 验证记录](../verification/stackone-pilot-verification.md)）
+2. 验证结论：**有条件通过**（详见验证记录 §4）——绑定/Webhook/凭证安全通过；同步路径因 P1×3（Pilot 缺陷）+ P0×3（核心管线既有缺陷）+ StackOne 侧配置阻塞未跑通，修复后复验
+3. 验证通过后：删除 `emerald/connectors/`（2,194 行）及对应测试、路由、`.coveragerc` omit 条目（T4b，issue #7）
+4. `/v1/connectors/*` API 语义迁移为数据源绑定管理（connect session → 绑定记录）
