@@ -120,10 +120,10 @@ async def update_space(container_tag: str, entity_id: str, body: SpaceUpdateRequ
 async def delete_space(
     container_tag: str,
     entity_id: str,
-    migrate_to_default: bool = True,
+    detach_memories: bool = True,
     request: Request = None,
 ) -> dict:
-    """Delete a space. Memories are migrated to default by default."""
+    """Delete a space. Memories are detached (container_tag becomes null) by default."""
     start = time.perf_counter()
     _authorize_entity(request, entity_id)
     engine = _get_engine(request)
@@ -132,7 +132,7 @@ async def delete_space(
     await engine.graph.delete_space(
         container_tag=container_tag,
         entity_id=entity_id,
-        migrate_to_default=migrate_to_default,
+        detach_memories=detach_memories,
     )
 
     return {

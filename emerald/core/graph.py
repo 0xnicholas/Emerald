@@ -47,7 +47,7 @@ class GraphStore:
         content: str,
         *,
         entity_id: str,
-        container_tag: str = "default",
+        container_tag: str | None = None,
         memory_type: str = "fact",
         internal_type: str | None = None,
         confidence: float = 0.8,
@@ -1050,7 +1050,7 @@ class GraphStore:
                 if m.get("container_tag") == s["container_tag"]
             )
             result.append({**s, "memory_count": count})
-        result.sort(key=lambda x: (0 if x["container_tag"] == "default" else 1, x.get("name", "")))
+        result.sort(key=lambda x: x.get("name", ""))
         return result
 
     async def update_space(
@@ -1165,21 +1165,21 @@ class GraphStore:
         self,
         container_tag: str,
         entity_id: str,
-        migrate_to_default: bool = True,
+        detach_memories: bool = True,
     ) -> None:
         """Delete a Space node.
 
-        If ``migrate_to_default`` is True (default), all memories with
-        this container_tag are re-assigned to "default" first.
+        If ``detach_memories`` is True (default), all memories with this
+        container_tag lose their space (container_tag becomes null).
         """
         self._init_driver()
         if self._use_db and self._driver:
             async with self._driver.session() as session:
-                if migrate_to_default:
+                if detach_memories:
                     await session.run(
                         """
                         MATCH (m:Memory {entity_id: $entity_id, container_tag: $container_tag})
-                        SET m.container_tag = 'default'
+                        REMOVE m.container_tag
                         """,
                         entity_id=entity_id,
                         container_tag=container_tag,
@@ -1196,58 +1196,11 @@ class GraphStore:
 
         # In-memory fallback
         key = f"space:{entity_id}"
-        if migrate_to_default:
+        if detach_memories:
             for m in self._memories.get(entity_id, []):
                 if m.get("container_tag") == container_tag:
-                    m["container_tag"] = "default"
+                    m["container_tag"] = None
         spaces = self._spaces.get(key, [])
         self._spaces[key] = [
             s for s in spaces if s["container_tag"] != container_tag
         ]
-
-    async def ensure_default_spaces(self) -> int:
-        """Create a default Space for every Entity that doesn't have one.
-
-        Returns the number of spaces created.
-        """
-        self._init_driver()
-        now = datetime.now(UTC)
-
-        if self._use_db and self._driver:
-            async with self._driver.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (e:Entity)
-                    WHERE NOT (e)-[:HAS_SPACE]->(:Space {container_tag: 'default'})
-                    CREATE (s:Space {
-                        container_tag: 'default',
-                        name: 'My Space',
-                        emoji: '📁',
-                        entity_id: e.id,
-                        created_at: datetime(),
-                        updated_at: datetime()
-                    })
-                    CREATE (e)-[:HAS_SPACE]->(s)
-                    RETURN count(s) AS created
-                    """,
-                )
-                record = await result.single()
-                return record["created"] if record else 0
-
-        # In-memory fallback: iterate over all entities with memories
-        created = 0
-        for eid in list(self._memories.keys()):
-            key = f"space:{eid}"
-            spaces = self._spaces.get(key, [])
-            if not any(s["container_tag"] == "default" for s in spaces):
-                spaces.append({
-                    "container_tag": "default",
-                    "name": "My Space",
-                    "emoji": "📁",
-                    "entity_id": eid,
-                    "created_at": now,
-                    "updated_at": now,
-                })
-                self._spaces[key] = spaces
-                created += 1
-        return created

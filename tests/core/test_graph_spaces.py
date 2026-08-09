@@ -66,16 +66,6 @@ async def test_list_spaces(graph):
 
 
 @pytest.mark.asyncio
-async def test_list_spaces_default_first(graph):
-    """Default space ('default') is always first in the list."""
-    await graph.create_space("work", "Work", "💼", "user_001")
-    await graph.create_space("default", "My Space", "📁", "user_001")
-
-    spaces = await graph.list_spaces("user_001")
-    assert spaces[0]["container_tag"] == "default"
-
-
-@pytest.mark.asyncio
 async def test_list_spaces_with_count(graph):
     """list_spaces returns memory_count per space."""
     await graph.create_space("work", "Work", "💼", "user_001")
@@ -137,10 +127,9 @@ async def test_delete_space(graph):
 
 
 @pytest.mark.asyncio
-async def test_delete_space_migrate_memories(graph):
-    """Deleting a space with migrate_to_default=True re-assigns memories to default."""
+async def test_delete_space_detaches_memories(graph):
+    """Deleting a space with detach_memories=True nulls the memories' container_tag."""
     await graph.create_space("work", "Work", "💼", "user_001")
-    await graph.create_space("default", "My Space", "📁", "user_001")
 
     mid1 = await graph.create_memory("Work memory", entity_id="user_001")
     mid2 = await graph.create_memory("Personal memory", entity_id="user_001")
@@ -152,18 +141,18 @@ async def test_delete_space_migrate_memories(graph):
         elif m["id"] == mid2:
             m["container_tag"] = "personal"
 
-    # Delete the "work" space with migration
-    await graph.delete_space("work", "user_001", migrate_to_default=True)
+    # Delete the "work" space with detachment
+    await graph.delete_space("work", "user_001", detach_memories=True)
 
     # Verify space is gone
     spaces = await graph.list_spaces("user_001")
     tags = [s["container_tag"] for s in spaces]
     assert "work" not in tags
 
-    # Verify memory was migrated to default
+    # Verify memory lost its space (null container_tag)
     migrated = [m for m in graph._memories["user_001"] if m["id"] == mid1]
     assert len(migrated) == 1
-    assert migrated[0]["container_tag"] == "default"
+    assert migrated[0]["container_tag"] is None
 
     # Other memory should be unaffected
     other = [m for m in graph._memories["user_001"] if m["id"] == mid2]
@@ -172,7 +161,7 @@ async def test_delete_space_migrate_memories(graph):
 
 @pytest.mark.asyncio
 async def test_delete_space_no_migrate(graph):
-    """Deleting a space without migration leaves container_tag untouched."""
+    """Deleting a space without detachment leaves container_tag untouched."""
     await graph.create_space("work", "Work", "💼", "user_001")
 
     mid = await graph.create_memory("Work memory", entity_id="user_001")
@@ -180,7 +169,7 @@ async def test_delete_space_no_migrate(graph):
         if m["id"] == mid:
             m["container_tag"] = "work"
 
-    await graph.delete_space("work", "user_001", migrate_to_default=False)
+    await graph.delete_space("work", "user_001", detach_memories=False)
 
     # Memory should still have the old container_tag
     memory = await graph.get_memory(mid)
@@ -189,46 +178,29 @@ async def test_delete_space_no_migrate(graph):
 
 
 @pytest.mark.asyncio
-async def test_ensure_default_spaces(graph):
-    """ensure_default_spaces creates default Spaces for entities that need them."""
-    # Create memories for two entities
+async def test_no_space_auto_creation(graph):
+    """ADR-0002: the system never auto-creates or infers spaces.
+
+    Memories without a container_tag stay space-less; no default space
+    is created on their behalf.
+    """
     await graph.create_memory("Memory 1", entity_id="user_001")
-    await graph.create_memory("Memory 1", entity_id="user_002")
-
-    created = await graph.ensure_default_spaces()
-    assert created == 2
-
-    # Both entities should now have a default Space
-    for eid in ("user_001", "user_002"):
-        spaces = await graph.list_spaces(eid)
-        tags = [s["container_tag"] for s in spaces]
-        assert "default" in tags
-
-
-@pytest.mark.asyncio
-async def test_ensure_default_spaces_idempotent(graph):
-    """ensure_default_spaces does not create duplicate default spaces."""
-    await graph.create_memory("Memory", entity_id="user_001")
-
-    created1 = await graph.ensure_default_spaces()
-    assert created1 == 1
-
-    created2 = await graph.ensure_default_spaces()
-    assert created2 == 0
 
     spaces = await graph.list_spaces("user_001")
-    defaults = [s for s in spaces if s["container_tag"] == "default"]
-    assert len(defaults) == 1
+    assert spaces == []
+
+    memory = await graph.get_memory(graph._memories["user_001"][0]["id"])
+    assert memory.get("container_tag") is None
 
 
 @pytest.mark.asyncio
 async def test_update_memory_fields(graph):
     """update_memory() should update only the provided fields."""
-    await graph.create_space("default", "My Space", "📁", "user_test")
+    await graph.create_space("work", "Work", "💼", "user_test")
     await graph.create_memory(
         content="original content",
         entity_id="user_test",
-        container_tag="default",
+        container_tag="work",
     )
     # Find the memory ID
     memories = graph._memories.get("user_test", [])

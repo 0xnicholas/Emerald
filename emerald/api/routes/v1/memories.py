@@ -91,7 +91,7 @@ async def get_memory(memory_id: str, request: Request) -> dict:
         content=memory["content"],
         summary=memory.get("summary", ""),
         memory_type=memory.get("memory_type", "fact"),
-        container_tag=memory.get("container_tag", "default"),
+        container_tag=memory.get("container_tag"),
         tags=memory.get("tags") or [],
         is_latest=memory.get("is_latest", True),
         confidence=memory.get("confidence", 0.0),

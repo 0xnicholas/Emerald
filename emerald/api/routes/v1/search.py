@@ -137,7 +137,7 @@ async def search_get(
     return {
         "data": {
             "results": [
-                {"id": r.id, "content": r.content, "score": r.score, "source": r.source, "container_tag": "default"}
+                {"id": r.id, "content": r.content, "score": r.score, "source": r.source, "container_tag": r.container_tag}
                 for r in results.results
             ],
             "search_mode": results.search_mode.value,

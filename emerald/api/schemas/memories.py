@@ -53,7 +53,7 @@ class AddMemoryRequest(BaseModel):
         default=None,
         description=(
             "Optional space/container tag to associate this memory with. "
-            "Default is 'default' (My Space)."
+            "Null (default) means the memory belongs to no space."
         ),
     )
     valid_until: datetime | None = Field(
@@ -84,7 +84,7 @@ class MemoryResponse(BaseModel):
     content: str
     summary: str = ""
     memory_type: str = "fact"
-    container_tag: str = "default"
+    container_tag: str | None = None
     is_latest: bool = True
     confidence: float = 0.0
     valid_from: datetime | None = None

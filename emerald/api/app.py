@@ -131,15 +131,6 @@ async def lifespan(app: FastAPI):
     async with session_factory.session() as s:
         await s.execute(text("SELECT 1"))
 
-    # Ensure every Entity has a default Space (idempotent)
-    engine = getattr(app.state, "engine", None)
-    if engine and hasattr(engine, "graph"):
-        created = await engine.graph.ensure_default_spaces()
-        if created:
-            logging.getLogger(__name__).info(
-                "default_spaces_created", count=created
-            )
-
     yield
 
     from emerald.core.tracing import shutdown_tracing
