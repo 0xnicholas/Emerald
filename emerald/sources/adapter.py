@@ -35,10 +35,13 @@ class ProviderProfile:
 
 
 PROVIDER_PROFILES: dict[str, ProviderProfile] = {
+    # Verified against StackOne's Google Drive connector catalog (2026-08-09):
+    # unified actions use StackOne's schema; download_unified_file fetches
+    # content (get_unified_file is metadata-only).
     "googledrive": ProviderProfile(
         provider="googledrive",
-        list_action="list_files",
-        get_action="get_file_content",
+        list_action="list_unified_files",
+        get_action="download_unified_file",
         default_content_type="text/markdown",
     ),
     "notion": ProviderProfile(

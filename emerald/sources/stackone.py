@@ -64,9 +64,9 @@ class StackOneHubClient(ConnectionHub):
         key_id = api_key_id or settings.stackone_api_key_id
         key_secret = api_key_secret or settings.stackone_api_key_secret
         self._webhook_secret = webhook_secret or settings.stackone_webhook_secret
-        if not key_id or not key_secret:
+        if not key_id:
             logger.warning(
-                "stackone_api_key_id/stackone_api_key_secret not configured; "
+                "stackone_api_key_id not configured; "
                 "hub calls will fail with 401"
             )
         token = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
