@@ -63,3 +63,15 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (0xnicholas/Emerald), managed via the gh CLI. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: CONTEXT.md + docs/adr/ at the repo root. See `docs/agents/domain.md`.
