@@ -161,7 +161,8 @@ Emerald/
 | **分块（Chunking）** | 在嵌入之前将内容拆分为语义单元的过程。策略取决于内容类型（代码用 AST，Markdown 用标题层级，PDF 用章节）。 |
 | **管线（Pipeline）** | 完整的摄入流程：排队 → 提取 → 分块 → 嵌入 → 索引 → 完成。 |
 | **遗忘（Forgetting）** | 自动移除或弃用记忆：基于时间的过期、矛盾解决和噪音过滤。 |
-| **数据源绑定（Source Binding）** | 一个外部账户经连接中心（StackOne）授权后在 Emerald 中的绑定。集成能力（OAuth、同步、webhook）在连接中心侧，Emerald 只维护授权关系与数据源身份。 |
+| **数据源绑定（Source Binding）** | 一个外部账户经连接中心授权后在 Emerald 中的绑定。集成能力（OAuth、同步、webhook）在连接中心侧，Emerald 只维护授权关系与数据源身份。 |
+| **连接中心（Connection Hub）** | 提供统一外部数据源接入能力的平台（首个实现 StackOne，可替换）。Emerald 只依赖连接中心的抽象接口，不直接与 provider 打交道。 |
 
 ---
 

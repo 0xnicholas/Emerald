@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = ""
 
     @model_validator(mode="after")
-    def _reject_wildcard_cors_in_production(self) -> "Settings":
+    def _reject_wildcard_cors_in_production(self) -> Settings:
         """Refuse to start with ``CORS_ALLOWED_ORIGINS=*`` in production.
 
         A wildcard origin allows ANY site in the user's browser to call
@@ -126,6 +126,22 @@ class Settings(BaseSettings):
     # round-trip time for a human to complete the provider's consent
     # screen.  10 minutes is conservative; reduce for tighter security.
     oauth_state_ttl_seconds: int = 600
+
+    # ---- Connection Hub (ADR-0004) ----
+    # Emerald never talks to providers directly; all external data flows
+    # through a connection hub. The hub is swappable: `hub_provider` picks
+    # the implementation (stackone is the first; others plug in behind the
+    # same ConnectionHub interface in emerald/sources/hub.py).
+    hub_provider: str = "stackone"
+    stackone_api_base_url: str = "https://api.stackone.com"
+    stackone_api_key_id: str = ""
+    stackone_api_key_secret: str = ""
+    # Signing secret for verifying inbound webhook deliveries
+    # (x-stackone-signature, HMAC-SHA256 over the raw body).
+    stackone_webhook_secret: str = ""
+    # Base URL of this Emerald instance, used to build the webhook
+    # endpoint that the hub delivers events to.
+    public_base_url: str = "http://localhost:8000"
 
     # ---- OpenTelemetry ----
     otel_exporter_otlp_endpoint: str = ""

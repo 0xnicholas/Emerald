@@ -303,6 +303,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
         profiles as v1_profiles,
         search as v1_search,
         sessions as v1_sessions,
+        sources as v1_sources,
         spaces as v1_spaces,
         system as v1_system,
         upload as v1_upload,
@@ -317,6 +318,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v1_extract.router, prefix="/v1")
     app.include_router(v1_sessions.router, prefix="/v1")
     app.include_router(v1_connectors.router, prefix="/v1")
+    app.include_router(v1_sources.router, prefix="/v1")
     app.include_router(v1_spaces.router, prefix="/v1")
     app.include_router(v1_system.router, prefix="/v1")
 

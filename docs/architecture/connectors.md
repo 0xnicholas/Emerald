@@ -7,11 +7,13 @@
 
 ## 1. 架构概览
 
+> 连接中心是抽象概念：StackOne 是首个实现（ADR-0004），可替换。Emerald 所有接入代码只依赖 `ConnectionHub` 接口。
+
 ```
 ┌──────────────────────────────────────────────────────┐
-│                   连接中心（StackOne）                 │
-│  OAuth 流程 / 凭证管理 / token 刷新 / webhook 续期      │
-│  native + synthetic 事件 · 470+ 连接器（统一 API）      │
+│              连接中心（Connection Hub）                │
+│  首个实现：StackOne · 可替换（抽象接口隔离）             │
+│  OAuth / 凭证 / token 刷新 / webhook 续期 / 470+ 连接器 │
 └──────────────┬───────────────────────┬───────────────┘
                │ webhook 事件（推送）     │ action RPC（按需拉内容）
                ▼                       ▼

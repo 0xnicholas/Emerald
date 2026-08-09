@@ -33,6 +33,10 @@ celery_app.conf.update(
 
 # Beat schedule — scheduled tasks for forget engine and connector sync
 celery_app.conf.beat_schedule = {
+    "sync-source-bindings": {
+        "task": "emerald.sources.tasks.sync_all_bindings_task",
+        "schedule": 3600.0,  # Every hour: fallback sweep, webhook events are primary
+    },
     "forget-expired-memories": {
         "task": "emerald.pipeline.tasks.forget_expired",
         "schedule": 3600.0,  # Every hour
