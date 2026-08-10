@@ -6,24 +6,25 @@ Why not TestClient: With the OpenTelemetry FastAPI instrumentator active
 in test environments, FastAPI's dependency-overrides mechanism produces
 spurious 422 "missing query: request" errors for routes that have no
 `request` query parameter (verified: the dependant tree contains only
-entity_id, status_filter, page, page_size). The endpoint function itself
-is correct — verified by calling it directly with mock session_factory.
+entity_id, status_filter, page_token, page_size). The endpoint function
+itself is correct — verified by calling it directly with mock session_factory.
 
 These tests invoke the endpoint function directly with a mocked session
 to verify its behavior. The route registration and signature are
-verified separately by the OpenAPI schema in test_api.py.
+verified separately via the OpenAPI schema.
 """
 
 from __future__ import annotations
 
 import inspect
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from emerald.api.pagination import PageToken
 
 # ---------- Helpers ----------
 
@@ -40,7 +41,7 @@ def _make_doc(
     if doc_id is None:
         doc_id = uuid.uuid4()
     if created_at is None:
-        created_at = datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc)
+        created_at = datetime(2026, 6, 21, 10, 0, 0, tzinfo=UTC)
     return SimpleNamespace(
         id=doc_id,
         title=title,
@@ -65,21 +66,15 @@ def _build_session_mock(documents, entity_exists=True):
     entity_result = MagicMock()
     entity_result.scalar_one_or_none = MagicMock(return_value=entity)
 
-    # scalar() returns count (sync)
-    count_result = MagicMock()
-    count_result.scalar = MagicMock(return_value=len(documents))
-
     # .scalars().all() returns documents (sync)
     docs_result = MagicMock()
     docs_result.scalars = MagicMock(
         return_value=MagicMock(all=MagicMock(return_value=documents))
     )
 
-    # session.execute() is ASYNC (called with await)
+    # session.execute() is ASYNC (called with await): entity query, then docs query
     session = MagicMock()
-    session.execute = AsyncMock(
-        side_effect=[entity_result, count_result, docs_result]
-    )
+    session.execute = AsyncMock(side_effect=[entity_result, docs_result])
 
     class FakeCM:
         async def __aenter__(self):
@@ -93,33 +88,55 @@ def _build_session_mock(documents, entity_exists=True):
     return factory
 
 
-async def _call_list_files(entity_id, status_filter="done", page=1, page_size=20):
+async def _call_list_files(entity_id, status_filter="done", page_token=None, page_size=20):
     """Call list_files() directly with patched session_factory."""
     from emerald.api.routes.v1 import upload
 
     factory = _build_session_mock(documents=[])
-    original = upload.session_factory if hasattr(upload, "session_factory") else None
 
     # list_files does `from emerald.db.session import session_factory` inside the
     # function body, so we patch the source module's attribute.
     import emerald.db.session as db_session
 
+    original = db_session.session_factory
     db_session.session_factory = factory
     try:
-        from unittest.mock import patch
-        # Mock request.state.request_id for the new request_id line
         mock_request = MagicMock()
         mock_request.state.request_id = "test_id"
         result = await upload.list_files(
             request=mock_request,
             entity_id=entity_id,
             status_filter=status_filter,
-            page=page,
+            page_token=page_token,
             page_size=page_size,
         )
     finally:
-        if original is not None:
-            db_session.session_factory = original
+        db_session.session_factory = original
+    return result
+
+
+async def _call_list_files_with_docs(documents, entity_exists=True, **kwargs):
+    """Call list_files() directly with a session mock returning `documents`."""
+    from emerald.api.routes.v1 import upload
+
+    factory = _build_session_mock(documents=documents, entity_exists=entity_exists)
+
+    import emerald.db.session as db_session
+
+    original = db_session.session_factory
+    db_session.session_factory = factory
+    try:
+        mock_request = MagicMock()
+        mock_request.state.request_id = "test_id"
+        result = await upload.list_files(
+            request=mock_request,
+            entity_id="user_123",
+            status_filter="done",
+            page_token=None,
+            **{"page_size": 20, **kwargs},
+        )
+    finally:
+        db_session.session_factory = original
     return result
 
 
@@ -129,32 +146,12 @@ async def _call_list_files(entity_id, status_filter="done", page=1, page_size=20
 @pytest.mark.asyncio
 async def test_list_files_empty_entity_returns_empty():
     """Entity with no documents returns empty list (not error)."""
-    # Rebuild mock for THIS call (empty documents)
-    factory = _build_session_mock(documents=[])
-
-    import emerald.db.session as db_session
-    original = db_session.session_factory
-    db_session.session_factory = factory
-    try:
-        from emerald.api.routes.v1 import upload
-        from unittest.mock import MagicMock
-
-        mock_request = MagicMock()
-        mock_request.state.request_id = "test_id"
-        result = await upload.list_files(
-            request=mock_request,
-            entity_id="user_123",
-            status_filter="done",
-            page=1,
-            page_size=20,
-        )
-    finally:
-        db_session.session_factory = original
+    result = await _call_list_files_with_docs(documents=[])
 
     assert result["data"]["items"] == []
-    assert result["data"]["total"] == 0
-    assert result["data"]["page"] == 1
     assert result["data"]["page_size"] == 20
+    assert result["pagination"]["has_more"] is False
+    assert result["pagination"]["next_page_token"] is None
     assert "meta" in result
     assert "took_ms" in result["meta"]
     assert "request_id" in result["meta"]
@@ -163,27 +160,11 @@ async def test_list_files_empty_entity_returns_empty():
 @pytest.mark.asyncio
 async def test_list_files_unknown_entity_returns_empty():
     """Unknown entity_id (not in DB) returns empty list, not 404."""
-    factory = _build_session_mock(documents=[], entity_exists=False)
-
-    import emerald.db.session as db_session
-    original = db_session.session_factory
-    db_session.session_factory = factory
-    try:
-        from emerald.api.routes.v1 import upload
-        from unittest.mock import MagicMock
-
-        mock_request = MagicMock()
-        mock_request.state.request_id = "test_id"
-        result = await upload.list_files(
-            request=mock_request,
-            entity_id="nonexistent_user",
-            status_filter="done",
-        )
-    finally:
-        db_session.session_factory = original
+    result = await _call_list_files_with_docs(documents=[], entity_exists=False)
 
     assert result["data"]["items"] == []
-    assert result["data"]["total"] == 0
+    assert result["pagination"]["has_more"] is False
+    assert result["pagination"]["next_page_token"] is None
 
 
 @pytest.mark.asyncio
@@ -193,33 +174,19 @@ async def test_list_files_returns_documents():
         _make_doc(title="report.pdf", size=1024 * 100, chunk_count=12),
         _make_doc(title="image.png", size=1024 * 50, chunk_count=0),
     ]
-    factory = _build_session_mock(documents=docs)
+    result = await _call_list_files_with_docs(documents=docs)
 
-    import emerald.db.session as db_session
-    original = db_session.session_factory
-    db_session.session_factory = factory
-    try:
-        from emerald.api.routes.v1 import upload
-        from unittest.mock import MagicMock
-
-        mock_request = MagicMock()
-        mock_request.state.request_id = "test_id"
-        result = await upload.list_files(
-            request=mock_request,
-            entity_id="user_123",
-            status_filter="done",
-        )
-    finally:
-        db_session.session_factory = original
-
-    assert result["data"]["total"] == 2
     assert len(result["data"]["items"]) == 2
     titles = {item["title"] for item in result["data"]["items"]}
     assert titles == {"report.pdf", "image.png"}
 
     item = result["data"]["items"][0]
     # All required fields present
-    for field in ["id", "title", "content_type", "status", "file_size_bytes", "chunk_count", "created_at"]:
+    fields = [
+        "id", "title", "content_type", "status",
+        "file_size_bytes", "chunk_count", "created_at",
+    ]
+    for field in fields:
         assert field in item, f"Missing field: {field}"
     assert item["content_type"] == "application/pdf"
     assert item["status"] == "done"
@@ -235,59 +202,73 @@ async def test_list_files_handles_null_size():
         status="processing",
         file_size_bytes=None,
         chunk_count=0,
-        created_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 6, 21, 10, 0, 0, tzinfo=UTC),
     )
-    factory = _build_session_mock(documents=[doc])
+    result = await _call_list_files_with_docs(documents=[doc])
 
-    import emerald.db.session as db_session
-    original = db_session.session_factory
-    db_session.session_factory = factory
-    try:
-        from emerald.api.routes.v1 import upload
-        from unittest.mock import MagicMock
-
-        mock_request = MagicMock()
-        mock_request.state.request_id = "test_id"
-        result = await upload.list_files(
-            request=mock_request,
-            entity_id="user_123",
-            status_filter="processing",
-        )
-    finally:
-        db_session.session_factory = original
-
-    assert result["data"]["total"] == 1
+    assert len(result["data"]["items"]) == 1
     item = result["data"]["items"][0]
     assert item["file_size_bytes"] is None
     assert item["title"] == "pending.pdf"
 
 
 @pytest.mark.asyncio
-async def test_list_files_pagination_params():
-    """page and page_size are reflected in response.data."""
+async def test_list_files_cursor_pagination():
+    """page_size is reflected in response, and has_more drives next_page_token."""
+    result = await _call_list_files_with_docs(documents=[], page_size=10)
+
+    assert result["data"]["page_size"] == 10
+    assert result["pagination"]["has_more"] is False
+    assert result["pagination"]["next_page_token"] is None
+
+    # More documents than the page size → has_more + next_page_token.
+    many_docs = [_make_doc(title=f"doc-{i}.pdf") for i in range(21)]
+    result = await _call_list_files_with_docs(documents=many_docs, page_size=20)
+
+    assert len(result["data"]["items"]) == 20
+    assert result["data"]["page_size"] == 20
+    assert result["pagination"]["has_more"] is True
+    assert result["pagination"]["next_page_token"] is not None
+
+
+@pytest.mark.asyncio
+async def test_list_files_accepts_page_token():
+    """A valid cursor page_token is accepted and pagination metadata returned."""
+    token = PageToken.encode(cursor=str(uuid.uuid4()), limit=5)
+    result = await _call_list_files(entity_id="user_123", page_token=token, page_size=5)
+
+    assert result["data"]["items"] == []
+    assert "pagination" in result
+
+
+@pytest.mark.asyncio
+async def test_list_files_invalid_page_token_raises_422():
+    """A corrupt page_token surfaces as an InvalidPaginationToken HTTP 422."""
+    from fastapi import HTTPException
+
+    from emerald.api.routes.v1 import upload
+
     factory = _build_session_mock(documents=[])
 
     import emerald.db.session as db_session
+
     original = db_session.session_factory
     db_session.session_factory = factory
     try:
-        from emerald.api.routes.v1 import upload
-        from unittest.mock import MagicMock
-
         mock_request = MagicMock()
         mock_request.state.request_id = "test_id"
-        result = await upload.list_files(
-            request=mock_request,
-            entity_id="user_123",
-            status_filter="done",
-            page=3,
-            page_size=10,
-        )
+        with pytest.raises(HTTPException) as exc_info:
+            await upload.list_files(
+                request=mock_request,
+                entity_id="user_123",
+                status_filter="done",
+                page_token="!!!not-a-valid-token!!!",
+                page_size=20,
+            )
     finally:
         db_session.session_factory = original
 
-    assert result["data"]["page"] == 3
-    assert result["data"]["page_size"] == 10
+    assert exc_info.value.status_code == 422
 
 
 # ---------- Signature verification ----------
@@ -309,20 +290,23 @@ def test_list_files_signature():
     # Should have these query params
     assert "entity_id" in params
     assert "status_filter" in params
-    assert "page" in params
+    assert "page_token" in params
     assert "page_size" in params
+    # Cursor pagination replaced the offset-based `page` param
+    assert "page" not in params, (
+        "Offset-based 'page' param is gone; cursor pagination uses 'page_token'"
+    )
 
     # Required: entity_id (no default)
     assert params["entity_id"].default is inspect.Parameter.empty
     # Optional: others have defaults
     assert params["status_filter"].default == "done"
-    assert params["page"].default == 1
-    assert params["page_size"].default == 20
+    assert params["page_token"].default is not inspect.Parameter.empty
+    assert params["page_size"].default is not inspect.Parameter.empty
 
 
 def test_list_files_route_registered():
     """Endpoint is registered with correct signature in OpenAPI."""
-    from fastapi.testclient import TestClient
     from emerald.api.app import create_app
     from emerald.core.chunker import ChunkerRegistry
     from emerald.core.embedder import MockEmbeddingProvider
@@ -360,9 +344,12 @@ def test_list_files_route_registered():
     assert "entity_id" in params
     assert params["entity_id"]["required"] is True
     assert "status_filter" in params
-    assert "page" in params
+    assert "page_token" in params
     assert "page_size" in params
-    # NO 'request' query parameter
+    # NO 'request' query parameter and no offset-based 'page' param
     assert "request" not in params, (
         "Spurious 'request' query parameter in OpenAPI schema"
+    )
+    assert "page" not in params, (
+        "Offset-based 'page' param is gone; cursor pagination uses 'page_token'"
     )

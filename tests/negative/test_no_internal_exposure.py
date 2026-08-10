@@ -25,6 +25,29 @@ INTERNAL_METHODS = [
 ]
 
 
+def _flatten_paths(routes) -> set[str]:
+    """Recursively collect route paths, expanding Starlette 1.x lazy routers."""
+    paths: set[str] = set()
+    for route in routes:
+        path = getattr(route, "path", None)
+        if path:
+            paths.add(path)
+        # Starlette 1.x: include_router registers lazy _IncludedRouter objects
+        # with no `path` attribute; expand their effective candidates.
+        candidates = getattr(route, "effective_candidates", None)
+        if candidates is not None:
+            paths |= _flatten_paths(candidates())
+            continue
+        nested = getattr(route, "routes", None)
+        if nested:
+            paths |= _flatten_paths(nested)
+    return paths
+
+
+def _api_paths() -> set[str]:
+    return _flatten_paths(create_app().routes)
+
+
 def test_sdk_has_no_graph_store_methods():
     """SDK client does not expose GraphStore methods."""
     public = {name for name, _ in inspect.getmembers(EmeraldClient, predicate=inspect.isfunction)
@@ -35,7 +58,10 @@ def test_sdk_has_no_graph_store_methods():
 
 def test_sdk_only_exposes_allowed_methods():
     """SDK exposes only the 4 core + utility methods."""
-    allowed = {"add", "search", "profile", "upload", "health", "pipeline_status", "get_memory", "close"}
+    allowed = {
+        "add", "search", "profile", "upload", "health",
+        "pipeline_status", "get_memory", "close",
+    }
     public = {name for name, _ in inspect.getmembers(EmeraldClient, predicate=inspect.isfunction)
               if not name.startswith("_")}
     unexpected = public - allowed
@@ -56,8 +82,7 @@ FORBIDDEN_PATHS = [
 
 def test_api_has_no_internal_routes():
     """API does not expose internal graph/vector routes."""
-    app = create_app()
-    routes = {route.path for route in app.routes}
+    routes = _api_paths()
 
     for forbidden in FORBIDDEN_PATHS:
         assert forbidden not in routes, f"API must not expose '{forbidden}'"
@@ -73,9 +98,7 @@ def test_api_routes_under_version_prefix():
 
     Verifies no internal paths like /admin, /neo4j, /graph leak into the API.
     """
-    app = create_app()
-    for route in app.routes:
-        path = route.path
+    for path in _api_paths():
         # Allow root, openapi, docs, and versioned API paths
         if path in ("/", "/openapi.json"):
             continue

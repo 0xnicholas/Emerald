@@ -1,8 +1,15 @@
-"""Tests for API URL-path versioning (v1 / v2 coexistence)."""
+"""Tests for API URL-path versioning.
+
+v2 routes were removed in v0.4.0 (see CHANGELOG); the v2 route surface
+is guarded by the route-completeness tests. These tests cover the v1
+route surface, the 404 contract for unknown versions, and the SDK's
+version configuration.
+"""
 
 from __future__ import annotations
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from emerald.api.app import create_app
@@ -16,7 +23,6 @@ from emerald.core.vector import VectorStore
 from emerald.pipeline.chunking.text import TextChunker
 from emerald.pipeline.extraction.text import TextExtractor
 from emerald.sdk.client import EmeraldClient
-from fastapi import Request
 
 
 @pytest.fixture
@@ -57,17 +63,17 @@ def client(engine):
 
 
 class TestApiVersioning:
-    """Verify that v1 and v2 routes are both registered and functional."""
+    """Verify that v1 routes are registered and functional, and unknown versions 404."""
 
     def test_v1_health_returns_200(self, client):
         response = client.get("/v1/health")
         assert response.status_code == 200
         assert response.json()["status"] in ("ok", "degraded")
 
-    def test_v2_health_returns_200(self, client):
+    def test_v2_health_returns_404(self, client):
+        """GET /v2/health must 404: v2 routes were removed in v0.4.0."""
         response = client.get("/v2/health")
-        assert response.status_code == 200
-        assert response.json()["status"] in ("ok", "degraded")
+        assert response.status_code == 404
 
     def test_v1_memories_post(self, client):
         response = client.post(
@@ -78,17 +84,21 @@ class TestApiVersioning:
         assert "memory_ids" in response.json()["data"]
 
     def test_v2_memories_post(self, client):
+        """POST /v2/memories must 404: v2 routes were removed in v0.4.0."""
         response = client.post(
             "/v2/memories",
             json={"content": "Test memory", "entity_id": "user_v2", "content_type": "text"},
         )
-        assert response.status_code == 200
-        assert "memory_ids" in response.json()["data"]
+        assert response.status_code == 404
 
     def test_v1_search_post(self, client):
         client.post(
             "/v1/memories",
-            json={"content": "Test search content", "entity_id": "user_search", "content_type": "text"},
+            json={
+                "content": "Test search content",
+                "entity_id": "user_search",
+                "content_type": "text",
+            },
         )
         response = client.post(
             "/v1/search",
@@ -98,16 +108,12 @@ class TestApiVersioning:
         assert "results" in response.json()["data"]
 
     def test_v2_search_post(self, client):
-        client.post(
-            "/v2/memories",
-            json={"content": "Test search content", "entity_id": "user_search", "content_type": "text"},
-        )
+        """POST /v2/search must 404: v2 routes were removed in v0.4.0."""
         response = client.post(
             "/v2/search",
             json={"q": "test", "entity_id": "user_search", "search_mode": "memory"},
         )
-        assert response.status_code == 200
-        assert "results" in response.json()["data"]
+        assert response.status_code == 404
 
     def test_nonexistent_version_returns_404(self, client):
         response = client.get("/v3/health")

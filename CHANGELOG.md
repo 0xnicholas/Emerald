@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
   - `.json`/`.csv` 文件扩展名加入上传 MIME 检测。
   - 默认提取器/分块器注册表加入 `json`/`csv`；注册表断言测试同步更新（README 承诺 vs 实现的持续守卫）。
 
+### Tests
+
+- **路由枚举适配 Starlette 1.x 惰性路由**（issue #2）— `include_router` 在 Starlette 1.x 下注册惰性 `_IncludedRouter`（无 `path` 属性），`app.routes` 简单过滤得到空集。`tests/api/test_route_completeness.py` 与 `tests/negative/test_no_internal_exposure.py` 改为递归展开惰性路由（`effective_candidates()`），在无引擎 stub 与有引擎两种形态下枚举实际路由面；v2 泄漏守卫从恒真断言修复为真实前缀检查。同步重新生成 `docs/api/openapi.yaml`（含 sources/spaces/extract-url 路由与 memories 的 patch/delete 方法），OpenAPI 漂移测试回归绿，`generate_openapi.py --check` 通过。
+- **清理过期 API 测试**（issue #3）— v0.4.0 下线 v2 路由后残留的 v2 断言（`test_api_versioning.py` 三处、`test_upload_authorization.py` 一处）改为断言 v2 返回 404 或删除；`/v1/files` 测试从偏移分页（`page`）签名迁移到游标分页（`page_token` + `page_size`），断言新响应结构（`pagination.next_page_token`/`has_more`），新增无效游标 token → 422 行为测试。产品路由代码零改动。
+
 ## [0.4.0] — 2026-07-03
 
 > 合并 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）全部工作项，发布 v0.4.0。M1 细节见 `git log --grep=feat\(m1\)`；M2 细节见 `git log --grep=feat\(m2\)`。本节仅列摘要。

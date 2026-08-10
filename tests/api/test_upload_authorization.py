@@ -1,6 +1,6 @@
 """Regression tests for the upload entity-authorization gap (P0 security fix).
 
-P0 issue: `POST /v1/upload` and `POST /v2/upload` did not call
+P0 issue: `POST /v1/upload` did not call
 `_authorize_entity(request, entity_id)`, allowing any authenticated API key
 with `write` permission to upload files into ANY entity namespace.
 
@@ -81,38 +81,6 @@ def test_upload_route_calls_authorize_entity_v1(engine):
     assert response.status_code == 403, (
         f"Expected 403 from authorization short-circuit, got {response.status_code}"
     )
-
-
-def test_upload_route_calls_authorize_entity_v2(engine):
-    """POST /v2/upload must also invoke _authorize_entity.
-
-    v2 is a re-export of v1, so the security check must carry over.
-    Patches the v1 module's symbol (since that's where the function body
-    actually executes) AND the v2 re-export (so we can prove the v2
-    module surfaces the helper, which downstream monitoring may rely on).
-    """
-    from fastapi import HTTPException
-    client = _make_authed_client(engine, "user_alice")
-    from emerald.api.routes.v1 import upload as v1_upload
-    from emerald.api.routes.v2 import upload as v2_upload
-
-    def _raise_403(request, entity_id):
-        raise HTTPException(status_code=403, detail="Entity not authorized")
-
-    # Patch BOTH: v1 (real function body) AND v2 (re-exported alias).
-    with patch.object(v1_upload, "_authorize_entity", side_effect=_raise_403) as v1_spy, \
-         patch.object(v2_upload, "_authorize_entity", side_effect=_raise_403) as _v2_spy, \
-         patch.object(v1_upload, "_get_minio_client") as minio_spy:
-        minio_spy.return_value = MagicMock()
-
-        files = {"file": ("hello.txt", io.BytesIO(b"hello"), "text/plain")}
-        data = {"entity_id": "user_bob"}
-        response = client.post("/v2/upload", files=files, data=data)
-
-    assert v1_spy.called, (
-        "POST /v2/upload did not invoke the underlying v1 _authorize_entity."
-    )
-    assert response.status_code == 403
 
 
 def test_upload_authorize_entity_raises_403_on_mismatch(engine):

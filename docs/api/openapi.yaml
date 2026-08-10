@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Emerald
   description: Memory and context infrastructure for AI agents
-  version: 0.4.0
+  version: 0.3.0
   contact:
     name: Emerald
     url: https://emerald.ai
@@ -60,6 +60,40 @@ paths:
                 type: object
                 additionalProperties: true
                 title: Response Get Memory V1 Memories  Memory Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - Memories
+      summary: Update Memory
+      description: Update a memory's content, summary, type, and/or confidence.
+      operationId: update_memory_v1_memories__memory_id__patch
+      parameters:
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemoryRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Update Memory V1 Memories  Memory Id  Patch
         '422':
           description: Validation Error
           content:
@@ -577,6 +611,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/extract-url:
+    post:
+      tags:
+      - Extract
+      summary: Extract Url
+      description: Extract title, description, favicon from a URL.
+      operationId: extract_url_v1_extract_url_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractUrlRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Extract Url V1 Extract Url Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/sessions:
     post:
       tags:
@@ -823,6 +885,301 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sources/connect:
+    post:
+      tags:
+      - Sources
+      summary: Create Connect Session
+      description: 'Open the account-linking flow: returns the hub''s auth link.
+
+
+        The end user is sent to ``auth_link_url``; after authorizing, the
+
+        hub delivers an ``account.connected`` event to the webhook endpoint
+
+        and the binding is created.'
+      operationId: create_connect_session_v1_sources_connect_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Create Connect Session V1 Sources Connect Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sources/webhook:
+    post:
+      tags:
+      - Sources
+      summary: Receive Webhook
+      description: 'Hub event delivery endpoint.
+
+
+        Signed by the hub (HMAC-SHA256 over the raw body); no API key — the
+
+        signature is the credential. Events trigger incremental ingestion.'
+      operationId: receive_webhook_v1_sources_webhook_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Receive Webhook V1 Sources Webhook Post
+  /v1/sources:
+    get:
+      tags:
+      - Sources
+      summary: List Sources
+      description: List source bindings for an entity.
+      operationId: list_sources_v1_sources_get
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Sources V1 Sources Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sources/refresh:
+    post:
+      tags:
+      - Sources
+      summary: Refresh Sources
+      description: 'Reconcile bindings with the hub: upsert newly authorized accounts.
+
+
+        Call this after the user returns from the hub''s auth link as a
+
+        belt-and-suspenders path (the ``account.connected`` webhook is the
+
+        primary one).'
+      operationId: refresh_sources_v1_sources_refresh_post
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Refresh Sources V1 Sources Refresh Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/sources/{binding_id}:
+    delete:
+      tags:
+      - Sources
+      summary: Delete Source
+      description: Remove a source binding (data stays in the graph; new syncs stop).
+      operationId: delete_source_v1_sources__binding_id__delete
+      parameters:
+      - name: binding_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Binding Id
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Delete Source V1 Sources  Binding Id  Delete
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/spaces:
+    get:
+      tags:
+      - Spaces
+      summary: List Spaces
+      description: List all spaces for an entity.
+      operationId: list_spaces_v1_spaces_get
+      parameters:
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Spaces V1 Spaces Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Spaces
+      summary: Create Space
+      description: Create a new space.
+      operationId: create_space_v1_spaces_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpaceCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Create Space V1 Spaces Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/spaces/{container_tag}:
+    patch:
+      tags:
+      - Spaces
+      summary: Update Space
+      description: Update a space's name and/or emoji.
+      operationId: update_space_v1_spaces__container_tag__patch
+      parameters:
+      - name: container_tag
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Container Tag
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpaceUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Update Space V1 Spaces  Container Tag  Patch
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Spaces
+      summary: Delete Space
+      description: Delete a space. Memories are detached (container_tag becomes null) by default.
+      operationId: delete_space_v1_spaces__container_tag__delete
+      parameters:
+      - name: container_tag
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Container Tag
+      - name: entity_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: detach_memories
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Detach Memories
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Delete Space V1 Spaces  Container Tag  Delete
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/health:
     get:
       tags:
@@ -945,6 +1302,13 @@ components:
           title: Confidence
           description: Override the LLM-assigned confidence score (0.0-1.0). Useful for human-verified
             or operator-curated entries.
+        container_tag:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Container Tag
+          description: Optional space/container tag to associate this memory with. Null (default) means
+            the memory belongs to no space.
         valid_until:
           anyOf:
           - type: string
@@ -995,6 +1359,32 @@ components:
       - file
       - entity_id
       title: Body_upload_file_v1_upload_post
+    ConnectRequest:
+      properties:
+        entity_id:
+          type: string
+          title: Entity Id
+          description: Entity that will own the binding
+        provider:
+          type: string
+          title: Provider
+          description: Provider key on the hub (googledrive, notion, gmail, github)
+      type: object
+      required:
+      - entity_id
+      - provider
+      title: ConnectRequest
+    ExtractUrlRequest:
+      properties:
+        url:
+          type: string
+          title: Url
+          examples:
+          - https://example.com/article
+      type: object
+      required:
+      - url
+      title: ExtractUrlRequest
     HTTPValidationError:
       properties:
         detail:
@@ -1160,6 +1550,79 @@ components:
       - q
       - entity_id
       title: SearchRequest
+    SpaceCreateRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+          examples:
+          - Work
+        emoji:
+          type: string
+          maxLength: 10
+          title: Emoji
+          default: 📁
+          examples:
+          - 💼
+        entity_id:
+          type: string
+          title: Entity Id
+          examples:
+          - user_123
+      type: object
+      required:
+      - name
+      - entity_id
+      title: SpaceCreateRequest
+    SpaceUpdateRequest:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
+          title: Name
+        emoji:
+          anyOf:
+          - type: string
+            maxLength: 10
+          - type: 'null'
+          title: Emoji
+      type: object
+      title: SpaceUpdateRequest
+    UpdateMemoryRequest:
+      properties:
+        content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content
+          examples:
+          - Updated content
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+          examples:
+          - Updated summary
+        memory_type:
+          anyOf:
+          - type: string
+            pattern: ^(fact|preference|episodic)$
+          - type: 'null'
+          title: Memory Type
+        confidence:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Confidence
+      type: object
+      title: UpdateMemoryRequest
     ValidationError:
       properties:
         loc:
