@@ -5,6 +5,11 @@
 > （P1×3）与核心管线既有缺陷（P0×3）无法端到端跑通，需修复后复验。
 > 验证方式：真实凭据联调（StackOne 单 key Basic 模式）+ 明确标注的 mock 替代。
 > **本票不修改产品代码**（仅验证与记录）；验证脚本见文末附录。
+>
+> **⚠️ 2026-08-10 决策（supersede）**：**不再进行真实 StackOne 凭据联调**。同等功能的
+> 内部连接中心项目将接入（经 `ConnectionHub` 抽象替换，见 `emerald/sources/factory.py`），
+> 真实账户端到端复验（S1/S5/S6/S7）以 **mock 测试为验收基准**。本文档保留 2026-08-09
+> 的真实凭据验证作为历史记录；后续所有验证均以 `tests/sources/` 的 mock 套件为准。
 
 ---
 
@@ -154,6 +159,8 @@ Neo4j、搜索）。FakeHub 仅替换 hub 的 HTTP 往返，不改变适配/摄�
 7. **StackOne 账户缺 provider auth config**：`googledrive does not have any default auth config`
    → 真实 OAuth 链路无法完成，需在 StackOne 控制台配置 connector auth config 后复验
    （上轮会话已知，Pilot 验收的硬前提）。
+   **状态（2026-08-10）**：**不再阻塞**。真实 StackOne 联调取消（内部同等功能项目将
+   接入连接中心），验收以 mock 测试为基准，本条不构成任何遗留条件。
 
 ---
 
@@ -167,14 +174,15 @@ Neo4j、搜索）。FakeHub 仅替换 hub 的 HTTP 往返，不改变适配/摄�
 - ❌ **未通过**：同步端到端（事件→摄入→管线→可检索）。根因是 P1-1（Pilot 缺陷）
   与 P0-1/P0-2（核心管线既有缺陷），叠加外部阻塞 B7（StackOne 侧配置）。
 
-**解除 #7（T4b 自研连接器退役）阻塞的条件**：
-1. 修复 P1-1（entity_id 约定）→ 事件驱动摄入能进入管线；
-2. 修复 P0-1/P0-2/P0-3（管线链 + fast-lane + worker 循环）→ 内容可检索；
-3. 复验 S1/S5/S6/S7 全绿；
-4. StackOne 侧配置 provider auth config（外部，可与上述并行）。
+**解除 #7（T4b 自研连接器退役）阻塞的条件（2026-08-10 更新）**：
+1. 修复 P1-1（entity_id 约定）→ 事件驱动摄入能进入管线；✅ 已修复
+2. 修复 P0-1/P0-2/P0-3（管线链 + fast-lane + worker 循环）→ 内容可检索；✅ 已修复
+3. 复验 S1/S5/S6/S7 全绿；✅ 以 mock 测试复验通过（§7），不再要求真实账户
+4. ~~StackOne 侧配置 provider auth config（外部）~~ **已取消**：真实 StackOne 联调
+   不再进行（2026-08-10 决策，内部同等功能项目将接入连接中心）
 
 P1-2/P1-3 不阻塞退役（refresh 路由与错误路径独立于自研连接器删除范围），但应在退役前
-作为独立修复项排期。
+作为独立修复项排期。✅ 已修复（2026-08-10，§3 P1）。
 
 ---
 
@@ -200,6 +208,9 @@ P1-2/P1-3 不阻塞退役（refresh 路由与错误路径独立于自研连接�
 - `verify_connect_502.py` — FailHub 复现 P1-3（502 路径 TypeError）
 - `verify_chain_real.py` — P0 修复后真实 worker 全链复验（§6）
 - `probe_*.py` — 辅助探针（entity 约定、fast-lane、日志级别）
+
+> 2026-08-10 起，`verify_live.py` 不再使用（真实 StackOne 联调取消）；其余脚本的
+> 验证内容已由 `tests/sources/` 的 mock 测试固化，脚本仅作历史复现参考。
 
 复现环境：本地 PG（migration 008）+ Redis(6380) + Neo4j(docker) + Celery worker（prefork）。
 
@@ -231,8 +242,9 @@ StackOne 侧 auth config 配置（外部），然后复验同步路径 S1/S5/S6/
 
 ## 7. P1 修复后复验（2026-08-10）
 
-P1-1/P1-2/P1-3 修复后，以测试级复验（真实 StackOne 联调仍受外部 auth config
-阻塞，见 §3 外部阻塞）：
+P1-1/P1-2/P1-3 修复后，以 mock 测试复验（2026-08-10 决策：真实 StackOne 联调取消，
+验收基准为 `tests/sources/` mock 套件；§6 的管线链复验用 FakeHub 内容源 + 真实
+worker/DB，不依赖 StackOne 账户）：
 
 | 检查项 | 结果 | 证据 |
 |---|---|---|
@@ -246,5 +258,8 @@ P1-1/P1-2/P1-3 修复后，以测试级复验（真实 StackOne 联调仍受外�
 **新增测试 10 个**（adapter×2、sync_tasks×2、binding_store×2、hub_client×2、routes×2）。
 全量基线：`818 passed / 42 failed`（42 与 §5 文档化基线逐项一致，无新增失败）。
 
-**P1 全部关闭后**，解除 #7 的剩余条件仅剩：StackOne 侧 provider auth config 配置
-（外部，§3 外部阻塞）+ 真实账户端到端复验 S1/S5/S6/S7。
+**P1 全部关闭后**，解除 #7 的剩余条件全部满足：
+- ~~StackOne 侧 provider auth config 配置~~（外部）**已取消**（2026-08-10 决策，
+  真实 StackOne 联调不再进行，内部同等功能项目将接入连接中心）；
+- ~~真实账户端到端复验 S1/S5/S6/S7~~ **已由 mock 测试替代**（本 § + §6 真实
+  worker 全链复验，内容源为 FakeHub，不依赖任何 StackOne 账户）。
