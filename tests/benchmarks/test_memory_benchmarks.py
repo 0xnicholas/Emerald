@@ -18,10 +18,12 @@ from emerald.core.engine import MemoryEngine
 from emerald.core.extractor import ExtractorRegistry
 from emerald.core.graph import GraphStore
 from emerald.core.profile import ProfileManager
+from emerald.core.relationship import RelationshipEngine
 from emerald.core.search import SearchMode, SearchOrchestrator
 from emerald.core.vector import VectorStore
 from emerald.pipeline.chunking.text import TextChunker
 from emerald.pipeline.extraction.text import TextExtractor
+from scripts.run_benchmarks import _CONTRADICTION_CHAINS
 
 
 @pytest.fixture
@@ -369,3 +371,147 @@ class TestEntityIsolation:
 
         assert alice_profile.memory_count == 10
         assert bob_profile.memory_count == 5
+
+
+# =============================================================
+# Benchmark 7: Contradiction chain (multi-round supersession)
+# Multi-round supersession is the depth dimension of Temporal
+# Updates: the same fact is contradicted 5 rounds in a row.
+# =============================================================
+
+# 6 steps = 5 supersession rounds; every round fully replaces the
+# previous state of the same fact. Rule-based classification (mock
+# mode) deterministically emits UPDATES: same structure template with
+# a different filler (employer / city / language), numeric value
+# change (budget), or explicit contradiction wording (drink).
+# The corpus lives in scripts/run_benchmarks.py (_CONTRADICTION_CHAINS);
+# this is chain_employer, imported so corpus edits don't drift apart.
+_CHAIN_STEPS = _CONTRADICTION_CHAINS[0]["steps"]
+
+
+class TestContradictionChain:
+    """Multi-round supersession: old facts invalidated, final fact recalled."""
+
+    @pytest.mark.asyncio
+    async def test_five_round_supersession_flips_is_latest(self, engine):
+        """After 5 consecutive supersessions only the final fact is latest.
+
+        Every superseded fact flips is_latest=False and records its
+        replacement (replaced_by → next step). The final fact stays
+        is_latest=True with no replacement.
+        """
+        entity = "chain_unit_flip"
+        ids = []
+        for step in _CHAIN_STEPS:
+            result = await engine.add(step, entity_id=entity, content_type="text")
+            ids.append(result.memory_ids[0])
+
+        assert len(ids) == 6
+        for i in range(5):
+            mem = await engine.graph.get_memory(ids[i])
+            assert mem["is_latest"] is False, f"step {i + 1} should be superseded"
+            assert mem["replaced_by"] == ids[i + 1], (
+                f"step {i + 1} should point to step {i + 2}"
+            )
+
+        final = await engine.graph.get_memory(ids[5])
+        assert final["is_latest"] is True
+        assert final["replaced_by"] is None
+
+        latest = await engine.graph.list_latest_memories(entity)
+        assert len(latest) == 1
+        assert latest[0]["content"] == _CHAIN_STEPS[-1]
+
+    @pytest.mark.asyncio
+    async def test_superseded_facts_excluded_from_recall(self, engine):
+        """Search recalls the final fact at rank 1, never the superseded ones.
+
+        Exact-text queries are deterministic under mock embeddings: the
+        query embedding matches the identical memory exactly, while
+        superseded memories are filtered by is_latest before ranking.
+        """
+        entity = "chain_unit_recall"
+        for step in _CHAIN_STEPS:
+            await engine.add(step, entity_id=entity, content_type="text")
+
+        orchestrator = SearchOrchestrator(
+            graph=engine.graph, vector=engine.vector, embedder=engine.embedder,
+        )
+
+        # Latest fact is recalled at rank 1 by its exact-text query
+        results = await orchestrator.search(
+            _CHAIN_STEPS[-1], entity_id=entity,
+            search_mode=SearchMode.MEMORY, top_k=5,
+        )
+        assert results.results, "expected at least one result"
+        assert results.results[0].content == _CHAIN_STEPS[-1]
+
+        # Superseded facts are never recalled by their exact text
+        for step in _CHAIN_STEPS[:-1]:
+            results = await orchestrator.search(
+                step, entity_id=entity,
+                search_mode=SearchMode.MEMORY, top_k=5,
+            )
+            assert not any(step in r.content for r in results.results), (
+                f"superseded fact should not be recalled: {step}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_edges_created_per_round(self, engine):
+        """Every supersession round creates exactly one UPDATES edge."""
+        entity = "chain_unit_edges"
+        ids = []
+        for step in _CHAIN_STEPS:
+            result = await engine.add(step, entity_id=entity, content_type="text")
+            ids.append(result.memory_ids[0])
+
+        # Each superseded fact has exactly one UPDATES edge from its successor
+        for i in range(5):
+            rels = await engine.graph.get_relationships_to([ids[i]])
+            assert rels.get(ids[i]) == [ids[i + 1]], (
+                f"step {i + 1} should have an UPDATES edge from step {i + 2}"
+            )
+
+        # The final fact supersedes nothing
+        rels = await engine.graph.get_relationships_to([ids[5]])
+        assert ids[5] not in rels
+
+    @pytest.mark.asyncio
+    async def test_scenario_is_deterministic_under_mock(self):
+        """The 7th benchmark dimension itself is deterministic under mock
+        embeddings: all four rates are exactly 1.0 and it needs no API.
+
+        Uses a rule-only relationship engine (use_llm=False) so the
+        determinism guarantee is unconditional, even with API keys set.
+        """
+        from scripts.run_benchmarks import (
+            BenchConfig,
+            benchmark_contradiction_chain,
+        )
+
+        extractors = ExtractorRegistry()
+        extractors.register("text", TextExtractor())
+        chunkers = ChunkerRegistry()
+        chunkers.register("text", TextChunker())
+        graph = GraphStore(use_db=False)
+        vector = VectorStore(use_db=False)
+        engine = MemoryEngine(
+            extractor_registry=extractors,
+            chunker_registry=chunkers,
+            embedder=MockEmbeddingProvider(dimension=128),
+            graph=graph,
+            vector=vector,
+            relationships=RelationshipEngine(graph=graph, use_llm=False),
+            use_db=False,
+        )
+
+        config = BenchConfig(use_real_embeddings=False, embedding_dim=128)
+        result = await benchmark_contradiction_chain(engine, config)
+
+        assert result.name == "Contradiction Chain"
+        assert result.metrics["latest_recall@1"] == 1.0
+        assert result.metrics["expired_exclusion_rate"] == 1.0
+        assert result.metrics["is_latest_flip_rate"] == 1.0
+        assert result.metrics["update_relation_rate"] == 1.0
+        assert result.metrics["overall_accuracy"] == 1.0
+        assert result.passed is True

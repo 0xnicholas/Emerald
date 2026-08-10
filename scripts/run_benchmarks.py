@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emerald Memory Benchmark Suite v2.
 
-Evaluates Emerald's memory engine across six dimensions aligned with
+Evaluates Emerald's memory engine across seven dimensions aligned with
 LongMemEval, LoCoMo, and ConvoMem benchmarks.
 
 Benchmarks:
@@ -11,6 +11,7 @@ Benchmarks:
   4. Profile Accuracy   — LoCoMo persona consistency     (50 facts → profile)
   5. Distractor Resist  — ConvoMem multi-message         (5 targets + 50 noise)
   6. Forgetting Correct — time + noise + decay            (30 mixed facts)
+  7. Contradiction Chain — multi-round supersession      (5 chains × 5 rounds)
 
 Output:
   • Console summary table
@@ -114,16 +115,6 @@ class BenchReport:
 # Engine factory
 # ═══════════════════════════════════════════════════════════════════════════
 
-
-def _make_engine(config: BenchConfig, use_llm: bool = False) -> MemoryEngine:
-    """Build a MemoryEngine configured for benchmarking."""
-    extractors = ExtractorRegistry()
-    extractors.register("text", TextExtractor())
-    extractors.register("conversation", TextExtractor())
-
-    chunkers = ChunkerRegistry()
-    chunkers.register("text", TextChunker())
-    chunkers.register("conversation", TextChunker())
 
 def _make_embedder(config: BenchConfig) -> EmbeddingProvider:
     """Choose the embedding provider for a benchmark run.
@@ -1043,6 +1034,190 @@ async def benchmark_forgetting_correctness(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Benchmark 7: Contradiction Chain (multi-round supersession)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 5 chains × 6 steps = 5 supersession rounds per chain.  Every round fully
+# replaces the previous state of the same fact — the depth dimension of
+# Temporal Updates.  Steps are engineered so the rule-based classifier
+# (mock mode) deterministically emits UPDATES every round:
+#
+#   • employer / city / language — same structure template, different filler
+#     ("Alice 在 * 工作", "Bob 住在 *", "Carol 用 * 写后端")
+#   • budget — numeric value change on the same unit (万元)
+#   • drink — explicit contradiction wording (不再 / 现在 / 换了 / 改用)
+_CONTRADICTION_CHAINS: list[dict[str, Any]] = [
+    {
+        "entity": "chain_employer",
+        "steps": [
+            "Alice 在 Google 工作",
+            "Alice 在 Meta 工作",
+            "Alice 在 Amazon 工作",
+            "Alice 在 Microsoft 工作",
+            "Alice 在 Apple 工作",
+            "Alice 在 腾讯 工作",
+        ],
+    },
+    {
+        "entity": "chain_city",
+        "steps": [
+            "Bob 住在 北京",
+            "Bob 住在 上海",
+            "Bob 住在 深圳",
+            "Bob 住在 杭州",
+            "Bob 住在 西雅图",
+            "Bob 住在 旧金山",
+        ],
+    },
+    {
+        "entity": "chain_language",
+        "steps": [
+            "Carol 用 Python 写后端",
+            "Carol 用 Go 写后端",
+            "Carol 用 Rust 写后端",
+            "Carol 用 Java 写后端",
+            "Carol 用 C++ 写后端",
+            "Carol 用 TypeScript 写后端",
+        ],
+    },
+    {
+        "entity": "chain_budget",
+        "steps": [
+            "Dave 的项目预算是 100 万元",
+            "Dave 的项目预算是 80 万元",
+            "Dave 的项目预算是 120 万元",
+            "Dave 的项目预算是 90 万元",
+            "Dave 的项目预算是 60 万元",
+            "Dave 的项目预算是 150 万元",
+        ],
+    },
+    {
+        "entity": "chain_drink",
+        "steps": [
+            "Eve 喜欢喝咖啡",
+            "Eve 不再喝咖啡了",
+            "Eve 现在改喝绿茶了",
+            "Eve 换了饮品，改喝红茶",
+            "Eve 改用白开水",
+            "Eve 不再喝白开水了",
+        ],
+    },
+]
+
+
+async def benchmark_contradiction_chain(
+    engine: MemoryEngine, config: BenchConfig
+) -> BenchResult:
+    """Benchmark 7: Contradiction Chain — multi-round supersession.
+
+    Feeds 5 chains × 6 steps (5 consecutive supersessions of the same
+    fact).  After every round verifies:
+    - the superseded fact's is_latest flipped to False with replaced_by set
+    - an UPDATES edge exists from the new fact to the old fact
+    - search recalls the final fact at rank 1 and never recalls any
+      superseded fact (exact-text queries → deterministic under mock)
+    """
+    orchestrator = SearchOrchestrator(
+        graph=engine.graph, vector=engine.vector, embedder=engine.embedder,
+    )
+
+    total_chains = len(_CONTRADICTION_CHAINS)
+    total_rounds = 0
+
+    flip_correct = 0
+    edge_correct = 0
+    final_recalled = 0
+    expired_excluded = 0
+    total_expired_queries = 0
+
+    for chain in _CONTRADICTION_CHAINS:
+        entity = chain["entity"]
+        steps = chain["steps"]
+        rounds = len(steps) - 1
+        total_rounds += rounds
+
+        ids: list[str] = []
+        for step in steps:
+            result = await engine.add(step, entity_id=entity, content_type="text")
+            # One step → exactly one memory (single chunk, no dedup on these
+            # corpus steps); assert so chain indexing below cannot silently
+            # misalign if a future step ever yields a different count.
+            assert len(result.memory_ids) == 1, (
+                f"{entity}: step {step!r} produced {len(result.memory_ids)} memories"
+            )
+            ids.extend(result.memory_ids)
+
+        # 1. is_latest flip + replaced_by chain (one per supersession round)
+        for i in range(rounds):
+            old = await engine.graph.get_memory(ids[i])
+            if (
+                old
+                and old.get("is_latest") is False
+                and old.get("replaced_by") == ids[i + 1]
+            ):
+                flip_correct += 1
+
+        # 2. UPDATES edge for every supersession round (new → old)
+        superseded_ids = ids[:-1]
+        rels = await engine.graph.get_relationships_to(superseded_ids)
+        for i in range(rounds):
+            if rels.get(ids[i]) == [ids[i + 1]]:
+                edge_correct += 1
+
+        # 3. Recall: final fact top-1, superseded facts never recalled.
+        #    Exact-text queries are deterministic under mock embeddings
+        #    (identical text → identical vector → cosine 1.0) and the
+        #    is_latest filter removes superseded facts before ranking.
+        final_step = steps[-1]
+        results = await orchestrator.search(
+            final_step, entity_id=entity,
+            search_mode=SearchMode.MEMORY, top_k=5,
+        )
+        if results.results and results.results[0].content == final_step:
+            final_recalled += 1
+
+        for step in steps[:-1]:
+            total_expired_queries += 1
+            results = await orchestrator.search(
+                step, entity_id=entity,
+                search_mode=SearchMode.MEMORY, top_k=5,
+            )
+            if not any(step in r.content for r in results.results):
+                expired_excluded += 1
+
+    latest_recall = final_recalled / total_chains
+    expired_exclusion = expired_excluded / total_expired_queries
+    is_latest_flip = flip_correct / total_rounds
+    update_edges = edge_correct / total_rounds
+    overall = (latest_recall + expired_exclusion + is_latest_flip + update_edges) / 4
+
+    return BenchResult(
+        name="Contradiction Chain",
+        aligns_with="Custom — Multi-round supersession (Temporal Updates depth)",
+        description=(
+            f"{total_chains} chains × 5 supersession rounds (6 steps each). "
+            f"embed={'real' if config.use_real_embeddings else 'mock'}"
+        ),
+        metrics={
+            "latest_recall@1": round(latest_recall, 3),
+            "expired_exclusion_rate": round(expired_exclusion, 3),
+            "is_latest_flip_rate": round(is_latest_flip, 3),
+            "update_relation_rate": round(update_edges, 3),
+            "overall_accuracy": round(overall, 3),
+            "chains_tested": total_chains,
+            "total_supersessions": total_rounds,
+        },
+        passed=overall >= 0.95,
+        details={
+            "final_recalled": final_recalled,
+            "expired_excluded": expired_excluded,
+            "is_latest_flips_correct": flip_correct,
+            "update_edges_correct": edge_correct,
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1129,6 +1304,7 @@ async def main() -> None:
         ("Profile Accuracy", benchmark_profile_accuracy),
         ("Distractor Resistance", benchmark_distractor_resistance),
         ("Forgetting Correctness", benchmark_forgetting_correctness),
+        ("Contradiction Chain", benchmark_contradiction_chain),
     ]
 
     passed_count = 0
@@ -1137,7 +1313,7 @@ async def main() -> None:
     for name, fn in benchmarks:
         total_count += 1
         print(f"\n{'─' * 50}")
-        print(f"  [{total_count}/6] {name}...")
+        print(f"  [{total_count}/7] {name}...")
         t0 = time.perf_counter()
         result = await fn(engine, config)
         elapsed = time.perf_counter() - t0
@@ -1172,7 +1348,7 @@ async def main() -> None:
     accuracies = []
     for r in report.results:
         for k, v in r.metrics.items():
-            if k.endswith("accuracy") or k.endswith("_rate") or k in ("precision@1", "recall@5", "mrr", "coverage", "recall@3"):
+            if k.endswith("accuracy") or k.endswith("_rate") or k in ("precision@1", "recall@5", "mrr", "coverage", "recall@3", "latest_recall@1"):
                 if isinstance(v, (int, float)):
                     accuracies.append(float(v))
 

@@ -24,6 +24,11 @@ All notable changes to this project will be documented in this file.
 
 - **路由枚举适配 Starlette 1.x 惰性路由**（issue #2）— `include_router` 在 Starlette 1.x 下注册惰性 `_IncludedRouter`（无 `path` 属性），`app.routes` 简单过滤得到空集。`tests/api/test_route_completeness.py` 与 `tests/negative/test_no_internal_exposure.py` 改为递归展开惰性路由（`effective_candidates()`），在无引擎 stub 与有引擎两种形态下枚举实际路由面；v2 泄漏守卫从恒真断言修复为真实前缀检查。同步重新生成 `docs/api/openapi.yaml`（含 sources/spaces/extract-url 路由与 memories 的 patch/delete 方法），OpenAPI 漂移测试回归绿，`generate_openapi.py --check` 通过。
 - **清理过期 API 测试**（issue #3）— v0.4.0 下线 v2 路由后残留的 v2 断言（`test_api_versioning.py` 三处、`test_upload_authorization.py` 一处）改为断言 v2 返回 404 或删除；`/v1/files` 测试从偏移分页（`page`）签名迁移到游标分页（`page_token` + `page_size`），断言新响应结构（`pagination.next_page_token`/`has_more`），新增无效游标 token → 422 行为测试。产品路由代码零改动。
+- **矛盾链对抗场景（第 7 维度）**（issue #17，T1）— 基准套件新增 Contradiction Chain 维度，补足 Temporal Updates 的深度覆盖：
+  - `scripts/run_benchmarks.py` 新增第 7 个场景函数 `benchmark_contradiction_chain`（与现有场景同构：同签名、同 `BenchResult` 返回）：5 条链 × 5 轮连续取代（6 步/链），每轮构造对同一事实的完全矛盾新事实（结构模板换填充 / 数值变更 / 矛盾措辞三类语料，规则分类器在 mock 下确定性输出 UPDATES）。
+  - 每轮验证四件事：旧事实 `is_latest` 翻转为 False 且 `replaced_by` 指向新事实、UPDATES 边从新事实指向旧事实、最新事实按精确文本查询命中 top-1、过期事实不再被召回。指标：`latest_recall@1` / `expired_exclusion_rate` / `is_latest_flip_rate` / `update_relation_rate` / `overall_accuracy`（mock 下全部 1.0，无 API 依赖）。
+  - 报告链路接入：JSON 报告（7 维度）与 `benchmark_to_markdown.py` 渲染（含双模型对照模式的每维度列）均包含该维度得分与通过状态。
+  - 单元测试（`tests/benchmarks/test_memory_benchmarks.py` 新增 `TestContradictionChain`）：5 轮取代后 is_latest 翻转与 replaced_by 链、召回正确性（最终事实 top-1、过期事实排除）、每轮恰好一条 UPDATES 边、场景函数在 mock 嵌入下确定性（四项指标 == 1.0）。
 
 ## [0.4.0] — 2026-07-03
 
