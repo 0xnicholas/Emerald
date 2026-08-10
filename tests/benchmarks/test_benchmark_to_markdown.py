@@ -231,6 +231,8 @@ def test_render_absolute_three_columns_and_gates_pass():
         "| Mock 基线 | Δ |" in md
     )
     assert "| Fact Recall | 0.800 | 0.900 | 0.133 | +0.100 |" in md
+    # Δ direction is documented in the report
+    assert "Δ = 3-large 分数 − 3-small 分数" in md
     # Dual-gate conclusions: both models pass both gates here
     assert "## 双门槛结论" in md
     assert "发布门槛" in md
@@ -287,6 +289,8 @@ def test_render_absolute_missing_large_evaluates_small_only():
     assert "—" in md
     assert "✅ 通过" in md
     assert "未评估" in md
+    # No Δ-direction note without a second model
+    assert "Δ = 3-large 分数" not in md
 
 
 def test_render_absolute_stale_baseline_raises():

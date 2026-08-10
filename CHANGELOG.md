@@ -38,7 +38,7 @@ All notable changes to this project will be documented in this file.
   - 文档同步：`docs/roadmap.md` 双门槛公式由过时的「6 维加权均分」更正为 #16/#19 决议的「7 维等权均分 ≥ 70%」（等权默认）；`_pick_key_metric` 升为公共 `pick_key_metric`（跨脚本契约）。
 - **绝对分报告落地接线与 README 死链修复**（issue #20，T4）— 报告生成接入双门槛评估：
   - `scripts/benchmark_to_markdown.py` 新增 `--absolute` 模式（`--absolute --small <json> [--large <json>] --baseline <mock.json> --output <md>`）：渲染日期命名绝对分报告——每维度三列对比（3-small / 3-large / mock 基线 + Δ）、双门槛结论（发布门槛逐维对比 + 通过门槛矛盾链/均分明细，复用 `evaluate_gates` 逐模型独立判定，两模型各自一行结论）、矛盾链维度说明、独立侧套件引用（`tests/quality/temporal/`）与 ADR-0001 引用；`--large` 缺失时该列以 — 呈现且仅评估 small 门槛；基线维度集合不一致时抛 `GateEvaluationError` 明确报错（不静默漏列），CLI 退出码 2。
-  - `scripts/run_real_benchmarks.sh` 接线：跑分后自动生成 `docs/benchmarks/absolute-scores-<YYYY-MM-DD>.md`（日期命名、可多期共存、可回溯）；中间产物（双列对照与 DeepSeek 报告）改输出到 gitignored 的 `reports/`，不再污染 `docs/`；无 `OPENAI_API_KEY`（provider factory 回退，非真实 OpenAI 嵌入）时跳过绝对分报告并告警；结尾打印入库提醒（审阅 → git add → README 加链接）。
+  - `scripts/run_real_benchmarks.sh` 接线：跑分后自动生成 `docs/benchmarks/absolute-scores-<YYYY-MM-DD>.md`（日期命名、可多期共存、可回溯）；中间产物（双列对照、DeepSeek 报告，及 CI 的 mock-results.md）统一输出到 gitignored 的 `reports/`，不再污染 `docs/`；无 `OPENAI_API_KEY`（provider factory 回退，非真实 OpenAI 嵌入）时跳过绝对分报告并告警；结尾打印入库提醒（审阅 → git add → README 加链接）。
   - `docs/benchmarks/README.md`「已发布的报告」死链清理：移除从未生成的 `mock-results.md` / `real-llm-results.md` / `real-llm-deepseek-results.md` 三个链接，改链已入库的 `mock-baseline.json`，写明绝对分报告发布流程；真实嵌入跑分不进 CI，由维护者手动跑并提交入库。
   - 渲染层单元测试（`tests/benchmarks/test_benchmark_to_markdown.py` 新增 6 例）：三列对比 + 双门槛结论渲染 / 单模型门槛失败点名（含数字）/ large 缺失容错 / 基线缺维度报错 / CLI `--absolute` 写文件 / 基线不匹配退出码 2。
 

@@ -119,7 +119,7 @@ jobs:
       - name: Convert benchmark to Markdown
         run: |
           LATEST=$(ls -1t reports/benchmark-*.json | head -1)
-          python scripts/benchmark_to_markdown.py "$LATEST" docs/benchmarks/mock-results.md
+          python scripts/benchmark_to_markdown.py "$LATEST" reports/mock-results.md
 
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
@@ -128,7 +128,7 @@ jobs:
           name: benchmark-report
           path: |
             reports/benchmark-*.json
-            docs/benchmarks/mock-results.md
+            reports/mock-results.md
 
       - name: Check benchmark pass rate
         run: |

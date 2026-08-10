@@ -247,6 +247,8 @@ def render_absolute(
             f"| {name} | {small_cell} | {large_cell} | {base_cell} | {diff} |"
         )
     lines.append("")
+    if large is not None:
+        lines.append("Δ = 3-large 分数 − 3-small 分数。\n")
 
     # ── Dual-gate conclusions ────────────────────────────────────────────
     lines.append("## 双门槛结论\n")

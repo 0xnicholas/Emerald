@@ -51,7 +51,7 @@ python scripts/run_benchmarks.py --real --llm
 
 ## 已发布的报告
 
-- [Mock 嵌入基线](./mock-baseline.json) — 已入库对比基线，双门槛评估（发布门槛 / 通过门槛）同源；由 CI mock 跑分维护（`python scripts/run_benchmarks.py --mock` 后 `cp reports/benchmark-<ts>.json docs/benchmarks/mock-baseline.json`）
+- [Mock 嵌入基线](./mock-baseline.json) — 已入库对比基线，双门槛评估（发布门槛 / 通过门槛）同源；由维护者按需更新（`python scripts/run_benchmarks.py --mock` 后 `cp reports/benchmark-<ts>.json docs/benchmarks/mock-baseline.json`）
 
 绝对分报告按日期命名入库（`absolute-scores-<YYYY-MM-DD>.md`，可多期共存、可回溯），由维护者手动跑真实嵌入后提交：
 
@@ -59,7 +59,7 @@ python scripts/run_benchmarks.py --real --llm
 2. `./scripts/run_real_benchmarks.sh` — 生成 `docs/benchmarks/absolute-scores-<date>.md`（每维度 3-small / 3-large / mock 基线三列 + 双门槛结论）
 3. 审阅报告与门槛结论，`git add` 提交，并把链接加进本节
 
-> 历史死链已移除（issue #20）：`mock-results.md` / `real-llm-results.md` / `real-llm-deepseek-results.md` 三个文件从未生成，其链接已删除；对应中间产物改由脚本输出到 gitignored 的 `reports/`，`docs/benchmarks/` 只保留可回溯的日期命名报告。
+> 历史死链已移除（issue #20）：`mock-results.md` / `real-llm-results.md` / `real-llm-deepseek-results.md` 三个文件从未入库（CI 每轮 mock 跑分都会重新生成 `mock-results.md`，但从不提交），其链接已删除；中间产物统一由 CI 与脚本输出到 gitignored 的 `reports/`，`docs/benchmarks/` 只保留可回溯的入库基线与日期命名报告。
 
 ## 已知局限
 
