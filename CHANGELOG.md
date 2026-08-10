@@ -50,6 +50,10 @@ All notable changes to this project will be documented in this file.
   - `docs/benchmarks/README.md`「已发布的报告」死链清理：移除从未生成的 `mock-results.md` / `real-llm-results.md` / `real-llm-deepseek-results.md` 三个链接，改链已入库的 `mock-baseline.json`，写明绝对分报告发布流程；真实嵌入跑分不进 CI，由维护者手动跑并提交入库。
   - 渲染层单元测试（`tests/benchmarks/test_benchmark_to_markdown.py` 新增 6 例）：三列对比 + 双门槛结论渲染 / 单模型门槛失败点名（含数字）/ large 缺失容错 / 基线缺维度报错 / CLI `--absolute` 写文件 / 基线不匹配退出码 2。
 
+### Fixed
+
+- **MIME 解析一致性：text/markdown 提取器缺口**（issue #4）— `text/markdown`（及 `application/markdown`）经 MIME 解析到 `markdown` 后无对应提取器，MIME 路径摄入在提取阶段抛 `UnsupportedContentType`。修复：默认提取器注册表补注册 `markdown → TextExtractor`（与 json/csv 同款先例；Markdown 结构由 `MarkdownChunker` 负责，提取阶段为纯文本）。注册表守卫测试的 extractor 类型集合同步包含该别名；新增 `text/markdown` 提取 + 按标题层级分块（H1/H2 分离断言）与 MIME 族别名（`text/markdown`、`application/markdown`）用例。无新增公共 API 面；README 内容类型计数 9→10 对齐。
+
 ## [0.4.0] — 2026-07-03
 
 > 合并 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）全部工作项，发布 v0.4.0。M1 细节见 `git log --grep=feat\(m1\)`；M2 细节见 `git log --grep=feat\(m2\)`。本节仅列摘要。

@@ -321,7 +321,7 @@ docker compose up -d mcp
 | 模块 | 状态 | 说明 |
 |---|---|---|
 | 文本管线 | ✅ 完整 | 提取→分块→嵌入→索引，端到端可工作 |
-| 全内容类型 | ✅ 完整 | 9 种 extractor + 7 种 chunker（含 JSON/CSV 结构化分块），含优雅降级 |
+| 全内容类型 | ✅ 完整 | 10 种 extractor + 7 种 chunker（含 JSON/CSV 结构化分块与 text/markdown 别名），含优雅降级 |
 | 关系推断引擎 | ✅ 完整 | UPDATES / EXTENDS / DERIVES_FROM 自动分类并写入图谱 |
 | 用户画像 | ✅ 完整 | 静态+动态事实，Redis 缓存，< 50ms 冷启动 |
 | 混合搜索 | ✅ 完整 | Memory + RAG 合并，支持重排序和查询改写 |

@@ -25,6 +25,10 @@ def get_default_registry() -> ExtractorRegistry:
     # Structured data (JSON/CSV) is plain text — handled by the text extractor.
     registry.register("json", TextExtractor())
     registry.register("csv", TextExtractor())
+    # Markdown structure belongs to the MarkdownChunker; at extraction stage
+    # markdown is plain text, so the text extractor covers it (issue #4 —
+    # text/markdown resolves to "markdown" via MIME but had no extractor).
+    registry.register("markdown", TextExtractor())
     return registry
 
 
