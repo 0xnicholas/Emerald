@@ -17,9 +17,11 @@ Output:
   • JSON report: reports/benchmark-YYYYMMDD-HHMMSS.json
 
 Usage:
-    python scripts/run_benchmarks.py               # mock embeddings (fast, CI)
-    python scripts/run_benchmarks.py --real         # OpenAI embeddings (semantic)
-    python scripts/run_benchmarks.py --real --llm   # + LLM relationship classification
+    python scripts/run_benchmarks.py                      # mock embeddings (fast, CI)
+    python scripts/run_benchmarks.py --real               # OpenAI embeddings (semantic)
+    python scripts/run_benchmarks.py --real --embedding-model text-embedding-3-large
+                                                          # explicit embedding model
+    python scripts/run_benchmarks.py --real --llm         # + LLM relationship classification
 
 Note: This script now uses real embeddings by default when OPENAI_API_KEY
 is available. Use --mock to force deterministic mock embeddings.
@@ -72,6 +74,9 @@ class BenchConfig:
     use_llm_relationships: bool = False
     embedding_dim: int = 1536  # text-embedding-3-small
     top_k: int = 10
+    # OpenAI embedding model for real runs.  None → provider factory
+    # (current behavior); set → explicit model (3-small / 3-large).
+    embedding_model: str | None = None
 
 
 @dataclass
@@ -120,11 +125,44 @@ def _make_engine(config: BenchConfig, use_llm: bool = False) -> MemoryEngine:
     chunkers.register("text", TextChunker())
     chunkers.register("conversation", TextChunker())
 
-    # Choose embedding provider
-    if config.use_real_embeddings:
-        embedder = get_embedding_provider()
-    else:
-        embedder = MockEmbeddingProvider(dimension=config.embedding_dim)
+def _make_embedder(config: BenchConfig) -> EmbeddingProvider:
+    """Choose the embedding provider for a benchmark run.
+
+    An explicit ``config.embedding_model`` selects an OpenAI model directly
+    (dimension auto-mapped: 3-small → 1536, 3-large → 3072).  ``None`` keeps
+    the current behavior: the provider factory, which respects env settings
+    (``OPENAI_EMBEDDING_MODEL``, local fallback chain).
+    """
+    if not config.use_real_embeddings:
+        return MockEmbeddingProvider(dimension=config.embedding_dim)
+
+    if config.embedding_model:
+        from emerald.config import get_settings
+
+        settings = get_settings()
+        if not settings.openai_api_key:
+            raise SystemExit(
+                "ERROR: --embedding-model requires OPENAI_API_KEY to be set "
+                "(explicit model selection bypasses the local fallback chain)"
+            )
+        return OpenAIProvider(
+            api_key=settings.openai_api_key,
+            model=config.embedding_model,
+        )
+    return get_embedding_provider()
+
+
+def _make_engine(config: BenchConfig, use_llm: bool = False) -> MemoryEngine:
+    """Build a MemoryEngine configured for benchmarking."""
+    extractors = ExtractorRegistry()
+    extractors.register("text", TextExtractor())
+    extractors.register("conversation", TextExtractor())
+
+    chunkers = ChunkerRegistry()
+    chunkers.register("text", TextChunker())
+    chunkers.register("conversation", TextChunker())
+
+    embedder = _make_embedder(config)
 
     graph = GraphStore(use_db=False)
     vector = VectorStore(use_db=False)
@@ -1026,6 +1064,11 @@ async def main() -> None:
                         help="Force real OpenAI embeddings (default: auto-detect)")
     parser.add_argument("--mock", action="store_true",
                         help="Force mock deterministic embeddings")
+    parser.add_argument("--embedding-model", dest="embedding_model", default=None,
+                        help="OpenAI embedding model for real runs "
+                             "(default: text-embedding-3-small, i.e. current "
+                             "behavior; dimension is auto-mapped, "
+                             "3-large → 3072)")
     parser.add_argument("--llm", action="store_true",
                         help="Enable LLM-based relationship classification")
     parser.add_argument("--json", action="store_true",
@@ -1035,6 +1078,7 @@ async def main() -> None:
     config = BenchConfig(
         use_real_embeddings=args.real,
         use_llm_relationships=args.llm,
+        embedding_model=args.embedding_model,
     )
 
     if args.mock:
@@ -1043,7 +1087,8 @@ async def main() -> None:
     await _determine_embedding(config)
 
     if config.use_real_embeddings:
-        provider_name = "OpenAI (text-embedding-3-small)"
+        model = config.embedding_model or "text-embedding-3-small"
+        provider_name = f"OpenAI ({model})"
     else:
         provider_name = "Mock (deterministic hash)"
 
@@ -1058,11 +1103,20 @@ async def main() -> None:
 
     engine = _make_engine(config, use_llm=False)  # No LLM during data seeding
 
+    # Record the provider's actual dimension (3-large → 3072) in the report
+    # config so downstream consumers never guess it.
+    config.embedding_dim = engine.embedder.dimension()
+
     report = BenchReport(
         version="2.0",
         timestamp=datetime.now(UTC).isoformat(),
         config={
             "embeddings": "real" if config.use_real_embeddings else "mock",
+            "embedding_model": (
+                config.embedding_model
+                if config.embedding_model
+                else ("text-embedding-3-small" if config.use_real_embeddings else "mock")
+            ),
             "embedding_dim": config.embedding_dim,
             "llm_relationships": config.use_llm_relationships,
         },

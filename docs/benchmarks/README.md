@@ -2,14 +2,14 @@
 
 ## 概览
 
-Emerald 基准测试套件评估记忆系统的 6 个核心维度，对齐 LongMemEval、LoCoMo、ConvoMem 三大公开基准。
+Emerald 基准测试套件评估记忆系统的 7 个核心维度，对齐 LongMemEval、LoCoMo、ConvoMem 三大公开基准。
 
 ## 运行方式
 
 ### Mock 嵌入（CI / 快速验证）
 ```bash
 python scripts/run_benchmarks.py
-# 6 维度全部跑完，~2 分钟
+# 7 维度全部跑完，~2 分钟
 # 输出 JSON 到 reports/benchmark-*.json
 ```
 
@@ -17,8 +17,17 @@ python scripts/run_benchmarks.py
 ```bash
 export OPENAI_API_KEY="sk-..."
 ./scripts/run_real_benchmarks.sh
-# 使用 OpenAI text-embedding-3-small (1536 dim)
-# 跑完 ~10 分钟，输出 Markdown 报告到 docs/benchmarks/
+# 依次跑 text-embedding-3-small (1536 dim) 与 text-embedding-3-large (3072 dim)
+# 两次结果合并为每维度两列对照的 Markdown 报告到 docs/benchmarks/
+# 3-large 跑失败时自动回退单列报告，不会整体中断
+```
+
+### 指定嵌入模型
+```bash
+export OPENAI_API_KEY="sk-..."
+python scripts/run_benchmarks.py --real --embedding-model text-embedding-3-large
+# 未指定时默认 text-embedding-3-small，行为与现状一致
+# 维度自动映射：3-small → 1536，3-large → 3072（写入报告 config）
 ```
 
 ### 真实 LLM 关系分类
@@ -27,7 +36,7 @@ export DEEPSEEK_API_KEY="sk-..."
 python scripts/run_benchmarks.py --real --llm
 ```
 
-## 6 个维度
+## 7 个维度
 
 | 维度 | 对齐基准 | 数据规模 |
 |---|---|---|
@@ -37,6 +46,7 @@ python scripts/run_benchmarks.py --real --llm
 | Profile Accuracy | LoCoMo persona | 20 facts |
 | Distractor Resist | LoCoMo/ConvoMem | 5 targets + 50 noise |
 | Forgetting Correct | 自定义 | 10 mixed facts |
+| Contradiction Chain | 自定义（Temporal Updates 深度） | 5 chains × 5 supersession rounds |
 
 ## 已发布的报告
 

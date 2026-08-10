@@ -16,6 +16,12 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 
++- **嵌入模型参数化与双模型两列报告**（issue #18，T2）— 真实嵌入基准支持按参数选模型，双模型对照落地：
++  - `scripts/run_benchmarks.py` 新增 `--embedding-model`（默认 `text-embedding-3-small`，未指定时行为与现状一致走 provider factory）；显式指定时直接构造对应 `OpenAIProvider`，维度自动映射（3-small → 1536、3-large → 3072）并写入 JSON 报告 `config.embedding_dim`，下游不再猜维度。
++  - `scripts/benchmark_to_markdown.py` 新增双模式：`--dual --small <json> [--large <json>] --output <md>` 渲染每维度 3-small / 3-large 两列 + 差值（Δ）；`--large` 缺失（某模型跑失败）时该列以 — 呈现并显式告警，不整体崩溃；单报告模式输出与旧版字节一致（CI mock 路径不受影响）。
++  - `scripts/run_real_benchmarks.sh` 依次跑 3-small、3-large 两次并合并渲染 `docs/benchmarks/real-llm-results.md`；3-large 失败时回退单列报告继续完成，DeepSeek LLM 关系分类流程保持不变。
++  - 渲染层单元测试（`tests/benchmarks/test_benchmark_to_markdown.py`）：两列都存在 / 单列缺失 / 单模型缺维度 / 旧报告无 `embedding_model` 字段 / CLI 双模式与单模式兼容；CLI 选型测试（`tests/benchmarks/test_run_benchmarks_cli.py`）：3-large→3072、3-small→1536、默认走 factory、mock 不受影响。
+
 - **路由枚举适配 Starlette 1.x 惰性路由**（issue #2）— `include_router` 在 Starlette 1.x 下注册惰性 `_IncludedRouter`（无 `path` 属性），`app.routes` 简单过滤得到空集。`tests/api/test_route_completeness.py` 与 `tests/negative/test_no_internal_exposure.py` 改为递归展开惰性路由（`effective_candidates()`），在无引擎 stub 与有引擎两种形态下枚举实际路由面；v2 泄漏守卫从恒真断言修复为真实前缀检查。同步重新生成 `docs/api/openapi.yaml`（含 sources/spaces/extract-url 路由与 memories 的 patch/delete 方法），OpenAPI 漂移测试回归绿，`generate_openapi.py --check` 通过。
 - **清理过期 API 测试**（issue #3）— v0.4.0 下线 v2 路由后残留的 v2 断言（`test_api_versioning.py` 三处、`test_upload_authorization.py` 一处）改为断言 v2 返回 404 或删除；`/v1/files` 测试从偏移分页（`page`）签名迁移到游标分页（`page_token` + `page_size`），断言新响应结构（`pagination.next_page_token`/`has_more`），新增无效游标 token → 422 行为测试。产品路由代码零改动。
 

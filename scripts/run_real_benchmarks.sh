@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # scripts/run_real_benchmarks.sh — run benchmarks with real LLM embeddings
 # Requires OPENAI_API_KEY or DEEPSEEK_API_KEY in environment
+#
+# Runs the suite twice — text-embedding-3-small then text-embedding-3-large —
+# and merges both JSON reports into a per-dimension two-column Markdown
+# report (issue #18, T2).  If the 3-large run fails, the script keeps going
+# and the renderer falls back to a single-column report instead of crashing.
 set -euo pipefail
 
 if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${DEEPSEEK_API_KEY:-}" ]; then
@@ -14,26 +19,59 @@ mkdir -p "$REPORTS_DIR"
 DOCS_DIR="docs/benchmarks"
 mkdir -p "$DOCS_DIR"
 
-# Run 1: real embeddings, deterministic relationships (baseline)
-echo "Running benchmarks with real embeddings (no LLM rel classification)..."
-python scripts/run_benchmarks.py --real
-
-# Locate newest auto-generated report
-LATEST=$(ls -1t "$REPORTS_DIR"/benchmark-*.json 2>/dev/null | head -1)
-if [ -z "$LATEST" ]; then
-    echo "ERROR: No benchmark report generated" >&2
+# Run 1: real embeddings, text-embedding-3-small (baseline, current behavior)
+# Explicit model selection needs OPENAI_API_KEY; without it we keep the
+# historical behavior: --real goes through the provider factory fallback
+# chain (fastembed / mock) so a DeepSeek-only env can still reach Run 3.
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+    echo "Running benchmarks with text-embedding-3-small (1536 dims)..."
+    python scripts/run_benchmarks.py --real --embedding-model text-embedding-3-small
+else
+    echo "OPENAI_API_KEY not set — running with provider factory fallback..."
+    python scripts/run_benchmarks.py --real
+fi
+SMALL_REPORT=$(ls -1t "$REPORTS_DIR"/benchmark-*.json 2>/dev/null | head -1)
+if [ -z "$SMALL_REPORT" ]; then
+    echo "ERROR: No benchmark report generated for 3-small" >&2
     exit 1
 fi
-echo "Latest report: $LATEST"
+echo "3-small report: $SMALL_REPORT"
 
-# Convert to Markdown
-python scripts/benchmark_to_markdown.py \
-    "$LATEST" \
-    "$DOCS_DIR/real-llm-results.md"
+# Run 2: real embeddings, text-embedding-3-large (tolerate failure;
+# also skipped when OPENAI_API_KEY is absent)
+LARGE_REPORT=""
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+    echo "Running benchmarks with text-embedding-3-large (3072 dims)..."
+    if python scripts/run_benchmarks.py --real --embedding-model text-embedding-3-large; then
+        LARGE_REPORT=$(ls -1t "$REPORTS_DIR"/benchmark-*.json 2>/dev/null | head -1)
+        # Guard against the (unlikely) same-second filename collision
+        if [ "$LARGE_REPORT" = "$SMALL_REPORT" ]; then
+            echo "WARNING: 3-large run produced no new report; treating it as failed" >&2
+            LARGE_REPORT=""
+        fi
+        echo "3-large report: $LARGE_REPORT"
+    else
+        echo "WARNING: 3-large run failed; rendering single-column report" >&2
+    fi
+else
+    echo "OPENAI_API_KEY not set — skipping 3-large run" >&2
+fi
 
+# Convert to Markdown: two-column comparison, or single-column fallback
+if [ -n "$LARGE_REPORT" ]; then
+    python scripts/benchmark_to_markdown.py \
+        --dual \
+        --small "$SMALL_REPORT" \
+        --large "$LARGE_REPORT" \
+        --output "$DOCS_DIR/real-llm-results.md"
+else
+    python scripts/benchmark_to_markdown.py \
+        "$SMALL_REPORT" \
+        "$DOCS_DIR/real-llm-results.md"
+fi
 echo "Baseline report: $DOCS_DIR/real-llm-results.md"
 
-# Run 2: real embeddings + LLM relationship classification (if DeepSeek available)
+# Run 3: real embeddings + LLM relationship classification (if DeepSeek available)
 if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     echo "Running with LLM relationship classification (DeepSeek)..."
     python scripts/run_benchmarks.py --real --llm
