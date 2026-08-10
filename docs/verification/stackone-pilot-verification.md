@@ -82,18 +82,41 @@ Neo4j、搜索）。FakeHub 仅替换 hub 的 HTTP 往返，不改变适配/摄�
 
 ### P0 — 核心管线既有缺陷（先于 Pilot 引入，阻塞一切异步摄入）
 
+> 状态（2026-08-10）：**已全部修复**，真实 worker 端到端复验通过（见 §6）。
+
 1. **P0-1 Celery 任务/helper 签名错配**（`emerald/pipeline/tasks.py`，2026-05-26 `16d4fa4` 引入）
    `extract_task`/`chunk_task`/`embed_task` 以 `run_async(_run_x)(self, ...)` 调用，但
    `_run_extract/_run_chunk/_run_embed` 签名不含 `self` → TypeError。
    影响：**所有**异步管线任务失败（upload 路径同样受影响），Pilot 同步承诺无法兑现。
    现有测试只验证任务签名（`celery_app` 单测），未在真实 worker 上执行链，故未暴露。
+   **修复**：移除三处调用点的 `self` 实参；新增任务包装器执行级测试
+   （`tests/pipeline/test_tasks.py`，直接调用 task 函数 + mock 内部件）。
 2. **P0-2 fast-lane embedding 落库类型错误**（`emerald/core/fast_lane.py`）
    `embedding` 参数（list[float]）直接作 JSONB 绑定参数 → asyncpg DataError。
    影响：fast_lane_chunks 从不落库，「即时可检索」失效。
+   **修复**：写入侧 `json.dumps` 序列化后绑定（真实 PG 实测：`WRITE json string: OK`，
+   读取侧 asyncpg 自动解码回 list，另加 str 归一化防御）；新增 DB 路径单测
+   （`tests/core/test_fast_lane.py` 捕获绑定参数断言为 JSON 字符串）。
+   复验：链完成后 `fast_lane_chunks` 落库 1 行（embedding 为 384/1536 维 list）。
 3. **P0-3 asyncpg 连接与 Celery prefork 事件循环绑定**（`emerald/db/session.py` + 任务内 `asyncio.run`）
    共享 engine 的连接池跨任务事件循环复用 → `got Future attached to a different loop`。
-   当前被 P0-1 掩盖（任务在 DB 写入前就失败），P0-1 修复后必然复现，需一并处理
-   （如 worker 级 engine 重建或 `--pool=solo` 语义）。
+   **修复（三项联动）**：
+   - `SessionFactory._build_engine` 支持 worker 模式（`EMERALD_CELERY_WORKER=1` → NullPool）；
+     `celery.py` 的 `worker_process_init` 设置该标志并 `rebuild_for_worker()`（处理 fork 前已建的
+     pooled engine），`task_prerun` 保留 dispose 作为纵深防御。
+   - Redis 客户端 per-loop 重建：`emerald/db/redis.py` 新增 `ensure_redis_for_loop()`，以
+     **强引用**记录绑定 loop（`id()` 会被复用，实测踩中）；`DistributedLock` 及 worker 可达的
+     `get_redis_client` 调用点（profile/engine/embedder）全部改为 loop-aware 获取，保持
+     fail-open/fail-soft 语义。
+   - Neo4j driver per-task 生命周期：`tasks.py` 新增 `_neo4j_driver_for_loop()` 上下文，
+     `_run_index`/`_run_postprocess` 及四个 beat 任务（forget×3/reconcile）各自在任务 loop 内
+     init/close；删除 worker_process_init 里绑定死循环的 neo4j 初始化。
+   **连带修复**：无 API key 时 fallback 的 `MockEmbeddingProvider` 维度 384 → 1536
+   （对齐 `embeddings.embedding Vector(1536)`；此前无 key 部署在 index 阶段必失败）。
+   复验：真实 prefork worker（concurrency=2）多任务跨 loop 运行，链状态 `done`，
+   PG 状态写入、fast-lane、pgvector（1 行）、Neo4j（1 节点）全部落库（§6）。
+   测试：`tests/db/test_session_factory.py`（NullPool 语义）、`tests/db/test_redis_lifecycle.py`
+   （跨 loop 重建）、`tests/pipeline/test_celery_signals.py`（信号注册）。
 
 ### P1 — Pilot 代码缺陷（本票验证范围内）
 
@@ -165,6 +188,31 @@ P1-2/P1-3 不阻塞退役（refresh 路由与错误路径独立于自研连接�
 - `verify_sync.py` — 同步路径（FakeHub 内容源 + 真实管线/worker）
 - `verify_refresh_route.py` — `/v1/sources/refresh` 路由级复现 P1-2
 - `verify_connect_502.py` — FailHub 复现 P1-3（502 路径 TypeError）
+- `verify_chain_real.py` — P0 修复后真实 worker 全链复验（§6）
 - `probe_*.py` — 辅助探针（entity 约定、fast-lane、日志级别）
 
 复现环境：本地 PG（migration 008）+ Redis(6380) + Neo4j(docker) + Celery worker（prefork）。
+
+---
+
+## 6. P0 修复后真实 worker 复验（2026-08-10）
+
+P0-1/P0-2/P0-3 修复后，用**真实 prefork worker**（concurrency=2，同一进程内多任务跨
+事件循环交替执行）对异步摄入全链复验：
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 链完成（extract→chunk→embed→index→postprocess） | ✅ PASS | `pipeline_jobs.status = done`（此前止步于 extracting/TypeError） |
+| worker 内 PG 状态写入（`_update_status`/`_update_fact_extraction_status`） | ✅ PASS | `memory_count=1, fact_extraction_status=success`（NullPool 修复） |
+| fast-lane 落库（P0-2） | ✅ PASS | `fast_lane_chunks` 1 行，embedding 为 list（jsonb 往返正确） |
+| 向量落库 | ✅ PASS | `embeddings` 1 行（1536 维，对齐 schema） |
+| 图谱写入 | ✅ PASS | Neo4j `Memory` 节点 1 个（per-task driver 生命周期修复） |
+| 跨 loop Redis（`ensure_redis_for_loop`） | ✅ PASS | 多任务交替（child 2 跑 extract+embed+postprocess）无 loop 冲突 |
+| postprocess（关系推断+画像刷新+fast-lane 归档） | ✅ PASS | `relationship.infer.complete`，链正常 done，无静默降级 |
+
+修复内容见 §3 P0 条目；新增测试 12 个（task 包装器×3、fast-lane DB 路径×2、worker 信号×3、
+session factory×3、redis 生命周期×2，其中 1 个并入现有文件计数）。全量基线不变：
+`808 passed / 42 failed`（42 与 §5 文档化基线逐项一致，无新增失败）。
+
+**P0 全部关闭后**，解除 #7 的剩余条件为：P1-1/P1-2/P1-3 修复（Pilot 缺陷）+
+StackOne 侧 auth config 配置（外部），然后复验同步路径 S1/S5/S6/S7。

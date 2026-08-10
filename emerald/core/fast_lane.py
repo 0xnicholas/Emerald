@@ -8,6 +8,7 @@ pipeline finishes, the corresponding fast-lane chunks are archived.
 
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -71,6 +72,9 @@ class FastLaneStore:
         """Store a new fast-lane chunk and return its ID."""
         fast_lane_id = uuid.uuid4().hex
         now = datetime.now(UTC)
+        # The embedding column is jsonb; asyncpg rejects a raw Python list
+        # as a bound parameter (DataError), so serialize explicitly.
+        embedding_json = json.dumps(embedding)
 
         if self._use_db and self._session_factory:
             from sqlalchemy import text as sql_text
@@ -93,7 +97,7 @@ class FastLaneStore:
                         "id": fast_lane_id,
                         "entity_id": entity_id,
                         "text": text,
-                        "embedding": embedding,
+                        "embedding": embedding_json,
                         "stage": MemoryStage.FAST_LANE.value,
                         "model_name": model_name,
                         "dimensions": len(embedding),
@@ -211,7 +215,11 @@ class FastLaneStore:
 
         scored: list[tuple[float, dict[str, Any]]] = []
         for memory in candidates:
-            score = self._cosine_similarity(query_embedding, memory["embedding"])
+            # Some asyncpg setups return jsonb as str; normalize to a list.
+            raw = memory["embedding"]
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            score = self._cosine_similarity(query_embedding, raw)
             scored.append((score, memory))
 
         scored.sort(key=lambda x: x[0], reverse=True)

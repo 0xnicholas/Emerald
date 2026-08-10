@@ -86,14 +86,43 @@ celery_app.autodiscover_tasks(
 
 
 # ---- Worker lifecycle signals ----
-# Neo4j driver is initialized once per worker process and shared across
-# all tasks, avoiding per-task connection overhead.
+# Celery tasks execute their async helpers in a fresh event loop per task
+# (run_async -> asyncio.run).  Loop-bound resources (asyncpg pool, Redis
+# client, Neo4j driver) must therefore be (re)created inside each task's
+# own loop — see _dispose_db_pool_before_task, ensure_redis_for_loop and
+# the per-task init_neo4j() calls in emerald/pipeline/tasks.py.
+
 
 @celery_signals.worker_process_init.connect
-def _init_neo4j_on_worker_start(**kwargs) -> None:
-    from emerald.db.neo4j import init_neo4j
+def _init_worker_process(**kwargs) -> None:
+    """Prepare loop-independent worker state after fork.
 
-    asyncio.run(init_neo4j())
+    - Flag worker mode so any SQLAlchemy engine built from now on uses
+      NullPool (no cross-event-loop connection reuse).
+    - Rebuild an engine that may already exist (imported before the fork)
+      with the same non-pooling semantics.
+    """
+    import os
+
+    os.environ["EMERALD_CELERY_WORKER"] = "1"
+
+    from emerald.db.session import session_factory
+
+    session_factory.rebuild_for_worker()
+
+
+@celery_signals.task_prerun.connect
+def _dispose_db_pool_before_task(**kwargs) -> None:
+    """Dispose the shared PostgreSQL pool before each task.
+
+    Defence in depth alongside the worker's NullPool engine: if a pooled
+    engine ever reaches a task (e.g. the FastAPI process engine in eager
+    mode), disposing before the task prevents handing the task an asyncpg
+    connection created in a previous task's event loop.
+    """
+    from emerald.db.session import session_factory
+
+    asyncio.run(session_factory.engine.dispose())
 
 
 @celery_signals.worker_process_shutdown.connect

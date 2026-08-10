@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+import redis.exceptions as redis_exceptions
 import structlog
 
 from emerald.config import get_settings
@@ -259,9 +260,9 @@ class MemoryEngine:
     ) -> AddResult | None:
         """Check Redis for a cached idempotent result."""
         try:
-            from emerald.db.redis import get_redis_client
+            from emerald.db.redis import ensure_redis_for_loop
 
-            redis = get_redis_client()
+            redis = await ensure_redis_for_loop()
             cached = await redis.get(f"idempotency:{entity_id}:{key}")
             if cached:
                 import json
@@ -281,9 +282,9 @@ class MemoryEngine:
     ) -> None:
         """Cache add result in Redis for 1 hour."""
         try:
-            from emerald.db.redis import get_redis_client
+            from emerald.db.redis import ensure_redis_for_loop
 
-            redis = get_redis_client()
+            redis = await ensure_redis_for_loop()
             import json
 
             await redis.setex(
@@ -343,10 +344,10 @@ class MemoryEngine:
             return []
 
         try:
-            from emerald.db.redis import get_redis_client
+            from emerald.db.redis import ensure_redis_for_loop
 
-            redis = get_redis_client()
-        except RuntimeError:
+            redis = await ensure_redis_for_loop()
+        except (RuntimeError, OSError, redis_exceptions.ConnectionError):
             redis = None
 
         import hashlib

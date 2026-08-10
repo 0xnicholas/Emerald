@@ -150,7 +150,10 @@ async def test_openai_cache_hit_skips_api_call(openai_provider):
         "data": [{"index": 0, "embedding": [0.2] * 1536}]
     }
 
-    with patch("emerald.db.redis.get_redis_client", return_value=fake_redis):
+    async def _ensure_loop_redis():
+        return fake_redis
+
+    with patch("emerald.db.redis.ensure_redis_for_loop", new=_ensure_loop_redis):
         with patch.object(
             openai_provider._client, "post", new_callable=AsyncMock
         ) as mock_post:
@@ -180,7 +183,7 @@ def test_fallback_when_key_missing(monkeypatch):
         assert isinstance(p, FastembedProvider)
     except ImportError:
         assert isinstance(p, MockEmbeddingProvider)
-        assert p.dimension() == 384
+        assert p.dimension() == 1536  # matches embeddings.embedding Vector(1536)
 
     # Restore settings for other tests
     get_settings.cache_clear()

@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Any, Callable
 
+import redis.exceptions as redis_exceptions
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -63,11 +64,11 @@ class DistributedLock:
     async def acquire(self) -> bool:
         """Try to acquire the lock.  Returns True on success."""
         try:
-            from emerald.db.redis import get_redis_client
+            from emerald.db.redis import ensure_redis_for_loop
 
-            redis = get_redis_client()
-        except RuntimeError:
-            # Redis not initialised — fail open (let the task run)
+            redis = await ensure_redis_for_loop()
+        except (RuntimeError, OSError, redis_exceptions.ConnectionError):
+            # Redis not available in this loop — fail open (let the task run)
             logger.debug("lock.redis_unavailable", lock=self._name)
             self._acquired = True
             return True
@@ -98,10 +99,10 @@ class DistributedLock:
             return
 
         try:
-            from emerald.db.redis import get_redis_client
+            from emerald.db.redis import ensure_redis_for_loop
 
-            redis = get_redis_client()
-        except RuntimeError:
+            redis = await ensure_redis_for_loop()
+        except (RuntimeError, OSError, redis_exceptions.ConnectionError):
             self._acquired = False
             return
 

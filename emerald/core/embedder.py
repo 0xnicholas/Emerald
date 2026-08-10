@@ -12,6 +12,7 @@ import hashlib
 import json
 
 import httpx
+import redis.exceptions as redis_exceptions
 import structlog
 from tenacity import (
     retry,
@@ -69,12 +70,12 @@ class OpenAIProvider(EmbeddingProvider):
         if not texts:
             return []
 
-        # Check Redis cache
+        # Check Redis cache (loop-aware: worker tasks run per-task loops)
         try:
-            from emerald.db.redis import get_redis_client
+            from emerald.db.redis import ensure_redis_for_loop
 
-            redis = get_redis_client()
-        except RuntimeError:
+            redis = await ensure_redis_for_loop()
+        except (RuntimeError, OSError, redis_exceptions.ConnectionError):
             redis = None
 
         hashes = [
@@ -346,7 +347,9 @@ def get_embedding_provider() -> EmbeddingProvider:
                 "fastembed not installed; falling back to MockEmbeddingProvider "
                 "(deterministic but NOT semantic). Install with: pip install fastembed"
             )
-            return MockEmbeddingProvider(dimension=384)
+            # Must match the embeddings.embedding column (Vector(1536)); a
+            # mismatched dimension makes every async ingest fail at index.
+            return MockEmbeddingProvider(dimension=1536)
 
     if settings.embedding_provider in (
         EmbeddingProviderEnum.bge,
@@ -359,6 +362,6 @@ def get_embedding_provider() -> EmbeddingProvider:
             logger.warning(
                 "fastembed not installed; falling back to MockEmbeddingProvider"
             )
-            return MockEmbeddingProvider(dimension=384)
+            return MockEmbeddingProvider(dimension=1536)
 
     raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +16,30 @@ from emerald.core.tracing import attach_traceparent, detach, get_traceparent, ge
 from emerald.pipeline.chunking.base import Chunk
 
 logger = structlog.get_logger(__name__)
+
+
+@asynccontextmanager
+async def _neo4j_driver_for_loop():
+    """Ensure the Neo4j driver exists in the current event loop.
+
+    Celery tasks run in a fresh event loop per invocation, and the driver
+    created by a previous task belongs to a dead loop — so each task that
+    touches the graph must create (and close) its own driver.
+    """
+    from emerald.db.neo4j import close_neo4j, init_neo4j
+
+    await init_neo4j()
+    try:
+        yield
+    finally:
+        await close_neo4j()
+
+
+async def _ensure_loop_redis():
+    """Return a Redis client bound to the current task's event loop."""
+    from emerald.db.redis import ensure_redis_for_loop
+
+    return await ensure_redis_for_loop()
 
 
 def _chunk_to_dict(c: Chunk) -> dict[str, Any]:
@@ -105,7 +130,7 @@ async def _update_error(pipeline_id: str, stage: str, error: str) -> None:
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def extract_task(self, pipeline_id: str, content: str | bytes, content_type: str) -> dict:
     try:
-        return run_async(_run_extract)(self, pipeline_id, content, content_type)
+        return run_async(_run_extract)(pipeline_id, content, content_type)
     except Exception as exc:
         run_async(_update_error)(pipeline_id, "extracting", str(exc))
         raise self.retry(exc=exc) from exc
@@ -119,9 +144,7 @@ async def _run_extract(pipeline_id, content, content_type):
     extractor = registry.get(content_type)
     result = await extractor.extract(content)
 
-    from emerald.db.redis import get_redis_client
-
-    redis = get_redis_client()
+    redis = await _ensure_loop_redis()
     await redis.setex(f"pipeline:{pipeline_id}:text", 86400, result.text)
 
     traceparent = get_traceparent()
@@ -131,7 +154,7 @@ async def _run_extract(pipeline_id, content, content_type):
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 def chunk_task(self, prev_result: dict) -> dict:
     try:
-        return run_async(_run_chunk)(self, prev_result)
+        return run_async(_run_chunk)(prev_result)
     except Exception as exc:
         run_async(_update_error)(prev_result["pipeline_id"], "chunking", str(exc))
         raise self.retry(exc=exc) from exc
@@ -140,9 +163,7 @@ def chunk_task(self, prev_result: dict) -> dict:
 async def _run_chunk(prev_result: dict) -> dict:
     pipeline_id = prev_result["pipeline_id"]
     await _update_status(pipeline_id, "chunking")
-    from emerald.db.redis import get_redis_client
-
-    redis = get_redis_client()
+    redis = await _ensure_loop_redis()
     text = await redis.get(f"pipeline:{pipeline_id}:text")
 
     from emerald.pipeline.chunking import get_default_registry
@@ -164,7 +185,7 @@ async def _run_chunk(prev_result: dict) -> dict:
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def embed_task(self, prev_result: dict) -> dict:
     try:
-        return run_async(_run_embed)(self, prev_result)
+        return run_async(_run_embed)(prev_result)
     except Exception as exc:
         run_async(_update_error)(prev_result["pipeline_id"], "embedding", str(exc))
         raise self.retry(exc=exc) from exc
@@ -173,9 +194,7 @@ def embed_task(self, prev_result: dict) -> dict:
 async def _run_embed(prev_result: dict) -> dict:
     pipeline_id = prev_result["pipeline_id"]
     await _update_status(pipeline_id, "embedding")
-    from emerald.db.redis import get_redis_client
-
-    redis = get_redis_client()
+    redis = await _ensure_loop_redis()
     chunks_raw = await redis.get(f"pipeline:{pipeline_id}:chunks")
     chunks_data = json.loads(chunks_raw or "[]")
     texts = [c["text"] for c in chunks_data]
@@ -207,44 +226,40 @@ def index_task(self, prev_result: dict, entity_id: str) -> dict:
 async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
     """Stage 4: Write to Neo4j + pgvector, infer relationships."""
     pipeline_id = prev_result["pipeline_id"]
-    from emerald.db.neo4j import close_neo4j, init_neo4j
-
-    await init_neo4j()
     memory_ids: list[str] = []
     try:
-        await _update_status(pipeline_id, "indexing")
-        from emerald.db.redis import get_redis_client
+        async with _neo4j_driver_for_loop():
+            await _update_status(pipeline_id, "indexing")
+            redis = await _ensure_loop_redis()
+            chunks_raw = await redis.get(f"pipeline:{pipeline_id}:chunks")
+            embeddings_raw = await redis.get(f"pipeline:{pipeline_id}:embeddings")
+            chunks_data = json.loads(chunks_raw or "[]")
+            embeddings = json.loads(embeddings_raw or "[]")
 
-        redis = get_redis_client()
-        chunks_raw = await redis.get(f"pipeline:{pipeline_id}:chunks")
-        embeddings_raw = await redis.get(f"pipeline:{pipeline_id}:embeddings")
-        chunks_data = json.loads(chunks_raw or "[]")
-        embeddings = json.loads(embeddings_raw or "[]")
+            from emerald.core.graph import GraphStore
+            from emerald.core.vector import VectorStore
 
-        from emerald.core.graph import GraphStore
-        from emerald.core.vector import VectorStore
-
-        graph = GraphStore(use_db=True)
-        vector = VectorStore(use_db=True)
-        for chunk_data, embedding in zip(chunks_data, embeddings, strict=False):
-            valid_until = _deserialize_valid_until(chunk_data.get("valid_until"))
-            mid = await graph.create_memory(
-                content=chunk_data["text"],
-                entity_id=entity_id,
-                memory_type=chunk_data.get("memory_type", "fact"),
-                internal_type=chunk_data.get("internal_type"),
-                confidence=chunk_data.get("confidence", 0.8),
-                summary=chunk_data.get("summary") or None,
-                source_type="document",
-                valid_until=valid_until,
-            )
-            memory_ids.append(mid)
-            await vector.store(
-                chunk_id=mid,
-                text=chunk_data["text"],
-                embedding=embedding,
-                entity_id=entity_id,
-            )
+            graph = GraphStore(use_db=True)
+            vector = VectorStore(use_db=True)
+            for chunk_data, embedding in zip(chunks_data, embeddings, strict=False):
+                valid_until = _deserialize_valid_until(chunk_data.get("valid_until"))
+                mid = await graph.create_memory(
+                    content=chunk_data["text"],
+                    entity_id=entity_id,
+                    memory_type=chunk_data.get("memory_type", "fact"),
+                    internal_type=chunk_data.get("internal_type"),
+                    confidence=chunk_data.get("confidence", 0.8),
+                    summary=chunk_data.get("summary") or None,
+                    source_type="document",
+                    valid_until=valid_until,
+                )
+                memory_ids.append(mid)
+                await vector.store(
+                    chunk_id=mid,
+                    text=chunk_data["text"],
+                    embedding=embedding,
+                    entity_id=entity_id,
+                )
 
         return {"pipeline_id": pipeline_id, "memory_ids": memory_ids}
     except Exception as exc:
@@ -259,7 +274,6 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
             )
         except Exception:  # never let status update mask the real error
             pass
-        await close_neo4j()
 
 
 @shared_task
@@ -280,36 +294,35 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
     pipeline_id = prev_result["pipeline_id"]
     memory_ids = prev_result.get("memory_ids", [])
 
-    from emerald.core.graph import GraphStore
-    from emerald.core.relationship import RelationshipEngine
+    async with _neo4j_driver_for_loop():
+        from emerald.core.graph import GraphStore
+        from emerald.core.relationship import RelationshipEngine
 
-    rel_engine = RelationshipEngine(graph=GraphStore(use_db=True))
-    await rel_engine.infer(memory_ids, entity_id)
+        rel_engine = RelationshipEngine(graph=GraphStore(use_db=True))
+        await rel_engine.infer(memory_ids, entity_id)
 
-    from emerald.core.profile import ProfileManager
+        from emerald.core.profile import ProfileManager
 
-    profile_mgr = ProfileManager(graph=GraphStore(use_db=True))
-    await profile_mgr.refresh(entity_id, memory_ids)
+        profile_mgr = ProfileManager(graph=GraphStore(use_db=True))
+        await profile_mgr.refresh(entity_id, memory_ids)
 
-    from emerald.db.redis import get_redis_client
+        redis = await _ensure_loop_redis()
 
-    redis = get_redis_client()
+        # Archive the fast-lane chunk that was created when the pipeline was queued.
+        try:
+            fast_lane_id = await redis.get(f"pipeline:{pipeline_id}:fast_lane_id")
+            if fast_lane_id:
+                from emerald.core.fast_lane import FastLaneStore
 
-    # Archive the fast-lane chunk that was created when the pipeline was queued.
-    try:
-        fast_lane_id = await redis.get(f"pipeline:{pipeline_id}:fast_lane_id")
-        if fast_lane_id:
-            from emerald.core.fast_lane import FastLaneStore
+                await FastLaneStore(use_db=True).archive(str(fast_lane_id))
+        except Exception:
+            logger.warning("pipeline.postprocess.fast_lane_archive_failed", pipeline_id=pipeline_id)
 
-            await FastLaneStore(use_db=True).archive(str(fast_lane_id))
-    except Exception:
-        logger.warning("pipeline.postprocess.fast_lane_archive_failed", pipeline_id=pipeline_id)
+        for key in ["text", "chunks", "embeddings", "fast_lane_id"]:
+            await redis.delete(f"pipeline:{pipeline_id}:{key}")
 
-    for key in ["text", "chunks", "embeddings", "fast_lane_id"]:
-        await redis.delete(f"pipeline:{pipeline_id}:{key}")
-
-    await _update_status(pipeline_id, "done")
-    pipeline_jobs_total.labels(status="done").inc()
+        await _update_status(pipeline_id, "done")
+        pipeline_jobs_total.labels(status="done").inc()
 
 
 # ---- Scheduled tasks (Celery Beat) ----
@@ -329,7 +342,6 @@ async def _run_cleanup_fast_lane() -> dict:
         count = await store.cleanup()
         logger.info("pipeline.task.cleanup_fast_lane", count=count)
         return {"strategy": "fast_lane_cleanup", "count": count}
-
     result = await _locked_run(_work(), "task_cleanup_fast_lane")
     return (
         result
@@ -363,10 +375,11 @@ async def _run_forget_expired() -> dict:
     from emerald.core.graph import GraphStore
 
     async def _work():
-        engine = ForgetEngine(graph=GraphStore(use_db=True))
-        count = await engine.forget_expired()
-        logger.info("pipeline.task.forget_expired", count=count)
-        return {"strategy": "time_expiry", "count": count}
+        async with _neo4j_driver_for_loop():
+            engine = ForgetEngine(graph=GraphStore(use_db=True))
+            count = await engine.forget_expired()
+            logger.info("pipeline.task.forget_expired", count=count)
+            return {"strategy": "time_expiry", "count": count}
 
     result = await _locked_run(_work(), "task_forget_expired")
     return (
@@ -385,10 +398,11 @@ async def _run_forget_noise() -> dict:
     from emerald.core.graph import GraphStore
 
     async def _work():
-        engine = ForgetEngine(graph=GraphStore(use_db=True))
-        count = await engine.forget_noise()
-        logger.info("pipeline.task.forget_noise", count=count)
-        return {"strategy": "noise_filter", "count": count}
+        async with _neo4j_driver_for_loop():
+            engine = ForgetEngine(graph=GraphStore(use_db=True))
+            count = await engine.forget_noise()
+            logger.info("pipeline.task.forget_noise", count=count)
+            return {"strategy": "noise_filter", "count": count}
 
     result = await _locked_run(_work(), "task_forget_noise", ttl=1800)
     return (
@@ -407,10 +421,11 @@ async def _run_decay_episodic() -> dict:
     from emerald.core.graph import GraphStore
 
     async def _work():
-        engine = ForgetEngine(graph=GraphStore(use_db=True))
-        count = await engine.decay_episodic()
-        logger.info("pipeline.task.decay_episodic", count=count)
-        return {"strategy": "episodic_decay", "count": count}
+        async with _neo4j_driver_for_loop():
+            engine = ForgetEngine(graph=GraphStore(use_db=True))
+            count = await engine.decay_episodic()
+            logger.info("pipeline.task.decay_episodic", count=count)
+            return {"strategy": "episodic_decay", "count": count}
 
     result = await _locked_run(_work(), "task_decay_episodic", ttl=1800)
     return (
@@ -438,19 +453,20 @@ async def _run_reconcile() -> dict:
     from emerald.core.vector import VectorStore
 
     async def _work():
-        engine = ReconciliationEngine(
-            graph=GraphStore(use_db=True),
-            vector=VectorStore(use_db=True),
-            embedder=get_embedding_provider(),
-        )
-        result = await engine.reconcile(lookback_minutes=120, max_repairs=200)
-        logger.info(
-            "pipeline.task.reconcile",
-            found=result["found"],
-            repaired=result["repaired"],
-            failed=result["failed"],
-        )
-        return result
+        async with _neo4j_driver_for_loop():
+            engine = ReconciliationEngine(
+                graph=GraphStore(use_db=True),
+                vector=VectorStore(use_db=True),
+                embedder=get_embedding_provider(),
+            )
+            result = await engine.reconcile(lookback_minutes=120, max_repairs=200)
+            logger.info(
+                "pipeline.task.reconcile",
+                found=result["found"],
+                repaired=result["repaired"],
+                failed=result["failed"],
+            )
+            return result
 
     result = await _locked_run(_work(), "task_reconcile_index", ttl=600)
     return (

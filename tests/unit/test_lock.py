@@ -12,17 +12,20 @@ from emerald.core.lock import DEFAULT_TTL_SECONDS, DistributedLock
 
 @pytest.fixture
 def fake_redis():
-    """Provide a fakeredis instance patched into get_redis_client."""
+    """Provide a fakeredis instance patched into ensure_redis_for_loop."""
     redis = fakeredis.aioredis.FakeRedis()
     return redis
 
 
 @pytest.fixture
 def patch_redis(monkeypatch, fake_redis):
-    """Patch get_redis_client to return a fakeredis instance."""
+    """Patch ensure_redis_for_loop to return a fakeredis instance."""
+    async def _ensure():
+        return fake_redis
+
     monkeypatch.setattr(
-        "emerald.db.redis.get_redis_client",
-        lambda: fake_redis,
+        "emerald.db.redis.ensure_redis_for_loop",
+        _ensure,
     )
     return fake_redis
 

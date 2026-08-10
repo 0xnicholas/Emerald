@@ -16,6 +16,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+import redis.exceptions as redis_exceptions
 import structlog
 
 from emerald.core.graph import GraphStore
@@ -120,7 +121,7 @@ class ProfileManager:
         if entity_id in self._config_cache:
             return self._config_cache[entity_id]
 
-        redis = self._get_redis()
+        redis = await self._get_loop_redis()
         if redis:
             raw = await redis.get(f"profile:config:{entity_id}")
             if raw:
@@ -132,7 +133,7 @@ class ProfileManager:
 
     async def set_config(self, entity_id: str, config: ProfileConfig) -> None:
         """Store per-entity profile config overrides in Redis."""
-        redis = self._get_redis()
+        redis = await self._get_loop_redis()
         if redis:
             await redis.set(
                 f"profile:config:{entity_id}",
@@ -153,7 +154,7 @@ class ProfileManager:
     async def delete_config(self, entity_id: str) -> bool:
         """Remove per-entity config, reverting to class defaults. Returns True if deleted."""
         deleted = False
-        redis = self._get_redis()
+        redis = await self._get_loop_redis()
         if redis:
             deleted = await redis.delete(f"profile:config:{entity_id}") > 0
         if entity_id in self._config_cache:
@@ -173,13 +174,18 @@ class ProfileManager:
         """
         return await self.get_config(entity_id)
 
-    def _get_redis(self):
+    async def _get_loop_redis(self):
+        """Redis client bound to the *current* event loop, or None.
+
+        Loop-aware so worker tasks (one fresh event loop per task) never
+        touch a client created in a previous task's loop.
+        """
         if self._redis is not None:
             return self._redis
         try:
-            from emerald.db.redis import get_redis_client
-            return get_redis_client()
-        except RuntimeError:
+            from emerald.db.redis import ensure_redis_for_loop
+            return await ensure_redis_for_loop()
+        except (RuntimeError, OSError, redis_exceptions.ConnectionError):
             return None
 
     async def get(self, entity_id: str) -> EntityProfile:
@@ -196,7 +202,7 @@ class ProfileManager:
                 profile_cache_hit_total.labels(backend="memory").inc()
                 return self._memory_cache[entity_id]
 
-            redis = self._get_redis()
+            redis = await self._get_loop_redis()
             if redis:
                 cached = await redis.get(f"profile:{entity_id}")
                 if cached:
@@ -216,7 +222,7 @@ class ProfileManager:
 
         Called at the end of the pipeline INDEXING stage.
         """
-        redis = self._get_redis()
+        redis = await self._get_loop_redis()
         if redis:
             await redis.delete(f"profile:{entity_id}")
             logger.info("profile.cache.invalidated", entity_id=entity_id)
@@ -574,7 +580,7 @@ class ProfileManager:
         """Return raw cached profile dict, or None if not cached."""
         if entity_id in self._memory_cache:
             return self._serialize_profile(self._memory_cache[entity_id])
-        redis = self._get_redis()
+        redis = await self._get_loop_redis()
         if redis:
             cached = await redis.get(f"profile:{entity_id}")
             if cached:
@@ -582,7 +588,7 @@ class ProfileManager:
         return None
 
     async def _set_cached_profile(self, entity_id: str, profile: EntityProfile) -> None:
-        redis = self._get_redis()
+        redis = await self._get_loop_redis()
         if redis:
             await redis.setex(
                 f"profile:{entity_id}",

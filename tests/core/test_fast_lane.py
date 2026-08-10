@@ -1,5 +1,7 @@
 """Tests for the FastLane store and engine integration."""
 
+import json
+
 import pytest
 
 from emerald.core.constants import MemoryStage
@@ -23,18 +25,101 @@ def embedder():
 # ---- FastLaneStore ----
 
 @pytest.mark.asyncio
-async def test_store_and_search(store, embedder):
-    """Stored fast-lane chunks are returned by similarity search."""
-    text = "用户喜欢使用 Neovim 进行开发"
-    embedding = (await embedder.embed([text]))[0]
+async def test_store_binds_embedding_as_json(embedder):
+    """DB path: embedding must be bound as a JSON string, not a raw list.
 
-    fl_id = await store.store(text, embedding, entity_id="user_123")
-    assert fl_id
+    Regression for P0-2: ``fast_lane_chunks.embedding`` is jsonb; binding a
+    Python list through raw SQL raises asyncpg DataError, so fast-lane
+    chunks were never persisted.
+    """
+    class _FakeSession:
+        def __init__(self):
+            self.params = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            pass
+
+        async def execute(self, stmt, params=None):
+            self.params = params or {}
+
+        async def commit(self):
+            pass
+
+    class _FakeFactory:
+        def __init__(self):
+            self.session_ = _FakeSession()
+
+        def session(self):
+            return self.session_
+
+    embedding = (await embedder.embed(["text"]))[0]
+    factory = _FakeFactory()
+    store = FastLaneStore(use_db=True)
+    store._session_factory = factory
+
+    await store.store("content", embedding, entity_id="user_123")
+
+    bound = factory.session_.params["embedding"]
+    assert isinstance(bound, str), "embedding must be JSON-serialized before binding"
+    assert json.loads(bound) == embedding
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_string_jsonb_embeddings(embedder):
+    """Read path: jsonb columns may come back as str on some drivers."""
+    import datetime
+
+    class _Row:
+        id = "fl-1"
+        entity_id = "user_123"
+        text = "content"
+        created_at = datetime.datetime.now(datetime.UTC)
+        embedding = None
+
+    class _Result:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchall(self):
+            return [self.row]
+
+    class _FakeSession:
+        def __init__(self, row):
+            self.row = row
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            pass
+
+        async def execute(self, stmt, params=None):
+            return _Result(self.row)
+
+        async def commit(self):
+            pass
+
+    class _FakeFactory:
+        def __init__(self, row):
+            self.session_ = _FakeSession(row)
+
+        def session(self):
+            return self.session_
+
+    embedding = (await embedder.embed(["query"]))[0]
+    row = _Row()
+    row.embedding = json.dumps(embedding)  # driver returned the jsonb as str
+
+    store = FastLaneStore(use_db=True)
+    store._session_factory = _FakeFactory(row)
 
     hits = await store.search(embedding, entity_id="user_123", top_k=5)
+
     assert len(hits) == 1
-    assert hits[0].fast_lane_id == fl_id
-    assert hits[0].text == text
+    assert hits[0].text == "content"
 
 
 @pytest.mark.asyncio
