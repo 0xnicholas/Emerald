@@ -1239,6 +1239,106 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/keys:
+    post:
+      tags:
+      - Keys
+      summary: Create Key
+      description: 'Create an API key for the caller''s entity.  The plaintext key is
+
+        returned exactly once; only its SHA-256 hash is stored.'
+      operationId: create_key_v1_keys_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              title: Body
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Create Key V1 Keys Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - Keys
+      summary: List Keys
+      description: List the caller's entity's key metadata (no hashes, no raw keys).
+      operationId: list_keys_v1_keys_get
+      parameters:
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cursor token for pagination
+          title: Page Token
+        description: Cursor token for pagination
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          description: Items per page
+          default: 20
+          title: Page Size
+        description: Items per page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Keys V1 Keys Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/keys/{key_id}:
+    delete:
+      tags:
+      - Keys
+      summary: Revoke Key
+      description: 'Revoke a key of the caller''s entity.  Soft delete: the auth query
+
+        filters ``is_active=True``, so the key is rejected with 401 immediately.'
+      operationId: revoke_key_v1_keys__key_id__delete
+      parameters:
+      - name: key_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Key Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     AddMemoryRequest:

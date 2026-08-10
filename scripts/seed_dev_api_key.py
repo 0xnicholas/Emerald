@@ -1,4 +1,8 @@
-"""Bootstrap a development API key. Run once after migrations."""
+"""Bootstrap a development API key. Run once after migrations.
+
+⚠️ 仅限开发环境（issue #5）：生产 onboarding 走管理端点
+`POST /v1/keys`（admin 权限）。本脚本创建的 key 用于本地开发与测试。
+"""
 
 import asyncio
 import hashlib

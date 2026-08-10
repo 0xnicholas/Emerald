@@ -54,6 +54,15 @@ All notable changes to this project will be documented in this file.
 
 - **MIME 解析一致性：text/markdown 提取器缺口**（issue #4）— `text/markdown`（及 `application/markdown`）经 MIME 解析到 `markdown` 后无对应提取器，MIME 路径摄入在提取阶段抛 `UnsupportedContentType`。修复：默认提取器注册表补注册 `markdown → TextExtractor`（与 json/csv 同款先例；Markdown 结构由 `MarkdownChunker` 负责，提取阶段为纯文本）。注册表守卫测试的 extractor 类型集合同步包含该别名；新增 `text/markdown` 提取 + 按标题层级分块（H1/H2 分离断言）与 MIME 族别名（`text/markdown`、`application/markdown`）用例。无新增公共 API 面；README 内容类型计数 9→10 对齐。
 
+### Added
+
+- **API Key 管理端点（issue #5，admin 权限，生产 onboarding 路径）** — 取代 seed 脚本成为生产 onboarding 面（seed 脚本标注仅开发环境）：
+  - `POST /v1/keys` — 创建：admin 权限，实体作用域限定调用者自身实体（外部 id 解析为内部 UUID 后与调用者比对，跨实体 403）；权限级别 read/write/admin（422 拒绝未知权限）、可选过期时间；明文 key（`em_` 前缀）仅在创建响应出现一次，服务端只存 SHA-256 哈希与 8 字符前缀。
+  - `GET /v1/keys` — 列出：admin 权限，游标分页（`page_token`/`page_size`，复用 `PageToken` 与 files 列表同款 keyset 查询），返回元数据（key_id/前缀/权限/过期/最后使用/状态），不含哈希。
+  - `DELETE /v1/keys/{key_id}` — 吊销：admin 权限，软删除（`is_active=False`）；鉴权查询本就过滤 `is_active=True`，吊销后下一请求即 401（含过期 key 401 既有行为）。
+  - 新增 `require_admin_permission` 依赖（403 无 admin）；`emerald/api/schemas/keys.py` 请求/响应模型；OpenAPI 重新生成（30 paths / 39 operations），路由完整性守卫测试收录 `/v1/keys` 与 `/v1/keys/{key_id}`；SDK 零新增方法（负面暴露测试保持全绿）。
+  - 测试（`tests/api/test_keys.py` 12 例 + `tests/unit/test_auth.py` +3 例）：admin 403 / 明文一次性返回与哈希存储断言（捕获 `session.add` 记录）/ 跨实体 403 / 实体不存在 404 / 非法权限 422 / 过期与吊销 401（auth 层）/ 列表无哈希与分页结构 / 吊销 204 与 is_active 翻转 / 实体隔离 / key 不存在 404。集成指南 §2 重写为管理端点流程 + bootstrap 指引（首个 admin key 带外创建）。
+
 ## [0.4.0] — 2026-07-03
 
 > 合并 M1（部署加固、OTel、基准、CI 自动化）与 M2（API / SDK / 安全加固）全部工作项，发布 v0.4.0。M1 细节见 `git log --grep=feat\(m1\)`；M2 细节见 `git log --grep=feat\(m2\)`。本节仅列摘要。

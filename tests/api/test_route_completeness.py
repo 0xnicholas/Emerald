@@ -114,6 +114,9 @@ REQUIRED_V1_ENDPOINTS = [
     # System
     "/v1/health",
     "/v1/memories/graph",
+    # Key management (issue #5)
+    "/v1/keys",
+    "/v1/keys/{key_id}",
 ]
 
 

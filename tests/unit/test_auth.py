@@ -1,13 +1,12 @@
 """Unit tests for API key authentication."""
 
-import hashlib
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException, Request
+import pytest
+from fastapi import HTTPException
 
-from emerald.api.dependencies import api_key_auth, require_write_permission, rate_limit
+from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
 
 
 class FakeRequest:
@@ -81,7 +80,7 @@ async def test_expired_key_returns_401():
     fake_record.id = uuid.uuid4()
     fake_record.entity_id = uuid.uuid4()
     fake_record.permissions = ["read"]
-    fake_record.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    fake_record.expires_at = datetime.now(UTC) - timedelta(days=1)
     fake_record.is_active = True
 
     mock_result = MagicMock()
@@ -127,8 +126,8 @@ async def test_write_permission_granted():
 @pytest.mark.asyncio
 async def test_rate_limit_allows_under_limit():
     """Sliding-window rate limit allows requests under the limit."""
+
     import fakeredis.aioredis
-    import time
 
     fake_redis = fakeredis.aioredis.FakeRedis()
 
@@ -149,8 +148,9 @@ async def test_rate_limit_allows_under_limit():
 @pytest.mark.asyncio
 async def test_rate_limit_blocks_over_limit():
     """Sliding-window rate limit raises 429 when over the limit."""
-    import fakeredis.aioredis
     import time
+
+    import fakeredis.aioredis
 
     fake_redis = fakeredis.aioredis.FakeRedis()
     now = time.time()
@@ -178,8 +178,9 @@ async def test_rate_limit_blocks_over_limit():
 @pytest.mark.asyncio
 async def test_rate_limit_uses_endpoint_specific_limits():
     """Different endpoints use different limits from settings."""
-    import fakeredis.aioredis
     import time
+
+    import fakeredis.aioredis
 
     fake_redis = fakeredis.aioredis.FakeRedis()
     now = time.time()
@@ -200,3 +201,59 @@ async def test_rate_limit_uses_endpoint_specific_limits():
             await rate_limit(req)
 
     assert exc_info.value.status_code == 429
+
+
+# ---- Admin permission + revoked-key auth (issue #5) ----
+
+@pytest.mark.asyncio
+async def test_admin_permission_required():
+    """require_admin_permission raises 403 without the admin permission."""
+    from emerald.api.dependencies import require_admin_permission
+
+    req = FakeRequest()
+    req.state.permissions = ["read", "write"]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await require_admin_permission(req)
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_permission_granted():
+    """require_admin_permission passes when admin is present."""
+    from emerald.api.dependencies import require_admin_permission
+
+    req = FakeRequest()
+    req.state.permissions = ["read", "write", "admin"]
+
+    result = await require_admin_permission(req)
+    assert result == "authorized"
+
+
+@pytest.mark.asyncio
+async def test_revoked_key_returns_401():
+    """A revoked key is rejected because the auth query filters
+    is_active=True — the record never comes back (issue #5)."""
+    req = FakeRequest(headers={"Authorization": "Bearer em_revoked"})
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None  # revoked → DB miss
+
+    mock_session = AsyncMock()
+    mock_session.execute.return_value = mock_result
+
+    with patch("emerald.api.dependencies.session_factory") as mock_factory:
+        mock_factory.session.return_value.__aenter__ = AsyncMock(
+            return_value=mock_session
+        )
+        mock_factory.session.return_value.__aexit__ = AsyncMock(
+            return_value=False
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await api_key_auth(req)
+
+    assert exc_info.value.status_code == 401
+    # The revocation mechanism must be the is_active filter in the query.
+    statement = str(mock_session.execute.call_args[0][0])
+    assert "is_active" in statement
+    assert "true" in statement.lower()

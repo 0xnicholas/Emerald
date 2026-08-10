@@ -34,21 +34,24 @@ curl http://localhost:8000/v1/health
 
 API Key 格式：`em_` + 32 字符随机字符串。服务端仅存储 SHA-256 哈希。
 
-**当前创建方式（无 admin API）：** 通过 `scripts/seed_dev_api_key.py` 创建开发 key，生产环境需手动在数据库插入（参见 [`emerald/models/api_key.py`](../emerald/models/api_key.py)）。
+**管理端点（生产 onboarding 路径，issue #5）：** 由持有 `admin` 权限的 key 调用，实体作用域限定在调用者自己的实体：
 
-**生产环境推荐流程：**
+- `POST /v1/keys` — 创建：请求体 `{"entity_id": "<本实体 external_id>", "permissions": ["read", "write"], "expires_at": "<可选 ISO 时间>"}`；明文 key 仅在响应中出现一次，服务端只存哈希
+- `GET /v1/keys` — 列出：游标分页（`page_token` / `page_size`），返回元数据（前缀、权限、过期、最后使用），不含哈希
+- `DELETE /v1/keys/{key_id}` — 吊销：立即失效（携带该 key 的请求返回 401）
 
-1. 通过数据库迁移或内部工具创建 `ApiKey` 记录（参考 [`scripts/seed_dev_api_key.py`](../scripts/seed_dev_api_key.py) 中的实现）
-2. 将原始 key 安全交付给用户（一次）
-3. 服务端仅存储 `key_hash`（SHA-256）
-
-**路线图：** `POST /v1/admin/api-keys` 管理端点是 [M2 (v0.5.0) 计划](roadmap.md)。在此之前，请使用脚本 / 手动方式。
+无 `admin` 权限返回 403；其他实体的 key 不可见、不可管理（403）。示例：
 
 ```bash
-# 开发环境创建示例
-python scripts/seed_dev_api_key.py
-# 输出：Dev API key created: em_dev_test_key_001
+# 创建（需要 admin key）
+curl -X POST http://localhost:8000/v1/keys \
+  -H "Authorization: Bearer em_<admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"entity_id": "user_alice", "permissions": ["read", "write"]}'
+# → {"data": {"key": "em_...", "key_id": "...", ...}}  # 明文仅此一次
 ```
+
+**首个 admin key 的引导（bootstrap）：** 管理端点由 admin key 调用，因此第一个 admin key 需要带外创建：开发环境用 `scripts/seed_dev_api_key.py`（仅开发环境使用），生产环境通过数据库迁移 / 内部工具插入 `ApiKey` 记录（参考 seed 脚本实现，权限包含 `admin`）。
 
 ---
 

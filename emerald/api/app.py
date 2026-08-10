@@ -298,6 +298,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
         conflicts as v1_conflicts,
         connectors as v1_connectors,
         extract as v1_extract,
+        keys as v1_keys,
         memories as v1_memories,
         pipelines as v1_pipelines,
         profiles as v1_profiles,
@@ -321,6 +322,7 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     app.include_router(v1_sources.router, prefix="/v1")
     app.include_router(v1_spaces.router, prefix="/v1")
     app.include_router(v1_system.router, prefix="/v1")
+    app.include_router(v1_keys.router, prefix="/v1")
 
     return app
 

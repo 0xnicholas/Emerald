@@ -72,6 +72,16 @@ async def require_write_permission(request: Request) -> str:
     return "authorized"
 
 
+async def require_admin_permission(request: Request) -> str:
+    """Management-surface guard (issue #5): only admin keys may create /
+    list / revoke API keys.  Entity scoping is enforced separately by
+    ``authorize_entity`` at the route layer."""
+    perms = getattr(request.state, "permissions", [])
+    if "admin" not in perms:
+        raise HTTPException(403, "Admin permission required")
+    return "authorized"
+
+
 def _get_endpoint_limit(endpoint: str) -> int:
     """Return per-endpoint request limit from settings."""
     settings = get_settings()
