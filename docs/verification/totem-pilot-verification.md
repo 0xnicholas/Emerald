@@ -2,7 +2,8 @@
 
 > 验证日期：2026-08-10 · 验证对象：**当前 Totem 源码**（commit `cdd962a`，含 admin API/OpenAPI 面）
 > + **当前 Emerald 源码**（本票改动：`TotemHubClient` 替换 `StackOneHubClient`）
-> 结论：**通过（PASS，25/25）**——绑定、同步、Webhook 契约、真实管线全链路验证通过。
+> 结论：**通过（PASS）**——脚本级 Pilot 25/25 + **API 进程级联调 10/10**（含混合搜索实际
+> 检索确认）。绑定、同步、Webhook 契约、真实管线、HTTP API 全链路验证通过。
 >
 > **本票内容**：接入目标从 StackOne 改为 Totem（同团队内部项目，功能对齐 StackOne，ADR-0004
 > 更新）；实现 `TotemHubClient`（`emerald/sources/totem.py`，删除 `stackone.py`）、适配层
@@ -89,18 +90,30 @@ Celery worker（真实进程，prefork concurrency=2）。
 
 ## 3. 遗留问题清单
 
-1. **v1 扫描原语局限（非缺陷，已文档化）**：Totem v1 无 list-all 动作，`search_docs`（标题
+1. **真实飞书账户端到端（外部依赖，需用户动作）**：真实企业飞书自建应用
+   `app_id`/`app_secret` + 一次真人授权点击尚未提供（当前所有 tenant 均为 mock app
+   `cli_pilot`）。条件满足后：`totemctl set-feishu-creds <tenant> <app-id> <app-secret>`
+   → `totemctl oauth-start <tenant>` → 真人授权 → 复跑本 Pilot（上游换成真实飞书，其余不变）。
+   治理链（allowlist/执行边界/审计）与 Emerald 接入代码已在 mock 上游下全真验证。
+2. **v1 扫描原语局限（非缺陷，已文档化）**：Totem v1 无 list-all 动作，`search_docs`（标题
    搜索）是唯一扫描原语，且输出无版本字段。适配层按 doc_id 水位去重（无版本 → 重复内容
    不重扫）；宽查询 `" "` 通过 schema（minLength 1）但命中面有限。生产策略待定：v2 列表
    cursor 落地后（标准 §7）或连接器事件投递后（标准 §8/ADR-0011）可补齐全量扫描。
-2. **`process_async` 提交进程需 import `emerald.pipeline.celery`（本票顺带修复）**：任何直接
+3. **API 进程级联调发现的真实缺陷（本票修复）**：
+   - `api_key_auth` 曾以实体**内部 UUID** 作 key 作用域，而 API 公共约定（upload.py、
+     schema 示例、管线）均为 **external_id** → key 鉴权下搜索/上传永远找不到管线内容。
+     修复：auth 经 join 取 external_id 入 state；sources 路由在触及 bindings 表前解析
+     external → internal（新增 `binding_store.get_entity_internal_id`）。
+   - API 的 `MemoryEngine` 默认 `use_db=False`（内存存储）→ 即便 key 作用域正确，API 搜索
+     也看不到 Celery 管线写入 DB 的内容。修复：`app.py` 默认引擎显式 DB 存储
+     （graph/vector/fast_lane `use_db=True`）。
+4. **`process_async` 提交进程需 import `emerald.pipeline.celery`（本票顺带修复）**：任何直接
    调用 `PipelineOrchestrator.process_async` 的进程（如脚本）若不 import 配置了 redis broker
    的 celery app，`shared_task` 会解析到 celery 默认 app（amqp://guest@localhost:5672）导致
    提交失败。API lifespan 的 `instrument_all()` 恰好覆盖了 API 进程；本票在
    `orchestrator.py` 显式 import（防御性，P0-3 同族）。
-3. **真实飞书账户端到端（外部，非阻塞）**：真实企业飞书账号 + 真人授权的最终确认未做；
-   由 mock Feishu 上游 + 真实 Totem 治理链替代（与 StackOne 期 mock 基准同构）。Totem
-   v2 支持多上游/平台投递后复验。
+5. **429 退避未接线**：错误映射已透出 `retryAfterSeconds`，但 Celery `countdown` 退避
+   （Totem 消费方清单项）尚未实现，排期跟进。
 
 ## 4. 结论
 
@@ -120,7 +133,7 @@ Celery worker（真实进程，prefork concurrency=2）。
 
 - `tests/sources/`：**46 passed**（Totem 契约：RPC envelope/Bearer/x-connection-id、七码错误
   映射、list envelope、admin 端点、§8 webhook、feishu 适配层）。
-- 全量（`pytest tests/ --ignore=tests/mcp`）：**924 passed / 24 failed / 24 skipped**。
+- 全量（`pytest tests/ --ignore=tests/mcp`）：**925 passed / 24 failed / 24 skipped**。
   24 个失败与文档化基线逐项一致，无新增失败：
   - 可选提取依赖缺失（faster_whisper / OCR / 图像预处理等，README 声明需 `.[extraction]`）：
     audio×4、image×4、pdf×5、video×2、url×1、error_paths×1 —— 17 个
@@ -129,13 +142,46 @@ Celery worker（真实进程，prefork concurrency=2）。
   （issue #2/#3 的路由/版本化基线 18 项已在先前提交修复，不再计入。）
 - OpenAPI 规范已重新生成（`docs/api/openapi.yaml`，provider 描述更新）。
 
+## 6. API 进程级联调补验（2026-08-10，10/10）
+
+脚本级 Pilot 之外，用**真实 HTTP API**（uvicorn + `create_app`，真实 API Key
+`em_dev_test_key_001`）对真实 Totem 走完整用户路径，并完成**混合搜索实际检索**确认：
+
+| # | 检查项 | 结果 | 证据 |
+|---|---|---|---|
+| A1 | `POST /v1/sources/connect`（真实路由 → Totem admin oauth/start） | ✅ | 200 + auth_link_url |
+| A2 | 授权页重定向（mock） | ✅ | 302 + code/state |
+| A3 | OAuth 回调 → connection | ✅ | 200「Authorization complete」 |
+| A4 | `POST /v1/sources/refresh` → 绑定落库 | ✅ | accounts ≥ 1，`source_bindings` 行 |
+| A5 | `GET /v1/sources` 绑定可见 | ✅ | provider=feishu, sync_status=active |
+| A6 | `POST /v1/sources/webhook`（§8.3 签名 + §8.2 负载）→ 摄入 | ✅ | ingested=2（新鲜连接；旧连接正确 skipped 去重） |
+| A7 | 篡改签名拒绝 | ✅ | 401 |
+| A8 | **混合搜索实际召回**（`POST /v1/search` q="Pilot Plan"） | ✅ | 2 hits（管线产物经 API 可检索） |
+| A9 | 中文查询召回 | ✅ | 5 hits，首条「## 会议记录」 |
+| A10 | Totem 审计可见 | ✅ | search_docs 审计行持续累积 |
+
+**期间发现并修复两个真实生产缺陷**（API 路径此前从未用真实 key + 真实管线端到端跑过）：
+
+1. **key 作用域实体约定错配**：`api_key_auth` 以内部 UUID 作 `state.entity_id`，而 API 公共
+   约定（upload.py/schema 示例/管线）为 external_id → key 鉴权下搜索/上传永远找不到内容。
+   修复：auth join 取 external_id；sources 路由经 `get_entity_internal_id` 解析后再触达
+   bindings 表。
+2. **API 引擎内存存储**：`create_app` 默认 `MemoryEngine(use_db=False)` → 搜索/记忆读写全在
+   进程内，管线写入 DB 的内容 API 永远看不到。修复：默认引擎显式 DB 存储（graph/vector/
+   fast-lane `use_db=True`）。
+
+另：新连接 allowlist 为空时 Totem fail-closed 正确拦截（403 forbidden 优雅映射为
+`hub_list_failed`，不崩溃）——治理边界在真实联调中得到验证。
+
 ## 附录：验证脚本与复现命令
 
 脚本位于 `/tmp/totem-pilot/`（不入库）：
 - `serve.mts` — 启动当前 Totem 源码（:3001，同一 docker PG）+ MockFeishuServer（:3999，seed
   2 篇文档）；`npx tsx serve.mts`（脚本曾临时置于 totem 仓库根，已删除）
-- `pilot.py` — 全部 25 项检查：onboarding → hub 契约 → 真实管线摄入 → 产物/审计验证；
+- `pilot.py` — 脚本级 25 项检查：onboarding → hub 契约 → 真实管线摄入 → 产物/审计验证；
   `.venv/bin/python pilot.py`
+- `onboard_api.py` — API 级联调准备：建稳定 tenant/key（写入 `.env.local`）+ 授权 + allowlist
+- `pilot_api.py` — API 级联调 10 项检查：connect/refresh/webhook 路由 + 混合搜索检索
 
 复现环境：totem 的 docker PG（5433）+ Emerald 本地 PG（5432）+ Redis(6379) + Neo4j(docker) +
 Celery worker（prefork, concurrency=2）。

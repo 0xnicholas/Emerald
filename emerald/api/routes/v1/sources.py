@@ -52,6 +52,20 @@ def _entity_from_request(request: Request, entity_id: str) -> str:
     return entity_id
 
 
+async def _entity_internal_id(request: Request, entity_id: str) -> uuid.UUID:
+    """Authorize and resolve the public external id to the binding FK.
+
+    Bindings are scoped to ``entities.id`` (internal UUID); the API's
+    public entity identifier is the external id, so routes that touch
+    the bindings table resolve here.
+    """
+    authorize_entity(request, entity_id)
+    internal = await binding_store.get_entity_internal_id(entity_id)
+    if internal is None:
+        raise HTTPException(status_code=404, detail=f"Entity '{entity_id}' not found")
+    return internal
+
+
 @router.post(
     "/connect",
     dependencies=[Depends(api_key_auth), Depends(require_write_permission), Depends(rate_limit)],
@@ -143,8 +157,8 @@ async def receive_webhook(request: Request) -> dict:
 )
 async def list_sources(entity_id: str, request: Request) -> dict:
     """List source bindings for an entity."""
-    _entity_from_request(request, entity_id)
-    bindings = await binding_store.list_bindings(entity_id)
+    internal = await _entity_internal_id(request, entity_id)
+    bindings = await binding_store.list_bindings(internal)
     return {
         "data": [
             {
@@ -171,7 +185,7 @@ async def refresh_sources(entity_id: str, request: Request) -> dict:
     is the primary binding path (Totem delivers no ``account.connected``
     push — ADR-0011).
     """
-    _entity_from_request(request, entity_id)
+    internal = await _entity_internal_id(request, entity_id)
     hub = get_hub()
     try:
         accounts = await hub.list_accounts(entity_id)
@@ -184,7 +198,7 @@ async def refresh_sources(entity_id: str, request: Request) -> dict:
         if not account.id:
             continue
         binding = await binding_store.upsert_binding(
-            entity_id=entity_id,
+            entity_id=internal,
             provider=account.provider,
             hub_account_id=account.id,
         )

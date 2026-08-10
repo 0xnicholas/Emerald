@@ -49,7 +49,8 @@ async def test_valid_key_with_db_record_authenticates():
     fake_record.is_active = True
 
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = fake_record
+    # Auth query shape: select(ApiKey, Entity.external_id) → .first()
+    mock_result.first.return_value = (fake_record, "ext_user_1")
 
     mock_session = AsyncMock()
     mock_session.execute.return_value = mock_result
@@ -65,7 +66,8 @@ async def test_valid_key_with_db_record_authenticates():
 
     assert result == "authenticated"
     assert getattr(req.state, "permissions", []) == ["read", "write"]
-    assert hasattr(req.state, "entity_id")
+    # The key is scoped to the entity's *external* id (public convention).
+    assert req.state.entity_id == "ext_user_1"
     assert hasattr(req.state, "api_key_id")
 
 
@@ -84,7 +86,7 @@ async def test_expired_key_returns_401():
     fake_record.is_active = True
 
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = fake_record
+    mock_result.first.return_value = (fake_record, "ext_user_1")
 
     mock_session = AsyncMock()
     mock_session.execute.return_value = mock_result
@@ -237,7 +239,7 @@ async def test_revoked_key_returns_401():
     req = FakeRequest(headers={"Authorization": "Bearer em_revoked"})
 
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = None  # revoked → DB miss
+    mock_result.first.return_value = None  # revoked → DB miss
 
     mock_session = AsyncMock()
     mock_session.execute.return_value = mock_result

@@ -76,6 +76,22 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **API 进程级联调暴露的两个真实缺陷（issue #6 补验）** — Totem Pilot 的 API 级联调
+  （真实 API Key + 真实管线端到端，此前从未跑通）暴露：
+  - **key 作用域实体约定错配**：`api_key_auth` 以实体内部 UUID 作 `state.entity_id`，
+    而 API 公共约定（upload.py、schema 示例、管线 external_id 约定）均为 external_id
+    → key 鉴权下搜索/上传永远找不到管线摄入的内容。修复：auth 经 join 取 external_id
+    入 state；sources 路由在触达 bindings 表前经新增的
+    `binding_store.get_entity_internal_id` 解析 external → internal。
+  - **API 引擎默认内存存储**：`create_app` 构建 `MemoryEngine` 未传 `use_db=True`
+    （默认 False）→ 搜索/记忆读写全在进程内，管线写入 DB 的内容 API 永远看不到。
+    修复：默认引擎显式 DB 存储（graph/vector/fast-lane `use_db=True`），与
+    `scripts/persistent_server.py` 对齐。
+  - 修复后 API 级联调 10/10 通过，含**混合搜索实际检索召回**（"Pilot Plan" 2 hits、
+    中文查询 5 hits）。
+
+### Fixed
+
 - **MIME 解析一致性：text/markdown 提取器缺口**（issue #4）— `text/markdown`（及 `application/markdown`）经 MIME 解析到 `markdown` 后无对应提取器，MIME 路径摄入在提取阶段抛 `UnsupportedContentType`。修复：默认提取器注册表补注册 `markdown → TextExtractor`（与 json/csv 同款先例；Markdown 结构由 `MarkdownChunker` 负责，提取阶段为纯文本）。注册表守卫测试的 extractor 类型集合同步包含该别名；新增 `text/markdown` 提取 + 按标题层级分块（H1/H2 分离断言）与 MIME 族别名（`text/markdown`、`application/markdown`）用例。无新增公共 API 面；README 内容类型计数 9→10 对齐。
 
 ### Added

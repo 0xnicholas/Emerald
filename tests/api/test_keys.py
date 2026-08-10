@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,6 +39,7 @@ def _make_client(permissions: list[str] | None = None) -> TestClient:
     ``require_admin_permission`` guard is unit-tested in
     tests/unit/test_auth.py.
     """
+
     async def _auth(request: Request):
         request.state.entity_id = ADMIN_ENTITY
         request.state.api_key_id = "key_admin"
@@ -76,9 +78,7 @@ def _mock_db_session(side_effects: list) -> MagicMock:
     mock_session = AsyncMock()
     mock_session.execute.side_effect = side_effects
     mock_factory = MagicMock()
-    mock_factory.session.return_value.__aenter__ = AsyncMock(
-        return_value=mock_session
-    )
+    mock_factory.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_factory.session.return_value.__aexit__ = AsyncMock(return_value=False)
     return mock_session, mock_factory
 
@@ -135,9 +135,7 @@ def test_create_key_requires_admin(non_admin_client):
 def test_create_key_returns_plaintext_once_and_stores_hash(admin_client):
     """201 + plaintext key (em_ prefix) in the response only; the DB row
     carries only the SHA-256 hash and the prefix."""
-    session, factory = _mock_db_session(
-        [_entity_result(ADMIN_ENTITY)]
-    )
+    session, factory = _mock_db_session([_entity_result(ADMIN_ENTITY)])
     with patch("emerald.api.routes.v1.keys.session_factory", factory):
         response = admin_client.post(
             "/v1/keys",
@@ -164,9 +162,7 @@ def test_create_key_returns_plaintext_once_and_stores_hash(admin_client):
 
 def test_create_key_cross_entity_forbidden(admin_client):
     """An admin key cannot create keys for another entity (403)."""
-    session, factory = _mock_db_session(
-        [_entity_result(OTHER_ENTITY)]
-    )
+    session, factory = _mock_db_session([_entity_result(OTHER_ENTITY)])
     with patch("emerald.api.routes.v1.keys.session_factory", factory):
         response = admin_client.post(
             "/v1/keys",
@@ -356,7 +352,8 @@ def test_expired_key_401_through_real_route():
         result = MagicMock()
         if record.expires_at is None:
             record.expires_at = datetime.now(UTC) - timedelta(days=1)
-        result.scalar_one_or_none.return_value = record
+        # New auth query shape: select(ApiKey, Entity.external_id) → .first()
+        result.first.return_value = (record, "admin_entity")
         return result
 
     session = AsyncMock()
@@ -377,7 +374,7 @@ def test_revoked_key_401_through_real_route():
     from emerald.api import dependencies as deps_module
 
     result = MagicMock()
-    result.scalar_one_or_none.return_value = None  # revoked → filtered out
+    result.first.return_value = None  # revoked → filtered out
     session = AsyncMock()
     session.execute.return_value = result
     factory = MagicMock()
@@ -388,3 +385,37 @@ def test_revoked_key_401_through_real_route():
         response = _make_unauthed_client().get("/v1/keys")
 
     assert response.status_code == 401
+
+
+def test_api_key_auth_scopes_state_to_external_id():
+    """The real auth path must scope the request to the entity's *external*
+    id (the API's public convention) — scoping to the internal UUID made
+    key-authenticated search/upload miss pipeline-ingested content."""
+    from emerald.api import dependencies as deps_module
+
+    record = MagicMock()
+    record.id = uuid.uuid4()
+    record.expires_at = None
+    record.permissions = ["read", "write"]
+    external_id = "dev_user"
+
+    result = MagicMock()
+    result.first.return_value = (record, external_id)
+    session = AsyncMock()
+    session.execute.return_value = result
+    factory = MagicMock()
+    factory.session.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.session.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    request = MagicMock()
+    request.headers = {"Authorization": "Bearer em_dev_test_key_001"}
+    request.state = SimpleNamespace()
+
+    with patch.object(deps_module, "session_factory", factory):
+        import asyncio
+
+        asyncio.run(deps_module.api_key_auth(request))
+
+    assert request.state.entity_id == "dev_user"
+    assert request.state.api_key_id == str(record.id)
+    assert request.state.permissions == ["read", "write"]

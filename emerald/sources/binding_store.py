@@ -33,6 +33,18 @@ async def get_entity_external_id(entity_internal_id: uuid.UUID) -> str | None:
         return result.scalar_one_or_none()
 
 
+async def get_entity_internal_id(external_id: str) -> uuid.UUID | None:
+    """Resolve an entity's public external id to its internal UUID.
+
+    Bindings are FK-scoped to ``entities.id``; routes that receive the
+    external id (the API's public convention) resolve it here before
+    touching the bindings table.
+    """
+    async with session_factory.session() as session:
+        result = await session.execute(select(Entity.id).where(Entity.external_id == external_id))
+        return result.scalar_one_or_none()
+
+
 async def upsert_binding(
     *,
     entity_id: str | uuid.UUID,
@@ -72,9 +84,7 @@ async def get_binding_by_account(hub_account_id: str) -> SourceBinding | None:
     """
     async with session_factory.session() as session:
         result = await session.execute(
-            select(SourceBinding).where(
-                SourceBinding.hub_account_id == hub_account_id
-            )
+            select(SourceBinding).where(SourceBinding.hub_account_id == hub_account_id)
         )
         bindings = list(result.scalars().all())
         if len(bindings) > 1:
@@ -132,7 +142,5 @@ async def update_sync_state(
 
 async def delete_binding(binding_id: uuid.UUID) -> None:
     async with session_factory.session() as session:
-        await session.execute(
-            delete(SourceBinding).where(SourceBinding.id == binding_id)
-        )
+        await session.execute(delete(SourceBinding).where(SourceBinding.id == binding_id))
         await session.commit()

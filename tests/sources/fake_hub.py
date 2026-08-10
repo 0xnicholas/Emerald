@@ -156,6 +156,14 @@ class FakeBindingStore:
             return self.entity_external[entity_internal_id]
         return str(entity_internal_id)
 
+    async def get_entity_internal_id(self, external_id: str) -> str | None:
+        """Inverse of ``entity_external``; identity fallback so route tests
+        that use the external id directly keep working."""
+        for internal, external in self.entity_external.items():
+            if external == external_id:
+                return internal
+        return str(external_id) if external_id else None
+
     async def upsert(self, *, entity_id: str, provider: str, hub_account_id: str) -> FakeBinding:
         for b in self.bindings.values():
             if b.hub_account_id == hub_account_id:
@@ -209,6 +217,7 @@ def patch_binding_store(monkeypatch, store: FakeBindingStore) -> None:
     monkeypatch.setattr(bs, "upsert_binding", store.upsert)
     monkeypatch.setattr(bs, "get_binding_by_account", store.get_by_account)
     monkeypatch.setattr(bs, "get_entity_external_id", store.get_entity_external_id)
+    monkeypatch.setattr(bs, "get_entity_internal_id", store.get_entity_internal_id)
     monkeypatch.setattr(bs, "list_bindings", store.list_for)
     monkeypatch.setattr(bs, "list_all_bindings", store.list_all_active)
     monkeypatch.setattr(bs, "update_sync_state", store.update_state)

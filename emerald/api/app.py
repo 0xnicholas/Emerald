@@ -24,6 +24,9 @@ def _init_engine() -> MemoryEngine:
     """
     import logging
 
+    from emerald.core.fast_lane import FastLaneStore
+    from emerald.core.graph import GraphStore
+    from emerald.core.vector import VectorStore
     from emerald.pipeline.chunking.conversation import ConversationChunker
     from emerald.pipeline.chunking.markdown import MarkdownChunker
     from emerald.pipeline.chunking.registry import ChunkerRegistry
@@ -40,6 +43,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: URL extractor (trafilatura) ---
     try:
         from emerald.pipeline.extraction.url import URLExtractor
+
         extractors.register("url", URLExtractor())
     except ImportError as e:
         logger.warning("URLExtractor not available: %s", e)
@@ -47,6 +51,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: PDF extractor (PyMuPDF) ---
     try:
         from emerald.pipeline.extraction.pdf import PDFExtractor
+
         extractors.register("pdf", PDFExtractor())
     except ImportError as e:
         logger.warning("PDFExtractor not available: %s", e)
@@ -54,6 +59,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: Image extractor (Pillow + pytesseract) ---
     try:
         from emerald.pipeline.extraction.image import ImageExtractor
+
         extractors.register("image", ImageExtractor())
     except ImportError as e:
         logger.warning("ImageExtractor not available: %s", e)
@@ -61,6 +67,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: Audio extractor (faster-whisper) ---
     try:
         from emerald.pipeline.extraction.audio import AudioExtractor
+
         extractors.register("audio", AudioExtractor())
     except ImportError as e:
         logger.warning("AudioExtractor not available: %s", e)
@@ -68,6 +75,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: Video extractor (ffmpeg + faster-whisper) ---
     try:
         from emerald.pipeline.extraction.video import VideoExtractor
+
         extractors.register("video", VideoExtractor())
     except ImportError as e:
         logger.warning("VideoExtractor not available: %s", e)
@@ -75,6 +83,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: Code extractor (tree-sitter) ---
     try:
         from emerald.pipeline.extraction.code import CodeExtractor
+
         extractors.register("code", CodeExtractor())
     except ImportError as e:
         logger.warning("CodeExtractor not available: %s", e)
@@ -92,6 +101,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: PDF chunker (PyMuPDF) ---
     try:
         from emerald.pipeline.chunking.pdf import PDFChunker
+
         chunkers.register("pdf", PDFChunker())
     except ImportError as e:
         logger.warning("PDFChunker not available: %s", e)
@@ -99,6 +109,7 @@ def _init_engine() -> MemoryEngine:
     # --- Optional: Code chunker (tree-sitter) ---
     try:
         from emerald.pipeline.chunking.code import CodeChunker
+
         chunkers.register("code", CodeChunker())
     except ImportError as e:
         logger.warning("CodeChunker not available: %s", e)
@@ -106,6 +117,16 @@ def _init_engine() -> MemoryEngine:
     return MemoryEngine(
         extractor_registry=extractors,
         chunker_registry=chunkers,
+        # The API is the persistent read/write surface: DB-backed stores so
+        # search/memories see pipeline-ingested content (graph/vector/
+        # fast-lane are written by the Celery pipeline with use_db=True).
+        # Defaulting to in-memory stores made every API search return
+        # nothing once content went through the pipeline (surfaced by the
+        # Totem pilot).
+        graph=GraphStore(use_db=True),
+        vector=VectorStore(use_db=True),
+        fast_lane_store=FastLaneStore(use_db=True),
+        use_db=True,
     )
 
 
@@ -113,16 +134,16 @@ def _init_engine() -> MemoryEngine:
 async def lifespan(app: FastAPI):
     settings = get_settings()
     from emerald.core.logging import configure_logging
+
     configure_logging(level=settings.emerald_log_level)
 
     from sqlalchemy import text
 
+    from emerald.core.tracing import init_tracing
+    from emerald.core.tracing_instrumentation import instrument_all
     from emerald.db.neo4j import init_neo4j
     from emerald.db.redis import init_redis
     from emerald.db.session import session_factory
-
-    from emerald.core.tracing import init_tracing
-    from emerald.core.tracing_instrumentation import instrument_all
 
     init_tracing()
     instrument_all()
@@ -136,6 +157,7 @@ async def lifespan(app: FastAPI):
     from emerald.core.tracing import shutdown_tracing
     from emerald.db.neo4j import close_neo4j
     from emerald.db.redis import close_redis
+
     shutdown_tracing()
     await close_neo4j()
     await close_redis()
@@ -145,6 +167,7 @@ async def lifespan(app: FastAPI):
     engine = getattr(app.state, "engine", None)
     if engine:
         from emerald.core.embedder import OpenAIProvider
+
         embedder = getattr(engine, "embedder", None)
         if isinstance(embedder, OpenAIProvider):
             await embedder.close()
@@ -296,17 +319,41 @@ def create_app(engine: MemoryEngine | None = None) -> FastAPI:
     # Register V1 routes
     from emerald.api.routes.v1 import (
         conflicts as v1_conflicts,
+    )
+    from emerald.api.routes.v1 import (
         connectors as v1_connectors,
+    )
+    from emerald.api.routes.v1 import (
         extract as v1_extract,
+    )
+    from emerald.api.routes.v1 import (
         keys as v1_keys,
+    )
+    from emerald.api.routes.v1 import (
         memories as v1_memories,
+    )
+    from emerald.api.routes.v1 import (
         pipelines as v1_pipelines,
+    )
+    from emerald.api.routes.v1 import (
         profiles as v1_profiles,
+    )
+    from emerald.api.routes.v1 import (
         search as v1_search,
+    )
+    from emerald.api.routes.v1 import (
         sessions as v1_sessions,
+    )
+    from emerald.api.routes.v1 import (
         sources as v1_sources,
+    )
+    from emerald.api.routes.v1 import (
         spaces as v1_spaces,
+    )
+    from emerald.api.routes.v1 import (
         system as v1_system,
+    )
+    from emerald.api.routes.v1 import (
         upload as v1_upload,
     )
 

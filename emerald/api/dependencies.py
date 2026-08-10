@@ -13,6 +13,7 @@ from emerald.config import get_settings
 from emerald.core.session import SessionManager
 from emerald.db.session import session_factory
 from emerald.models.api_key import ApiKey
+from emerald.models.entity import Entity
 
 
 async def api_key_auth(request: Request) -> str:
@@ -28,21 +29,30 @@ async def api_key_auth(request: Request) -> str:
 
     async with session_factory.session() as session:
         result = await session.execute(
-            select(ApiKey).where(
+            select(ApiKey, Entity.external_id)
+            .join(Entity, Entity.id == ApiKey.entity_id)
+            .where(
                 ApiKey.key_hash == key_hash,
                 ApiKey.is_active.is_(True),
             )
         )
-        record = result.scalar_one_or_none()
+        row = result.first()
 
-    if not record:
+    if not row:
         raise HTTPException(401, "Invalid API key")
 
+    record, external_id = row
     if record.expires_at and record.expires_at < datetime.now(UTC):
         raise HTTPException(401, "API key expired")
 
     request.state.api_key_id = str(record.id)
-    request.state.entity_id = str(record.entity_id)
+    # The public entity identifier is the **external** id: upload.py, the
+    # pipeline (external_id convention, P1-1) and every schema example
+    # address entities externally, and all route fixtures scope keys by
+    # external id. Scoping the key by the internal UUID here made
+    # key-authenticated search/upload miss pipeline-ingested content
+    # (entity convention bug, surfaced by the Totem pilot).
+    request.state.entity_id = external_id
     request.state.permissions = record.permissions or []
     return "authenticated"
 
