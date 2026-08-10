@@ -29,6 +29,13 @@ All notable changes to this project will be documented in this file.
   - 每轮验证四件事：旧事实 `is_latest` 翻转为 False 且 `replaced_by` 指向新事实、UPDATES 边从新事实指向旧事实、最新事实按精确文本查询命中 top-1、过期事实不再被召回。指标：`latest_recall@1` / `expired_exclusion_rate` / `is_latest_flip_rate` / `update_relation_rate` / `overall_accuracy`（mock 下全部 1.0，无 API 依赖）。
   - 报告链路接入：JSON 报告（7 维度）与 `benchmark_to_markdown.py` 渲染（含双模型对照模式的每维度列）均包含该维度得分与通过状态。
   - 单元测试（`tests/benchmarks/test_memory_benchmarks.py` 新增 `TestContradictionChain`）：5 轮取代后 is_latest 翻转与 replaced_by 链、召回正确性（最终事实 top-1、过期事实排除）、每轮恰好一条 UPDATES 边、场景函数在 mock 嵌入下确定性（四项指标 == 1.0）。
+- **双门槛评估纯函数**（issue #19，T3）— 绝对分报告的双门槛判定落地为无 IO 纯函数：
+  - `scripts/benchmark_gates.py` 新增 `evaluate_gates(report, mock_baseline) -> GateResults`：发布门槛（每维真实分数 ≥ 对应 mock 基线）与通过门槛（矛盾链 ≥ 80% 且 7 维等权均分 ≥ 70%，等权默认）独立判定，互不掩盖；维度分数取与报告表格一致的 key metric（复用 `_pick_key_metric`），门槛结论与读者在报告中看到的分数同源。
+  - 维度集合不一致、缺矛盾链维度、维度无可比指标时抛 `GateEvaluationError` 并指明维度；两门槛均为 ≥ 语义（恰好 0.8 / 恰好 0.7 即通过）。
+  - mock 基线获取：`load_mock_baseline()` 默认读库内已入库的 `docs/benchmarks/mock-baseline.json`（已生成入库，含全部 7 维度；`reports/` 被 gitignore 不能作基线）；缺文件 / 非法 JSON / 缺 `results` 列表均有明确报错与指引。
+  - CLI：`python scripts/benchmark_gates.py <report.json> [--baseline <mock.json>]` 输出两门槛逐维结论，退出码 0/1/2（双通过 / 门槛失败 / 评估错误），可接入发布流程。
+  - 单元测试（`tests/benchmarks/test_benchmark_gates.py`，25 例）：双通过 / 单维低于基线 / 基线侧与报告侧缺维度 / 缺 results / 缺矛盾链 / 无可比指标 / 非对象条目 / metrics 为空 / 维度重名 / 两侧选中指标不一致 / 临界分边界（矛盾链恰好 0.8 通过、均分恰好 0.7 通过、0.699 不通过，均分比较带 1e-9 浮点容差）/ 基线加载错误路径 / CLI 退出码与 --json 输出。
+  - 文档同步：`docs/roadmap.md` 双门槛公式由过时的「6 维加权均分」更正为 #16/#19 决议的「7 维等权均分 ≥ 70%」（等权默认）；`_pick_key_metric` 升为公共 `pick_key_metric`（跨脚本契约）。
 
 ## [0.4.0] — 2026-07-03
 

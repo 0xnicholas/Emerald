@@ -1,0 +1,187 @@
+{
+  "version": "2.0",
+  "timestamp": "2026-08-10T07:28:24.350074+00:00",
+  "config": {
+    "embeddings": "mock",
+    "embedding_model": "mock",
+    "embedding_dim": 1536,
+    "llm_relationships": false
+  },
+  "results": [
+    {
+      "name": "Fact Recall",
+      "aligns_with": "LongMemEval — Information Extraction",
+      "description": "100 facts → 30 queries across 5 entities. embed=mock",
+      "metrics": {
+        "precision@1": 0.133,
+        "recall@5": 0.133,
+        "mrr": 0.133,
+        "total_facts": 100,
+        "total_queries": 30,
+        "embedding_type": "mock"
+      },
+      "passed": false,
+      "details": {
+        "queries_passed_r1": 4,
+        "queries_passed_r5": 4,
+        "embedding_dim": 1536
+      }
+    },
+    {
+      "name": "Temporal Updates",
+      "aligns_with": "LongMemEval Knowledge Updates + ConvoMem Changing Facts",
+      "description": "10 timelines × 5 sequential updates. embed=mock",
+      "metrics": {
+        "update_detection_rate": 1.0,
+        "final_is_latest_rate": 1.0,
+        "search_accuracy": 1.0,
+        "overall_accuracy": 1.0,
+        "timelines_tested": 10,
+        "total_steps": 50
+      },
+      "passed": true,
+      "details": {
+        "update_detected": 10,
+        "final_is_latest": 10,
+        "search_returns_final": 10
+      }
+    },
+    {
+      "name": "Relationship Classification",
+      "aligns_with": "Custom — UPDATES / EXTENDS / DERIVES_FROM accuracy",
+      "description": "18 relationship pairs + DERIVES_FROM test. llm=disabled",
+      "metrics": {
+        "classification_accuracy": 1.0,
+        "updates_accuracy": 1.0,
+        "extends_accuracy": 1.0,
+        "none_accuracy": 1.0,
+        "derives_detected": true,
+        "total_cases": 18,
+        "llm_enabled": false
+      },
+      "passed": true,
+      "details": {
+        "correct": 18,
+        "total": 18,
+        "per_type": {
+          "updates": {
+            "correct": 7,
+            "total": 7
+          },
+          "extends": {
+            "correct": 6,
+            "total": 6
+          },
+          "none": {
+            "correct": 5,
+            "total": 5
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "name": "Profile Accuracy",
+      "aligns_with": "LoCoMo — Persona Consistency",
+      "description": "20 facts → profile (static + dynamic). Tests coverage and classification.",
+      "metrics": {
+        "coverage": 0.75,
+        "covered_facts": 15,
+        "total_facts": 20,
+        "static_count": 10,
+        "dynamic_count": 5,
+        "has_both_layers": true
+      },
+      "passed": true,
+      "details": {
+        "static_facts": [
+          "用户认为测试驱动开发是最好的开发方式",
+          "用户每周去两次 CrossFit 训练",
+          "用户正在学习 Rust，打算做系统编程",
+          "用户喜欢喝手冲咖啡，用的是 V60 滤杯",
+          "用户是一名开源贡献者，GitHub 有 1500+ star"
+        ],
+        "dynamic_facts": [
+          "用户订阅了 O'Reilly 在线学习平台",
+          "用户喜欢在咖啡馆工作胜过办公室",
+          "用户觉得微服务在大多数场景下是过度设计",
+          "用户对 AI/ML 有浓厚兴趣，在做 side project",
+          "用户每天会阅读技术博客至少 30 分钟"
+        ]
+      }
+    },
+    {
+      "name": "Distractor Resistance",
+      "aligns_with": "LoCoMo / ConvoMem — Multi-message noise resistance",
+      "description": "5 target facts buried in 50 distractors. embed=mock",
+      "metrics": {
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0,
+        "total_noise": 50,
+        "total_targets": 5
+      },
+      "passed": false,
+      "details": {
+        "queries_tested": 5
+      }
+    },
+    {
+      "name": "Forgetting Correctness",
+      "aligns_with": "Custom — Time expiry + noise filtering + episodic decay",
+      "description": "10 mixed facts → forget strategies run. 3 strategies: time expiry, noise filter, episodic decay",
+      "metrics": {
+        "keep_rate": 1.0,
+        "forget_rate": 1.0,
+        "strategies_run": 3,
+        "total_facts": 10,
+        "remaining_facts": 6
+      },
+      "passed": true,
+      "details": {
+        "should_keep_correct": 5,
+        "should_forget_correct": 3,
+        "remaining": [
+          "用户偏好深色模式",
+          "用户觉得楼下咖啡好喝",
+          "用户下周三有会议",
+          "用户住在北京",
+          "用户是一名工程师",
+          "用户喜欢 TypeScript"
+        ],
+        "strategy_results": {
+          "expired": 2,
+          "noise": 2,
+          "episodic_decay": 0
+        }
+      }
+    },
+    {
+      "name": "Contradiction Chain",
+      "aligns_with": "Custom — Multi-round supersession (Temporal Updates depth)",
+      "description": "5 chains × 5 supersession rounds (6 steps each). embed=mock",
+      "metrics": {
+        "latest_recall@1": 1.0,
+        "expired_exclusion_rate": 1.0,
+        "is_latest_flip_rate": 1.0,
+        "update_relation_rate": 1.0,
+        "overall_accuracy": 1.0,
+        "chains_tested": 5,
+        "total_supersessions": 25
+      },
+      "passed": true,
+      "details": {
+        "final_recalled": 5,
+        "expired_excluded": 25,
+        "is_latest_flips_correct": 25,
+        "update_edges_correct": 25
+      }
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "total": 7,
+    "pass_rate": 0.714,
+    "aggregate_score": 0.769
+  }
+}

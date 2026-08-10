@@ -41,7 +41,7 @@ _KEY_METRICS = (
 )
 
 
-def _pick_key_metric(metrics: dict[str, Any]) -> tuple[str, Any] | None:
+def pick_key_metric(metrics: dict[str, Any]) -> tuple[str, Any] | None:
     """Return (key, value) of the most meaningful metric, if any."""
     for key in _KEY_METRICS:
         if key in metrics:
@@ -103,7 +103,7 @@ def render(report: dict[str, Any]) -> str:
     lines.append("|---|---|---|")
 
     for r in report.get("results", []):
-        picked = _pick_key_metric(r.get("metrics", {}))
+        picked = pick_key_metric(r.get("metrics", {}))
         if picked is not None:
             key, value = picked
             key_metric = f"{key}={_fmt_score(value)}"
@@ -206,7 +206,7 @@ def _key_score(result: dict[str, Any] | None) -> Any:
     """The picked key metric value for a result row, or None."""
     if result is None:
         return None
-    picked = _pick_key_metric(result.get("metrics", {}))
+    picked = pick_key_metric(result.get("metrics", {}))
     return picked[1] if picked else None
 
 
