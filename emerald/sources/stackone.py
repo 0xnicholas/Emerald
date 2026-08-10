@@ -107,7 +107,12 @@ class StackOneHubClient(ConnectionHub):
 
     async def list_accounts(self, origin_owner_id: str) -> list[HubAccount]:
         resp = await self._get(ACCOUNTS_PATH, params={"origin_owner_id": origin_owner_id})
-        data = resp.get("data", resp if isinstance(resp, list) else [])
+        # The real API returns a bare JSON list ([]); tolerate both shapes.
+        data = (
+            resp
+            if isinstance(resp, list)
+            else resp.get("data", []) or resp.get("results", [])
+        )
         if isinstance(data, dict):
             data = data.get("results", [])
         accounts = []

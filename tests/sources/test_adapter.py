@@ -135,6 +135,62 @@ async def test_handle_event_syncs_for_change_event(monkeypatch):
     assert result.provider == "googledrive"
 
 
+async def test_handle_event_resolves_internal_uuid_to_external_id(monkeypatch):
+    """P1-1: handle_event must pass the entity's external_id to the pipeline.
+
+    The binding stores the internal UUID (FK to entities.id); the pipeline
+    resolves entities by external_id. Passing the UUID caused
+    ``Entity not found`` for every event-driven ingestion.
+    """
+    hub = FakeHub()
+    hub.listings["acc_1"] = [{"id": "f1", "title": "notes.md", "etag": "v1"}]
+    hub.contents["acc_1:f1"] = {"id": "f1", "content": "## Notes body"}
+
+    store = FakeBindingStore()
+    internal_uuid = "550e8400-e29b-41d4-a716-446655440000"
+    await store.upsert(
+        entity_id=internal_uuid, provider="googledrive", hub_account_id="acc_1"
+    )
+    store.entity_external[internal_uuid] = "user_1"
+    patch_binding_store(monkeypatch, store)
+
+    captured: list[dict] = []
+    adapter = HubAdapter(hub)
+    event = HubEvent(
+        event_type="file.changed",
+        provider="googledrive",
+        account_id="acc_1",
+    )
+    result = await adapter.handle_event(event, content_cb=_capture_sink(captured))
+
+    assert result.ingested == 1
+    assert captured[0]["entity_id"] == "user_1"
+    assert captured[0]["entity_id"] != internal_uuid
+
+
+async def test_handle_event_unknown_entity_returns_error(monkeypatch):
+    """When the binding's entity no longer exists, fail soft, don't crash."""
+    hub = FakeHub()
+    store = FakeBindingStore()
+    await store.upsert(
+        entity_id="550e8400-e29b-41d4-a716-446655440001",
+        provider="googledrive",
+        hub_account_id="acc_1",
+    )
+    store.missing_entities.add("550e8400-e29b-41d4-a716-446655440001")
+    patch_binding_store(monkeypatch, store)
+
+    adapter = HubAdapter(hub)
+    event = HubEvent(
+        event_type="file.changed",
+        provider="googledrive",
+        account_id="acc_1",
+    )
+    result = await adapter.handle_event(event, content_cb=_capture_sink([]))
+    assert result.ingested == 0
+    assert result.errors
+
+
 async def test_handle_event_unknown_account_returns_error(monkeypatch):
     hub = FakeHub()
     store = FakeBindingStore()

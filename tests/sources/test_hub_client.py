@@ -119,6 +119,38 @@ async def test_server_error_raises_hub_error():
     await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_list_accounts_accepts_bare_json_list():
+    """P1-2: the real API returns a bare ``[]`` (not ``{"data": [...]}``);
+    parsing it must not crash with AttributeError."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {"id": "acc_1", "provider": "googledrive", "status": "active"},
+            ],
+        )
+
+    client = _make_client(handler)
+    accounts = await client.list_accounts("user_1")
+    assert len(accounts) == 1
+    assert accounts[0].id == "acc_1"
+    assert accounts[0].provider == "googledrive"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_accepts_empty_bare_list():
+    """Empty bare list must return no accounts without crashing."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    client = _make_client(handler)
+    accounts = await client.list_accounts("user_1")
+    assert accounts == []
+    await client.aclose()
+
+
 def _sign(raw: bytes, secret: str) -> str:
     return base64.urlsafe_b64encode(
         hmac.new(secret.encode(), raw, hashlib.sha256).digest()

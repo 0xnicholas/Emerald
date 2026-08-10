@@ -120,6 +120,8 @@ Neo4j、搜索）。FakeHub 仅替换 hub 的 HTTP 往返，不改变适配/摄�
 
 ### P1 — Pilot 代码缺陷（本票验证范围内）
 
+> 状态（2026-08-10）：**已全部修复**，测试复验通过（见 §7）。
+
 4. **P1-1 `handle_event`/`tasks.py` 传错 entity_id 约定**
    `binding.entity_id` 是内部 UUID（FK 到 entities.id），而
    `PipelineOrchestrator.process_async`/`default_content_cb` 按 `external_id` 解析实体
@@ -127,10 +129,16 @@ Neo4j、搜索）。FakeHub 仅替换 hub 的 HTTP 往返，不改变适配/摄�
    （或统一实体解析约定，需 ADR 级决策）。
    同时暴露：`get_binding_by_account` 用 `scalar_one_or_none`，同一 hub_account_id 跨实体
    重复绑定时抛 `MultipleResultsFound`。
+   **修复**：新增 `binding_store.get_entity_external_id`（内部 UUID → external_id 查询），
+   `HubAdapter.handle_event` 与 `sources/tasks.py::_run_sync_all` 摄入前解析；binding 对应
+   实体缺失时 fail-soft（`entity for binding not found` 错误，不崩溃）。`get_binding_by_account`
+   改为取首个匹配并记 warning，不再抛 `MultipleResultsFound`。
 5. **P1-2 `list_accounts` 对裸 JSON list 响应崩溃**（`emerald/sources/stackone.py:110`）
    真实 API 返回 `[]`（非 `{"data": []}`），`resp.get("data", ...)` 在 list 上调用 →
    AttributeError。**`/v1/sources/refresh` 以 500 崩溃**（路由级已复现）。
    无 happy-path 测试覆盖（现有测试仅覆盖 503 错误路径）。
+   **修复**：先判 `isinstance(resp, list)` 直接取用，否则 `data`/`results` 键二选一；
+   新增 `tests/sources/test_hub_client.py` 裸 list 与空 list 两个 happy-path 用例。
 6. **P1-3 `sources.py` 用 stdlib logging 传 structlog kwargs**
    `logger.warning("hub_connect_session_failed", error=...)`（83 行）、
    `logger.info("hub_event_received", event_type=...)`（111–114 行）、
@@ -138,6 +146,8 @@ Neo4j、搜索）。FakeHub 仅替换 hub 的 HTTP 往返，不改变适配/摄�
    TypeError。**connect/refresh 的 502 错误路径实际以 500 + 未处理异常崩溃**
    （FailHub 模拟已复现）；`info` 调用在 root logger 为 INFO 时同样崩溃
    （当前因 root 默认 WARNING 而静默跳过，属潜伏缺陷）。
+   **修复**：路由 logger 改用 structlog；新增路由级用例（`_FailingHub`）
+   断言 connect/refresh 的 hub 失败返回 502 而非 500。
 
 ### 外部阻塞（非 Emerald 代码）
 
@@ -216,3 +226,25 @@ session factory×3、redis 生命周期×2，其中 1 个并入现有文件计�
 
 **P0 全部关闭后**，解除 #7 的剩余条件为：P1-1/P1-2/P1-3 修复（Pilot 缺陷）+
 StackOne 侧 auth config 配置（外部），然后复验同步路径 S1/S5/S6/S7。
+
+---
+
+## 7. P1 修复后复验（2026-08-10）
+
+P1-1/P1-2/P1-3 修复后，以测试级复验（真实 StackOne 联调仍受外部 auth config
+阻塞，见 §3 外部阻塞）：
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| S1' 事件 → `handle_event` → 摄入（entity_id 约定） | ✅ PASS | `tests/sources/test_adapter.py::test_handle_event_resolves_internal_uuid_to_external_id`：binding 持内部 UUID 时，content sink 收到 external_id（`user_1`），摄入成功；`test_handle_event_unknown_entity_returns_error`：实体缺失 fail-soft |
+| S8' 兜底同步任务（Celery Beat sweep）entity_id 约定 | ✅ PASS | `tests/sources/test_sync_tasks.py`：`_run_sync_all` 摄入前解析 external_id；缺失实体记 error 不中断 sweep |
+| 重复绑定容错 | ✅ PASS | `tests/sources/test_binding_store.py`：同一 hub_account_id 双绑定返回首个，无 `MultipleResultsFound` |
+| S1' 路由级（webhook → 摄入） | ✅ PASS | 既有 `test_webhook_accepts_valid_signature` 保持绿（entity_id 经 sink 捕获） |
+| P1-2 refresh 裸 list | ✅ PASS | `tests/sources/test_hub_client.py`：裸 `[...]` 与空 `[]` 均正常解析 |
+| P1-3 502 错误路径 | ✅ PASS | `tests/sources/test_routes.py::test_connect_hub_failure_returns_502_not_500`、`test_refresh_hub_failure_returns_502_not_500`：hub 失败返回 502，不再以 500 崩溃 |
+
+**新增测试 10 个**（adapter×2、sync_tasks×2、binding_store×2、hub_client×2、routes×2）。
+全量基线：`818 passed / 42 failed`（42 与 §5 文档化基线逐项一致，无新增失败）。
+
+**P1 全部关闭后**，解除 #7 的剩余条件仅剩：StackOne 侧 provider auth config 配置
+（外部，§3 外部阻塞）+ 真实账户端到端复验 S1/S5/S6/S7。

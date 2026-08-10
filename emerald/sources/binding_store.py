@@ -13,9 +13,24 @@ import structlog
 from sqlalchemy import delete, select
 
 from emerald.db.session import session_factory
+from emerald.models.entity import Entity
 from emerald.models.source_binding import SourceBinding
 
 logger = structlog.get_logger(__name__)
+
+
+async def get_entity_external_id(entity_internal_id: uuid.UUID) -> str | None:
+    """Resolve an entity's internal UUID to its external_id.
+
+    Bindings store the internal UUID (FK to ``entities.id``); the pipeline
+    resolves entities by ``external_id``, so the adapter layer must convert
+    before ingestion (P1-1).
+    """
+    async with session_factory.session() as session:
+        result = await session.execute(
+            select(Entity.external_id).where(Entity.id == entity_internal_id)
+        )
+        return result.scalar_one_or_none()
 
 
 async def upsert_binding(
@@ -49,13 +64,26 @@ async def upsert_binding(
 
 
 async def get_binding_by_account(hub_account_id: str) -> SourceBinding | None:
+    """Return the binding for an account, or None if unbound.
+
+    The same hub account may be bound to more than one entity (each
+    connect session is entity-scoped); pick the first deterministically
+    instead of raising ``MultipleResultsFound`` (P1-1 companion).
+    """
     async with session_factory.session() as session:
         result = await session.execute(
             select(SourceBinding).where(
                 SourceBinding.hub_account_id == hub_account_id
             )
         )
-        return result.scalar_one_or_none()
+        bindings = list(result.scalars().all())
+        if len(bindings) > 1:
+            logger.warning(
+                "binding_account_duplicate",
+                hub_account_id=hub_account_id,
+                count=len(bindings),
+            )
+        return bindings[0] if bindings else None
 
 
 async def list_bindings(entity_id: str | uuid.UUID) -> list[SourceBinding]:

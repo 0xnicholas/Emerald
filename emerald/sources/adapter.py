@@ -277,10 +277,27 @@ class HubAdapter:
                 errors=[],
             )
 
+        # The binding stores the entity's internal UUID, but the pipeline
+        # resolves entities by external_id — resolve here (P1-1) or every
+        # event-driven ingestion fails with "Entity not found".
+        external_id = await binding_store.get_entity_external_id(binding.entity_id)
+        if external_id is None:
+            logger.warning(
+                "event_for_missing_entity",
+                account_id=event.account_id,
+                entity_id=str(binding.entity_id),
+                event_type=event.event_type,
+            )
+            return IngestResult(
+                account_id=event.account_id,
+                provider=binding.provider,
+                errors=["entity for binding not found"],
+            )
+
         return await self.ingest_account(
             account_id=event.account_id,
             provider=binding.provider,
-            entity_id=str(binding.entity_id),
+            entity_id=external_id,
             content_cb=content_cb,
         )
 

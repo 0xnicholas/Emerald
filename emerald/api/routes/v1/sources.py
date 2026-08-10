@@ -8,9 +8,9 @@ created when the hub's ``account.connected`` event arrives (or via
 
 from __future__ import annotations
 
-import logging
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,7 @@ from emerald.sources import binding_store
 from emerald.sources.factory import get_hub
 from emerald.sources.hub import ConnectionHubError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
 

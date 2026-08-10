@@ -38,13 +38,25 @@ async def _run_sync_all(_task) -> dict:
     hub = get_hub()
     adapter = HubAdapter(hub)
     content_cb = default_content_cb()
-    results = []
+    results: list[dict[str, object]] = []
     for binding in bindings:
+        # Bindings store the entity's internal UUID; the pipeline resolves
+        # by external_id (P1-1). Skip bindings whose entity is gone.
+        external_id = await binding_store.get_entity_external_id(binding.entity_id)
+        if external_id is None:
+            results.append(
+                {
+                    "account_id": binding.hub_account_id,
+                    "provider": binding.provider,
+                    "error": "entity for binding not found",
+                }
+            )
+            continue
         try:
             result = await adapter.ingest_account(
                 account_id=binding.hub_account_id,
                 provider=binding.provider,
-                entity_id=str(binding.entity_id),
+                entity_id=external_id,
                 content_cb=content_cb,
             )
             results.append(

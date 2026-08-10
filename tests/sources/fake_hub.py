@@ -144,7 +144,16 @@ class FakeBindingStore:
 
     def __init__(self) -> None:
         self.bindings: dict[str, FakeBinding] = {}
+        self.entity_external: dict[str, str] = {}  # internal UUID -> external_id
+        self.missing_entities: set[str] = set()  # internal UUIDs with no entity row
         self._next_id = 1
+
+    async def get_entity_external_id(self, entity_internal_id: str) -> str | None:
+        if entity_internal_id in self.missing_entities:
+            return None
+        if entity_internal_id in self.entity_external:
+            return self.entity_external[entity_internal_id]
+        return str(entity_internal_id)
 
     async def upsert(self, *, entity_id: str, provider: str, hub_account_id: str) -> FakeBinding:
         for b in self.bindings.values():
@@ -168,6 +177,9 @@ class FakeBindingStore:
 
     async def list_for(self, entity_id: str) -> list[FakeBinding]:
         return [b for b in self.bindings.values() if b.entity_id == entity_id]
+
+    async def list_all_active(self) -> list[FakeBinding]:
+        return [b for b in self.bindings.values() if b.sync_status == "active"]
 
     async def update_state(
         self,
@@ -195,6 +207,8 @@ def patch_binding_store(monkeypatch, store: FakeBindingStore) -> None:
 
     monkeypatch.setattr(bs, "upsert_binding", store.upsert)
     monkeypatch.setattr(bs, "get_binding_by_account", store.get_by_account)
+    monkeypatch.setattr(bs, "get_entity_external_id", store.get_entity_external_id)
     monkeypatch.setattr(bs, "list_bindings", store.list_for)
+    monkeypatch.setattr(bs, "list_all_bindings", store.list_all_active)
     monkeypatch.setattr(bs, "update_sync_state", store.update_state)
     monkeypatch.setattr(bs, "delete_binding", store.delete)

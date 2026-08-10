@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from emerald.api.app import create_app
 from emerald.api.dependencies import api_key_auth, rate_limit, require_write_permission
+from emerald.sources.hub import ConnectionHubError
 from tests.sources.fake_hub import FakeBindingStore, FakeHub, _sign, patch_binding_store
 
 
@@ -174,3 +175,30 @@ def test_delete_source(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["deleted"] is True
+
+
+class _FailingHub(FakeHub):
+    """Hub whose failure paths raise ConnectionHubError (502 territory)."""
+
+    async def create_connect_session(self, **kwargs):
+        raise ConnectionHubError("connect session failed")
+
+    async def list_accounts(self, origin_owner_id: str):
+        raise ConnectionHubError("accounts failed")
+
+
+def test_connect_hub_failure_returns_502_not_500(monkeypatch):
+    """P1-3: hub failure on connect must surface as 502, not crash to 500."""
+    client, _ = _make_client(monkeypatch, _FailingHub())
+    resp = client.post(
+        "/v1/sources/connect",
+        json={"entity_id": "user_1", "provider": "googledrive"},
+    )
+    assert resp.status_code == 502
+
+
+def test_refresh_hub_failure_returns_502_not_500(monkeypatch):
+    """P1-3: hub failure on refresh must surface as 502, not crash to 500."""
+    client, _ = _make_client(monkeypatch, _FailingHub())
+    resp = client.post("/v1/sources/refresh", params={"entity_id": "user_1"})
+    assert resp.status_code == 502
