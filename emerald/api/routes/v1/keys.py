@@ -34,34 +34,31 @@ from emerald.api.dependencies import (
     rate_limit,
     require_admin_permission,
 )
+from emerald.api.schemas.keys import (
+    CreateKeyEnvelope,
+    CreateKeyRequest,
+    ListKeysEnvelope,
+)
 from emerald.db.session import session_factory
 
 router = APIRouter(tags=["Keys"])
-
-_authorize_entity = authorize_entity
 
 
 @router.post(
     "/keys",
     status_code=status.HTTP_201_CREATED,
+    response_model=CreateKeyEnvelope,
     dependencies=[
         Depends(api_key_auth),
         Depends(require_admin_permission),
         Depends(rate_limit),
     ],
 )
-async def create_key(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+async def create_key(
+    request: Request, body: CreateKeyRequest
+) -> dict[str, Any]:
     """Create an API key for the caller's entity.  The plaintext key is
     returned exactly once; only its SHA-256 hash is stored."""
-    from emerald.api.schemas.keys import ALLOWED_PERMISSIONS, CreateKeyRequest
-
-    parsed = CreateKeyRequest.model_validate(body)
-    if not parsed.permissions or not set(parsed.permissions) <= set(ALLOWED_PERMISSIONS):
-        raise HTTPException(
-            status_code=422,
-            detail=f"permissions must be a non-empty subset of {list(ALLOWED_PERMISSIONS)}",
-        )
-
     from sqlalchemy import select
 
     from emerald.models.api_key import ApiKey
@@ -70,25 +67,25 @@ async def create_key(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     start = time.perf_counter()
     async with session_factory.session() as session:
         entity_result = await session.execute(
-            select(Entity).where(Entity.external_id == parsed.entity_id)
+            select(Entity).where(Entity.external_id == body.entity_id)
         )
         entity = entity_result.scalar_one_or_none()
         if not entity:
             raise HTTPException(
-                status_code=404, detail=f"Entity not found: {parsed.entity_id}"
+                status_code=404, detail=f"Entity not found: {body.entity_id}"
             )
         # Entity scope: the internal UUID comparison (authorize_entity with
         # external ids would never match — request.state.entity_id is the
         # internal UUID from the caller's ApiKey record).
-        _authorize_entity(request, str(entity.id))
+        authorize_entity(request, str(entity.id))
 
         raw_key = "em_" + secrets.token_urlsafe(24)
         record = ApiKey(
             entity_id=entity.id,
             key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
             key_prefix=raw_key[:8],
-            permissions=sorted(set(parsed.permissions)),
-            expires_at=parsed.expires_at,
+            permissions=body.permissions,
+            expires_at=body.expires_at,
             is_active=True,
         )
         session.add(record)
@@ -100,8 +97,8 @@ async def create_key(request: Request, body: dict[str, Any]) -> dict[str, Any]:
             "key_id": str(record.id),
             "key_prefix": raw_key[:8],
             "permissions": record.permissions,
-            "expires_at": parsed.expires_at.isoformat() if parsed.expires_at else None,
-            "entity_id": parsed.entity_id,
+            "expires_at": body.expires_at.isoformat() if body.expires_at else None,
+            "entity_id": body.entity_id,
         },
         "meta": {
             "request_id": getattr(request.state, "request_id", str(uuid4())[:8]),
@@ -112,6 +109,7 @@ async def create_key(request: Request, body: dict[str, Any]) -> dict[str, Any]:
 
 @router.get(
     "/keys",
+    response_model=ListKeysEnvelope,
     dependencies=[
         Depends(api_key_auth),
         Depends(require_admin_permission),
@@ -139,6 +137,17 @@ async def list_keys(
     caller_entity = UUID(getattr(request.state, "entity_id", ""))
     start = time.perf_counter()
 
+    # Keyset cursor over (created_at, id): the id alone is a random UUID,
+    # so it carries no ordering information (issue #5 review — the naive
+    # `id < cursor` form skips/duplicates rows).
+    cursor_created: str | None = None
+    cursor_id: str | None = None
+    if token.cursor:
+        parts = token.cursor.split("|", 1)
+        if len(parts) != 2:
+            raise HTTPException(status_code=422, detail="Invalid page token")
+        cursor_created, cursor_id = parts
+
     async with session_factory.session() as session:
         query = (
             select(ApiKey)
@@ -146,8 +155,14 @@ async def list_keys(
             .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
             .limit(effective_limit + 1)
         )
-        if token.cursor:
-            query = query.where(ApiKey.id < token.cursor)
+        if cursor_created is not None and cursor_id is not None:
+            query = query.where(
+                (ApiKey.created_at < cursor_created)
+                | (
+                    (ApiKey.created_at == cursor_created)
+                    & (ApiKey.id < UUID(cursor_id))
+                )
+            )
 
         keys = (await session.execute(query)).scalars().all()
 
@@ -157,7 +172,11 @@ async def list_keys(
 
     next_token = None
     if has_more and keys:
-        next_token = PageToken.encode(cursor=str(keys[-1].id), limit=effective_limit)
+        last = keys[-1]
+        cursor = (
+            f"{last.created_at.isoformat() if last.created_at else ''}|{last.id}"
+        )
+        next_token = PageToken.encode(cursor=cursor, limit=effective_limit)
 
     items = [
         {
@@ -210,7 +229,7 @@ async def revoke_key(request: Request, key_id: str) -> None:
             raise HTTPException(status_code=404, detail="Key not found")
 
         # Entity scope: internal UUID vs internal UUID (see create_key).
-        _authorize_entity(request, str(record.entity_id))
+        authorize_entity(request, str(record.entity_id))
 
         record.is_active = False
         await session.commit()

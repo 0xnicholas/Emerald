@@ -61,7 +61,7 @@ All notable changes to this project will be documented in this file.
   - `GET /v1/keys` — 列出：admin 权限，游标分页（`page_token`/`page_size`，复用 `PageToken` 与 files 列表同款 keyset 查询），返回元数据（key_id/前缀/权限/过期/最后使用/状态），不含哈希。
   - `DELETE /v1/keys/{key_id}` — 吊销：admin 权限，软删除（`is_active=False`）；鉴权查询本就过滤 `is_active=True`，吊销后下一请求即 401（含过期 key 401 既有行为）。
   - 新增 `require_admin_permission` 依赖（403 无 admin）；`emerald/api/schemas/keys.py` 请求/响应模型；OpenAPI 重新生成（30 paths / 39 operations），路由完整性守卫测试收录 `/v1/keys` 与 `/v1/keys/{key_id}`；SDK 零新增方法（负面暴露测试保持全绿）。
-  - 测试（`tests/api/test_keys.py` 12 例 + `tests/unit/test_auth.py` +3 例）：admin 403 / 明文一次性返回与哈希存储断言（捕获 `session.add` 记录）/ 跨实体 403 / 实体不存在 404 / 非法权限 422 / 过期与吊销 401（auth 层）/ 列表无哈希与分页结构 / 吊销 204 与 is_active 翻转 / 实体隔离 / key 不存在 404。集成指南 §2 重写为管理端点流程 + bootstrap 指引（首个 admin key 带外创建）。
+  - 测试（`tests/api/test_keys.py` 16 例 + `tests/unit/test_auth.py` +3 例）：admin 403 / 明文一次性返回与哈希存储断言（捕获 `session.add` 记录）/ 跨实体 403 / 实体不存在 404 / 非法权限 422 / 过期与吊销 401（auth 单元层 + 真实路由层双覆盖）/ 列表无哈希与分页结构 / 吊销 204 与 is_active 翻转 / 实体隔离 / key 不存在 404 / 畸形请求体 422（非 500）/ naive 过期时间强制 UTC。集成指南 §2 重写为管理端点流程 + bootstrap 指引（首个 admin key 带外创建）。
 
 ## [0.4.0] — 2026-07-03
 

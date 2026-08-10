@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from emerald.api.schemas.common import PaginationMeta
 
 ALLOWED_PERMISSIONS = ("read", "write", "admin")
+
+
+class _Meta(BaseModel):
+    request_id: str
+    took_ms: int
 
 
 class CreateKeyRequest(BaseModel):
@@ -25,6 +32,28 @@ class CreateKeyRequest(BaseModel):
         default=None,
         description="Optional expiry; the key returns 401 after this time",
     )
+
+    @field_validator("permissions")
+    @classmethod
+    def _validate_permissions(cls, value: list[str]) -> list[str]:
+        if not value or not set(value) <= set(ALLOWED_PERMISSIONS):
+            raise ValueError(
+                f"permissions must be a non-empty subset of {list(ALLOWED_PERMISSIONS)}"
+            )
+        return sorted(set(value))
+
+    @field_validator("expires_at")
+    @classmethod
+    def _coerce_aware(cls, value: datetime | None) -> datetime | None:
+        """Naive datetimes are interpreted as UTC.
+
+        The stored column is timestamptz and the auth check compares
+        against ``datetime.now(UTC)``; a naive value would raise on
+        comparison instead of expiring (issue #5 review).
+        """
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
 
 class KeyMetadata(BaseModel):
@@ -50,3 +79,19 @@ class CreateKeyResponse(BaseModel):
     permissions: list[str]
     expires_at: datetime | None = None
     entity_id: str
+
+
+class CreateKeyEnvelope(BaseModel):
+    data: CreateKeyResponse
+    meta: _Meta
+
+
+class ListKeysData(BaseModel):
+    items: list[KeyMetadata]
+    page_size: int
+
+
+class ListKeysEnvelope(BaseModel):
+    data: ListKeysData
+    meta: _Meta
+    pagination: PaginationMeta

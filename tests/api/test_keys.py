@@ -293,3 +293,98 @@ def test_revoke_key_not_found_404(admin_client):
 
     assert response.status_code == 404
     session.commit.assert_not_awaited()
+
+
+# ── Validation + auth-path hardening (issue #5 review) ───────────────────
+
+
+def test_create_key_malformed_types_422(admin_client):
+    """Non-string entity_id / non-string permissions → 422, not 500."""
+    response = admin_client.post(
+        "/v1/keys",
+        json={"entity_id": 123, "permissions": ["read"]},
+    )
+    assert response.status_code == 422
+
+
+def test_create_key_naive_expiry_coerced_to_utc(admin_client):
+    """A naive expires_at is interpreted as UTC so the auth expiry
+    comparison (aware) never raises."""
+    session, factory = _mock_db_session([_entity_result(ADMIN_ENTITY)])
+    with patch("emerald.api.routes.v1.keys.session_factory", factory):
+        response = admin_client.post(
+            "/v1/keys",
+            json={
+                "entity_id": "user_alice",
+                "permissions": ["read"],
+                "expires_at": "2026-09-01T00:00:00",  # naive
+            },
+        )
+    assert response.status_code == 201
+    added = session.add.call_args[0][0]
+    assert added.expires_at.tzinfo is not None
+    assert added.expires_at.utcoffset().total_seconds() == 0  # UTC
+
+
+def _make_unauthed_client() -> TestClient:
+    """Client with NO auth override — the real api_key_auth runs against a
+    mocked session, exercising the route's auth path end to end."""
+    from emerald.api.dependencies import rate_limit
+
+    async def _bypass_rate(request: Request):
+        return None
+
+    app = create_app()
+    app.dependency_overrides[rate_limit] = _bypass_rate
+    return TestClient(app, headers={"Authorization": "Bearer em_expired"})
+
+
+def test_expired_key_401_through_real_route():
+    """An expired key is rejected with 401 by the real auth path."""
+    from emerald.api import dependencies as deps_module
+
+    record = MagicMock()
+    record.id = uuid.uuid4()
+    record.entity_id = uuid.UUID(ADMIN_ENTITY)
+    record.permissions = ["admin"]
+    record.expires_at = None
+    record.is_active = True
+    # simulate the expired-record branch of api_key_auth
+    from datetime import UTC, datetime, timedelta
+
+    async def _expired_execute(statement):
+        result = MagicMock()
+        if record.expires_at is None:
+            record.expires_at = datetime.now(UTC) - timedelta(days=1)
+        result.scalar_one_or_none.return_value = record
+        return result
+
+    session = AsyncMock()
+    session.execute.side_effect = _expired_execute
+    factory = MagicMock()
+    factory.session.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.session.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    with patch.object(deps_module, "session_factory", factory):
+        response = _make_unauthed_client().get("/v1/keys")
+
+    assert response.status_code == 401
+
+
+def test_revoked_key_401_through_real_route():
+    """A revoked key (is_active filter → DB miss) is rejected with 401 by
+    the real auth path."""
+    from emerald.api import dependencies as deps_module
+
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None  # revoked → filtered out
+    session = AsyncMock()
+    session.execute.return_value = result
+    factory = MagicMock()
+    factory.session.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.session.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    with patch.object(deps_module, "session_factory", factory):
+        response = _make_unauthed_client().get("/v1/keys")
+
+    assert response.status_code == 401

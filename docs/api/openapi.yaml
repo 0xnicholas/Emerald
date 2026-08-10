@@ -1253,18 +1253,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-              title: Body
+              $ref: '#/components/schemas/CreateKeyRequest'
       responses:
         '201':
           description: Successful Response
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
-                title: Response Create Key V1 Keys Post
+                $ref: '#/components/schemas/CreateKeyEnvelope'
         '422':
           description: Validation Error
           content:
@@ -1305,9 +1301,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
-                title: Response List Keys V1 Keys Get
+                $ref: '#/components/schemas/ListKeysEnvelope'
         '422':
           description: Validation Error
           content:
@@ -1474,6 +1468,85 @@ components:
       - entity_id
       - provider
       title: ConnectRequest
+    CreateKeyEnvelope:
+      properties:
+        data:
+          $ref: '#/components/schemas/CreateKeyResponse'
+        meta:
+          $ref: '#/components/schemas/_Meta'
+      type: object
+      required:
+      - data
+      - meta
+      title: CreateKeyEnvelope
+    CreateKeyRequest:
+      properties:
+        entity_id:
+          type: string
+          title: Entity Id
+          description: External entity id the key is scoped to
+        permissions:
+          items:
+            type: string
+          type: array
+          title: Permissions
+          description: 'Permission levels: read, write, admin'
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+          description: Optional expiry; the key returns 401 after this time
+      type: object
+      required:
+      - entity_id
+      - permissions
+      title: CreateKeyRequest
+      description: 'Create a new API key for the caller''s entity.
+
+
+        ``entity_id`` is the external entity id and must match the caller''s
+
+        own entity (management is entity-scoped: an admin key manages keys
+
+        within its own entity only).'
+    CreateKeyResponse:
+      properties:
+        key:
+          type: string
+          title: Key
+        key_id:
+          type: string
+          title: Key Id
+        key_prefix:
+          type: string
+          title: Key Prefix
+        permissions:
+          items:
+            type: string
+          type: array
+          title: Permissions
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        entity_id:
+          type: string
+          title: Entity Id
+      type: object
+      required:
+      - key
+      - key_id
+      - key_prefix
+      - permissions
+      - entity_id
+      title: CreateKeyResponse
+      description: 'Create response.  ``key`` (plaintext) appears exactly once — the
+
+        server stores only its SHA-256 hash and cannot recover it.'
     ExtractUrlRequest:
       properties:
         url:
@@ -1494,6 +1567,101 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    KeyMetadata:
+      properties:
+        key_id:
+          type: string
+          title: Key Id
+        key_prefix:
+          type: string
+          title: Key Prefix
+        permissions:
+          items:
+            type: string
+          type: array
+          title: Permissions
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Used At
+        is_active:
+          type: boolean
+          title: Is Active
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+      type: object
+      required:
+      - key_id
+      - key_prefix
+      - permissions
+      - is_active
+      title: KeyMetadata
+      description: 'Key metadata for list responses — never carries the hash or the
+
+        raw key (they are not recoverable by design).'
+    ListKeysData:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/KeyMetadata'
+          type: array
+          title: Items
+        page_size:
+          type: integer
+          title: Page Size
+      type: object
+      required:
+      - items
+      - page_size
+      title: ListKeysData
+    ListKeysEnvelope:
+      properties:
+        data:
+          $ref: '#/components/schemas/ListKeysData'
+        meta:
+          $ref: '#/components/schemas/_Meta'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+      type: object
+      required:
+      - data
+      - meta
+      - pagination
+      title: ListKeysEnvelope
+    PaginationMeta:
+      properties:
+        next_page_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Page Token
+          description: Token for the next page. null if this is the last page.
+        has_more:
+          type: boolean
+          title: Has More
+          description: Whether there are more results beyond this page.
+          default: false
+        total_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total Count
+          description: Total number of results (when available, may be null for search).
+      type: object
+      title: PaginationMeta
+      description: Cursor-based pagination metadata (v2).
     PipelineStatusResponse:
       properties:
         pipeline_id:
@@ -1749,6 +1917,19 @@ components:
       - msg
       - type
       title: ValidationError
+    _Meta:
+      properties:
+        request_id:
+          type: string
+          title: Request Id
+        took_ms:
+          type: integer
+          title: Took Ms
+      type: object
+      required:
+      - request_id
+      - took_ms
+      title: _Meta
   securitySchemes:
     ApiKeyAuth:
       type: http
