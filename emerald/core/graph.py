@@ -614,6 +614,16 @@ class GraphStore:
                 )
             return
 
+        # Parity with the Cypher branch: the source (new) memory must exist,
+        # otherwise the operation is a no-op (no phantom archiving).
+        new_exists = any(
+            m["id"] == new_memory_id
+            for memories in self._memories.values()
+            for m in memories
+        )
+        if not new_exists:
+            return
+
         for memories in self._memories.values():
             for m in memories:
                 if m["id"] == old_memory_id and m["is_latest"]:

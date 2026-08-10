@@ -1,15 +1,14 @@
 """Tests for pipeline Celery tasks (with eager/memory broker)."""
 
-import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from celery import Celery
 
 from emerald.pipeline.tasks import (
-    extract_task,
     chunk_task,
     embed_task,
+    extract_task,
     index_task,
     postprocess_task,
 )
@@ -84,12 +83,19 @@ async def test_update_error_writes_failed_status():
 
 # ---- Forget engine tasks ----
 
+# The scheduled tasks open a real Neo4j driver per invocation. These unit
+# tests mock ForgetEngine, so the driver loop must be mocked too — otherwise
+# the tests depend on a live Neo4j (and on global test order).
+_DRIVER_LOOP_PATCH = "emerald.pipeline.tasks._neo4j_driver_for_loop"
+
+
 @pytest.mark.asyncio
 async def test_forget_expired_task_runs():
     """forget_expired_task delegates to ForgetEngine."""
     from emerald.pipeline.tasks import _run_forget_expired
 
-    with patch("emerald.core.forget.ForgetEngine") as mock_cls:
+    with patch("emerald.core.forget.ForgetEngine") as mock_cls, \
+         patch(_DRIVER_LOOP_PATCH):
         instance = MagicMock()
         instance.forget_expired = AsyncMock(return_value=3)
         mock_cls.return_value = instance
@@ -106,7 +112,8 @@ async def test_forget_noise_task_runs():
     """forget_noise_task delegates to ForgetEngine."""
     from emerald.pipeline.tasks import _run_forget_noise
 
-    with patch("emerald.core.forget.ForgetEngine") as mock_cls:
+    with patch("emerald.core.forget.ForgetEngine") as mock_cls, \
+         patch(_DRIVER_LOOP_PATCH):
         instance = MagicMock()
         instance.forget_noise = AsyncMock(return_value=5)
         mock_cls.return_value = instance
@@ -123,7 +130,8 @@ async def test_decay_episodic_task_runs():
     """decay_episodic_task delegates to ForgetEngine."""
     from emerald.pipeline.tasks import _run_decay_episodic
 
-    with patch("emerald.core.forget.ForgetEngine") as mock_cls:
+    with patch("emerald.core.forget.ForgetEngine") as mock_cls, \
+         patch(_DRIVER_LOOP_PATCH):
         instance = MagicMock()
         instance.decay_episodic = AsyncMock(return_value=2)
         mock_cls.return_value = instance

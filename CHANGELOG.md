@@ -16,11 +16,19 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 
-+- **嵌入模型参数化与双模型两列报告**（issue #18，T2）— 真实嵌入基准支持按参数选模型，双模型对照落地：
-+  - `scripts/run_benchmarks.py` 新增 `--embedding-model`（默认 `text-embedding-3-small`，未指定时行为与现状一致走 provider factory）；显式指定时直接构造对应 `OpenAIProvider`，维度自动映射（3-small → 1536、3-large → 3072）并写入 JSON 报告 `config.embedding_dim`，下游不再猜维度。
-+  - `scripts/benchmark_to_markdown.py` 新增双模式：`--dual --small <json> [--large <json>] --output <md>` 渲染每维度 3-small / 3-large 两列 + 差值（Δ）；`--large` 缺失（某模型跑失败）时该列以 — 呈现并显式告警，不整体崩溃；单报告模式输出与旧版字节一致（CI mock 路径不受影响）。
-+  - `scripts/run_real_benchmarks.sh` 依次跑 3-small、3-large 两次并合并渲染 `docs/benchmarks/real-llm-results.md`；3-large 失败时回退单列报告继续完成，DeepSeek LLM 关系分类流程保持不变。
-+  - 渲染层单元测试（`tests/benchmarks/test_benchmark_to_markdown.py`）：两列都存在 / 单列缺失 / 单模型缺维度 / 旧报告无 `embedding_model` 字段 / CLI 双模式与单模式兼容；CLI 选型测试（`tests/benchmarks/test_run_benchmarks_cli.py`）：3-large→3072、3-small→1536、默认走 factory、mock 不受影响。
+- **嵌入模型参数化与双模型两列报告**（issue #18，T2）— 真实嵌入基准支持按参数选模型，双模型对照落地：
+  - `scripts/run_benchmarks.py` 新增 `--embedding-model`（默认 `text-embedding-3-small`，未指定时行为与现状一致走 provider factory）；显式指定时直接构造对应 `OpenAIProvider`，维度自动映射（3-small → 1536、3-large → 3072）并写入 JSON 报告 `config.embedding_dim`，下游不再猜维度。
+  - `scripts/benchmark_to_markdown.py` 新增双模式：`--dual --small <json> [--large <json>] --output <md>` 渲染每维度 3-small / 3-large 两列 + 差值（Δ）；`--large` 缺失（某模型跑失败）时该列以 — 呈现并显式告警，不整体崩溃；单报告模式输出与旧版字节一致（CI mock 路径不受影响）。
+  - `scripts/run_real_benchmarks.sh` 依次跑 3-small、3-large 两次并合并渲染 `docs/benchmarks/real-llm-results.md`；3-large 失败时回退单列报告继续完成，DeepSeek LLM 关系分类流程保持不变。
+  - 渲染层单元测试（`tests/benchmarks/test_benchmark_to_markdown.py`）：两列都存在 / 单列缺失 / 单模型缺维度 / 旧报告无 `embedding_model` 字段 / CLI 双模式与单模式兼容；CLI 选型测试（`tests/benchmarks/test_run_benchmarks_cli.py`）：3-large→3072、3-small→1536、默认走 factory、mock 不受影响。
+
+- **独立侧质量套件**（ADR-0001，roadmap M2）— `tests/quality/temporal/` 三 section + CI 聚合门（workflow `quality-temporal`）：
+  - **时序正确性**（ticket #9）：25 更新链取代 + 20 时间过期 + 12 显式冲突分流 + 10 保留用例；4 指标聚合门——取代正确率 ≥99%、过期抑制率 ≥99%、保留正确率 ≥98%、分流准确率 ≥95%。冲突分流覆盖高影响（internal_type=decision → PENDING_CONFLICT）与低影响（自动 UPDATES）双路径及 keep_old/keep_new/keep_both/manual 四种 resolve 动作。
+  - **遗忘有效性**（ticket #10）：噪音过滤（25 旧噪音 + 5 近期保留）、情节衰减（20 旧 episodic 归档，图谱瘦身率 50–90% 区间断言）、噪音注入对抗语料两档（50% 与 80% 噪音比，各 60 条）、信号保留（引擎全链路 12 信号，清理后检索保持率）。4 指标聚合门——噪音清除率 ≥95%、信号存活率 ≥98%（误删 ≤2%）、检索保持率 ≥95%、瘦身率区间。
+  - **图谱关系精度**（ticket #11）：61 例标注语料类型判定（25 UPDATES / 18 EXTENDS / 18 NONE）、20 例方向与语义、原子性不变量扫描（UPDATES 边 ⟺ target 归档且 replaced_by 指向 source，违规 =0）、跨实体隔离（图关系 + 检索双向断言）。4 指标聚合门——类型判定 ≥95%、方向 ≥98%、原子性违规 =0%、泄漏 =0%。
+  - 确定性语料 + mock 嵌入 + 规则路径（`use_llm=False`）；Neo4j 真实存储变体（`test_neo4j_quality_variants.py`，不可达时 skip，CI 聚合门在 compose 服务下覆盖 Cypher 分支）。三节指标各自全绿才通过聚合门，互不抵消。
+- **fix(graph): in-memory `create_update_relation` 缺少 source 存在性检查** — 质量套件原子性场景发现：Cypher 分支以 `MATCH (new)` 守卫缺失 source 的更新为 no-op，in-memory 分支却仍会归档 target（幻影归档）。已补齐存在性检查，两后端行为一致。
+- **fix(tests): `test_pipeline_tasks` 顺序依赖** — forget 类任务测试依赖真实 Neo4j driver loop（`_neo4j_driver_for_loop`），全量套件按目录顺序运行时行为不一致。已 mock driver loop，单元测试不再依赖外部服务。
 
 - **路由枚举适配 Starlette 1.x 惰性路由**（issue #2）— `include_router` 在 Starlette 1.x 下注册惰性 `_IncludedRouter`（无 `path` 属性），`app.routes` 简单过滤得到空集。`tests/api/test_route_completeness.py` 与 `tests/negative/test_no_internal_exposure.py` 改为递归展开惰性路由（`effective_candidates()`），在无引擎 stub 与有引擎两种形态下枚举实际路由面；v2 泄漏守卫从恒真断言修复为真实前缀检查。同步重新生成 `docs/api/openapi.yaml`（含 sources/spaces/extract-url 路由与 memories 的 patch/delete 方法），OpenAPI 漂移测试回归绿，`generate_openapi.py --check` 通过。
 - **清理过期 API 测试**（issue #3）— v0.4.0 下线 v2 路由后残留的 v2 断言（`test_api_versioning.py` 三处、`test_upload_authorization.py` 一处）改为断言 v2 返回 404 或删除；`/v1/files` 测试从偏移分页（`page`）签名迁移到游标分页（`page_token` + `page_size`），断言新响应结构（`pagination.next_page_token`/`has_more`），新增无效游标 token → 422 行为测试。产品路由代码零改动。

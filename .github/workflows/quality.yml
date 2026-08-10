@@ -1,0 +1,68 @@
+name: Quality Suites (temporal)
+
+# Aggregate gate for the independent quality suites (ADR-0001):
+# - temporal correctness  (tests/quality/temporal/test_temporal_correctness.py)
+# - forgetting effectiveness (tests/quality/temporal/test_forgetting_effectiveness.py)
+# - graph relationship precision (tests/quality/temporal/test_graph_relationship_precision.py)
+# - real-storage variants on Neo4j (tests/quality/temporal/test_neo4j_quality_variants.py)
+#
+# The suite is green only when every section's metrics meet their thresholds;
+# sections cannot offset each other.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "emerald/core/**"
+      - "emerald/pipeline/**"
+      - "tests/quality/**"
+      - "pyproject.toml"
+      - ".github/workflows/quality.yml"
+  pull_request:
+    paths:
+      - "emerald/core/**"
+      - "emerald/pipeline/**"
+      - "tests/quality/**"
+      - "pyproject.toml"
+      - ".github/workflows/quality.yml"
+  workflow_dispatch:
+
+jobs:
+  quality-temporal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/emerald_dev
+        ports:
+          - 7688:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p emerald_dev 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run quality suites (aggregate gate)
+        run: |
+          pytest tests/quality/ -v -m quality
+        env:
+          EMERALD_TEST_NEO4J_URI: bolt://localhost:7688
+          EMERALD_TEST_NEO4J_USER: neo4j
+          EMERALD_TEST_NEO4J_PASSWORD: emerald_dev
