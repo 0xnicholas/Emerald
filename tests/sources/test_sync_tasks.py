@@ -18,9 +18,7 @@ async def test_sync_all_resolves_external_id_before_ingestion(monkeypatch):
 
     store = FakeBindingStore()
     internal_uuid = "550e8400-e29b-41d4-a716-446655440000"
-    await store.upsert(
-        entity_id=internal_uuid, provider="googledrive", hub_account_id="acc_1"
-    )
+    await store.upsert(entity_id=internal_uuid, provider="feishu", hub_account_id="acc_1")
     store.entity_external[internal_uuid] = "user_1"
     patch_binding_store(monkeypatch, store)
 
@@ -32,9 +30,7 @@ async def test_sync_all_resolves_external_id_before_ingestion(monkeypatch):
     import emerald.sources.adapter as adapter_mod
 
     monkeypatch.setattr(adapter_mod, "default_content_cb", lambda: _sink)
-    monkeypatch.setattr(
-        "emerald.sources.tasks.get_hub", lambda: hub
-    )
+    monkeypatch.setattr("emerald.sources.tasks.get_hub", lambda: hub)
 
     result = await _run_sync_all(None)
 
@@ -48,7 +44,7 @@ async def test_sync_all_missing_entity_records_error_not_crash(monkeypatch):
     store = FakeBindingStore()
     await store.upsert(
         entity_id="550e8400-e29b-41d4-a716-446655440001",
-        provider="googledrive",
+        provider="feishu",
         hub_account_id="acc_1",
     )
     store.missing_entities.add("550e8400-e29b-41d4-a716-446655440001")

@@ -50,6 +50,30 @@ All notable changes to this project will be documented in this file.
   - `docs/benchmarks/README.md`「已发布的报告」死链清理：移除从未生成的 `mock-results.md` / `real-llm-results.md` / `real-llm-deepseek-results.md` 三个链接，改链已入库的 `mock-baseline.json`，写明绝对分报告发布流程；真实嵌入跑分不进 CI，由维护者手动跑并提交入库。
   - 渲染层单元测试（`tests/benchmarks/test_benchmark_to_markdown.py` 新增 6 例）：三列对比 + 双门槛结论渲染 / 单模型门槛失败点名（含数字）/ large 缺失容错 / 基线缺维度报错 / CLI `--absolute` 写文件 / 基线不匹配退出码 2。
 
+### Changed
+
+- **连接中心接入目标改为 Totem（issue #6，ADR-0004）** — 不再考虑接入 StackOne（外部托管云
+  的外部阻塞/数据出域），改为接入同团队内部项目 Totem（`../totem`，内部自托管多租户动作层，
+  v1 upstream = Feishu Docs，功能对齐 StackOne）：
+  - `emerald/sources/totem.py`（新）— `TotemHubClient` 实现 `ConnectionHub` 契约：admin 面
+    （`oauth/start`、connections 列表，admin-scope key）+ actions RPC（`{action, args}`、
+    Bearer + `x-connection-id`）+ 七码错误映射（`retryable`/`retryAfterSeconds` 透出）+
+    Webhook 预记录契约（§8.3：HMAC-SHA256 raw body、base64url、`x-totem-signature` 常量时间
+    比较）+ 事件归一化（§8.2 平台负载形状）。删除 `stackone.py`。
+  - 适配层 feishu provider profile（`search_docs`/`get_doc_content`、`{data, next}` 列表
+    envelope、`doc_id` 参数映射）；v1 无版本字段 → 去重水位退化为 doc_id（修复无版本场景
+    下 seen 永不匹配的缺陷）；`connection.created/updated/deleted` 生命周期事件纳入
+    `handle_event`。
+  - 路由 `VALID_PROVIDERS` → `{feishu}`；webhook 端点保留（v1 直连上游订阅「铃铛」，Totem
+    ADR-0011；v2 平台投递换入口零改动）；配置/环境变量 `TOTEM_*`（`HUB_PROVIDER=totem`）。
+  - **Pilot 验证通过（25/25）**：真实 Totem（当前源码 + mock Feishu 上游）+ 真实管线/Celery
+    worker/DB，见 `docs/verification/totem-pilot-verification.md`；旧 StackOne 验证记录保留为
+    历史（头部 supersede 注明）。
+  - 顺带修复：`PipelineOrchestrator` 显式 import `emerald.pipeline.celery`——此前任何未先
+    import celery app 的进程提交任务会解析到 celery 默认 amqp broker（`shared_task` 解析到
+    默认 app），提交全部失败（P0-3 同族，API lifespan 恰有覆盖、脚本路径暴露）。
+  - OpenAPI 规范重新生成（`docs/api/openapi.yaml`）。
+
 ### Fixed
 
 - **MIME 解析一致性：text/markdown 提取器缺口**（issue #4）— `text/markdown`（及 `application/markdown`）经 MIME 解析到 `markdown` 后无对应提取器，MIME 路径摄入在提取阶段抛 `UnsupportedContentType`。修复：默认提取器注册表补注册 `markdown → TextExtractor`（与 json/csv 同款先例；Markdown 结构由 `MarkdownChunker` 负责，提取阶段为纯文本）。注册表守卫测试的 extractor 类型集合同步包含该别名；新增 `text/markdown` 提取 + 按标题层级分块（H1/H2 分离断言）与 MIME 族别名（`text/markdown`、`application/markdown`）用例。无新增公共 API 面；README 内容类型计数 9→10 对齐。
@@ -84,7 +108,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **P1-1: 事件驱动摄入 entity_id 约定错配**（issue #6 验证遗留）— `handle_event` 与兜底同步任务 `sync_all_bindings_task` 把 binding 的内部 UUID（FK 到 `entities.id`）当作 `entity_id` 传入管线，而管线按 `external_id` 解析实体 → 每次事件驱动摄入都 `Entity not found`。修复：适配层经 `binding_store.get_entity_external_id` 将内部 UUID 解析为 external_id 后再入管线；binding 对应实体已删除时 fail-soft（记录错误，不崩溃）。同时修复 `get_binding_by_account`：同一 hub_account_id 跨实体重复绑定时不再抛 `MultipleResultsFound`，改为取首个并记 warning。
-- **P1-2: `StackOneHubClient.list_accounts` 对裸 JSON list 响应崩溃**（issue #6 验证遗留）— 真实 API 返回 `[]`（非 `{"data": []}`），`resp.get("data", ...)` 在 list 上调用 → AttributeError，`/v1/sources/refresh` 500。修复：同时容忍 `[...]` 与 `{"data": [...]}`/`{"results": [...]}` 两种响应形状。
+- **P1-2: `StackOneHubClient.list_accounts` 对裸 JSON list 响应崩溃**（issue #6 验证遗留，历史记录）— 真实 API 返回 `[]`（非 `{"data": []}`），`resp.get("data", ...)` 在 list 上调用 → AttributeError，`/v1/sources/refresh` 500。修复：同时容忍 `[...]` 与 `{"data": [...]}`/`{"results": [...]}` 两种响应形状。（2026-08-10 起接入目标改为 Totem，该客户端已删除；修复经验保留在 `TotemHubClient` 的响应形状容错中。）
 - **P1-3: `/v1/sources` 路由 stdlib logging 传 structlog kwargs**（issue #6 验证遗留）— `sources.py` 的 connect/refresh 错误路径用 stdlib logger 调用 `logger.warning(..., error=...)` → TypeError，502 错误路径实际以 500 崩溃。修复：改用 structlog logger。
 - **OpenAPI path / endpoint gaps** — the published spec was missing 6 v1 endpoints (`POST /memories/{id}/validate`, `GET /profiles/{id}/memory.md`, `GET/PUT/DELETE /profiles/{id}/config`, `POST /sessions`, `GET /sessions/verify`, `POST /conflicts/{id}/resolve`). Auto-generation eliminates this class of bug permanently.
 - **v2 routes removed** — v2 was a strict subset of v1 throughout v0.3.x; for v0.4.0 we drop the `/v2` prefix entirely. All improvements (error codes, pagination, rate-limit headers, OpenAPI auto-gen) land directly on `/v1/*`. `tests/api/test_v2_route_parity.py` is replaced by `tests/api/test_route_completeness.py`, which fails if any v1 route is missing or undocumented.

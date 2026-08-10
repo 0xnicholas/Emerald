@@ -167,7 +167,7 @@
 | **自动遗忘** | 🟡 | 三种策略定义清晰，但 Neo4j 实现可能不完整（代码操作 `graph._memories`） |
 | **内容提取** | 🟢 | 7 种提取器（text/url/pdf/image/audio/video/code） |
 | **分块** | 🟢 | 5 种分块器（text/conversation/markdown/pdf/code） |
-| **连接器** | 🟡 迁移中 | 接入连接中心 StackOne（ADR-0004）：OAuth/同步/webhook 外包；旧自研实现 Pilot 后删除 |
+| **连接器** | 🟡 迁移中 | 接入连接中心 Totem（ADR-0004，内部自托管动作层）：OAuth/执行/审计外包；Pilot 验证通过（2026-08-10）；旧自研实现 Pilot 后删除（issue #7） |
 | **MCP Server** | 🟢 | stdio + SSE 双模式，3 个工具 |
 | **Python SDK** | 🟢 | async client，4 核心方法 + 辅助方法 |
 | **文档列表** | 🟢 | `GET /v1/files` 已实现 Document 分页查询（7 个集成测试覆盖） |

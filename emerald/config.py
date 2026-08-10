@@ -130,15 +130,26 @@ class Settings(BaseSettings):
     # ---- Connection Hub (ADR-0004) ----
     # Emerald never talks to providers directly; all external data flows
     # through a connection hub. The hub is swappable: `hub_provider` picks
-    # the implementation (stackone is the first; others plug in behind the
-    # same ConnectionHub interface in emerald/sources/hub.py).
-    hub_provider: str = "stackone"
-    stackone_api_base_url: str = "https://api.stackone.com"
-    stackone_api_key_id: str = ""
-    stackone_api_key_secret: str = ""
-    # Signing secret for verifying inbound webhook deliveries
-    # (x-stackone-signature, HMAC-SHA256 over the raw body).
-    stackone_webhook_secret: str = ""
+    # the implementation (totem is the current one; others plug in behind
+    # the same ConnectionHub interface in emerald/sources/hub.py).
+    hub_provider: str = "totem"
+    # Totem (../totem): internal self-hosted action layer, v1 upstream is
+    # Feishu Docs. Contract: totem's consumption standard §1–§8.
+    totem_base_url: str = "http://localhost:3000"
+    # Actions-scope tenant key; every POST /actions/rpc call carries it.
+    totem_api_key: str = ""
+    # Admin-scope key; only binding lifecycle calls use it
+    # (oauth/start, connections listing). Platform-credential-equivalent.
+    totem_admin_key: str = ""
+    # The deployment's tenant on the hub (pilot: one tenant per deployment;
+    # an entity's linked accounts are connections inside it).
+    totem_tenant_id: str = "emerald"
+    # Signing secret for verifying inbound event deliveries
+    # (x-totem-signature, HMAC-SHA256 over the raw body, standard §8.3).
+    totem_webhook_secret: str = ""
+    # Optional canonical OAuth redirect URI; defaults to
+    # {totem_base_url}/oauth/callback/feishu.
+    totem_oauth_redirect_uri: str = ""
     # Base URL of this Emerald instance, used to build the webhook
     # endpoint that the hub delivers events to.
     public_base_url: str = "http://localhost:8000"

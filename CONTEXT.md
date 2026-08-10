@@ -61,7 +61,7 @@ _Avoid_: 切分、字符分割
 _Avoid_: 连接器、集成、插件（连接器一词让位给 hub 侧）
 
 **连接中心（Connection Hub）**:
-提供统一外部数据源接入能力的平台：OAuth 授权、凭证管理、同步、webhook 托管。Emerald 不与 provider 直接打交道，只对接连接中心。首个实现为 StackOne，**可替换**——任何接入代码只依赖连接中心的抽象接口（ADR-0004）。
+提供统一外部数据源接入能力的平台：OAuth 授权、凭证管理、同步、动作执行/审计托管。Emerald 不与 provider 直接打交道，只对接连接中心。当前实现为 Totem（内部自托管动作层，v1 upstream = Feishu Docs），**可替换**——任何接入代码只依赖连接中心的抽象接口（ADR-0004；契约见 Totem `docs/standards/consumption-standard.md`）。
 _Avoid_: 集成平台、iPaaS（作为领域词）
 
 **空间（Space）**:

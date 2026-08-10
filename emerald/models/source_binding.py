@@ -33,7 +33,8 @@ class SourceBinding(Base, UUIDMixin, TimestampMixin):
         nullable=False,
     )
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    # The account id on the hub (e.g. StackOne linked-account id).
+    # The connection id on the hub (Totem connection; hub_account_id keeps
+    # the historic column name).
     hub_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
     sync_status: Mapped[str] = mapped_column(
         String(20), default="active", server_default="active", nullable=False

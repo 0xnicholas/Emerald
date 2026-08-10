@@ -27,19 +27,17 @@ def get_hub(provider: str | None = None) -> ConnectionHub:
     settings = get_settings()
     name = provider or settings.hub_provider
     if name not in _HUBS:
-        raise ValueError(
-            f"Unknown connection hub '{name}'. Registered: {list(_HUBS)}"
-        )
+        raise ValueError(f"Unknown connection hub '{name}'. Registered: {list(_HUBS)}")
     return _HUBS[name].from_settings()
 
 
 def _register_builtins() -> None:
     try:
-        from emerald.sources.stackone import StackOneHubClient
+        from emerald.sources.totem import TotemHubClient
 
-        register_hub("stackone", StackOneHubClient)
-    except ImportError:  # pragma: no cover - stackone has no heavy deps
-        logger.warning("stackone hub unavailable")
+        register_hub("totem", TotemHubClient)
+    except ImportError:  # pragma: no cover - totem has no heavy deps
+        logger.warning("totem hub unavailable")
 
 
 _register_builtins()

@@ -1,9 +1,9 @@
 """Source binding routes (ADR-0004) — connection hub flow.
 
-Replaces the self-built connector OAuth flow: Emerald opens a connect
-session on the hub, the user authorizes there, and the binding is
-created when the hub's ``account.connected`` event arrives (or via
-``POST /v1/sources/refresh`` reconciliation).
+Emerald opens the hub's authorize flow, the user authorizes there, and
+binding records are created via ``POST /v1/sources/refresh``
+reconciliation (Totem has no account.connected push in v1 — ADR-0011;
+the webhook endpoint below is Emerald's own upstream subscription "bell").
 """
 
 from __future__ import annotations
@@ -28,14 +28,15 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
 
-VALID_PROVIDERS = {"googledrive", "notion", "gmail", "github"}
+# Totem v1 upstreams (totem consumption standard §0): Feishu Docs only.
+VALID_PROVIDERS = {"feishu"}
 
 
 class ConnectRequest(BaseModel):
     entity_id: str = Field(..., description="Entity that will own the binding")
     provider: str = Field(
         ...,
-        description="Provider key on the hub (googledrive, notion, gmail, github)",
+        description="Provider key on the hub (feishu)",
     )
 
 
@@ -61,9 +62,9 @@ async def create_connect_session(
 ) -> dict:
     """Open the account-linking flow: returns the hub's auth link.
 
-    The end user is sent to ``auth_link_url``; after authorizing, the
-    hub delivers an ``account.connected`` event to the webhook endpoint
-    and the binding is created.
+    The end user is sent to ``auth_link_url``; after authorizing on the
+    hub, the connection appears under the tenant and is bound via
+    ``POST /v1/sources/refresh`` (Totem v1: no account.connected push).
     """
     if body.provider not in VALID_PROVIDERS:
         raise HTTPException(
@@ -96,10 +97,14 @@ async def create_connect_session(
     dependencies=[Depends(rate_limit)],
 )
 async def receive_webhook(request: Request) -> dict:
-    """Hub event delivery endpoint.
+    """Hub event delivery endpoint (the "bell").
 
-    Signed by the hub (HMAC-SHA256 over the raw body); no API key — the
-    signature is the credential. Events trigger incremental ingestion.
+    v1: Emerald's own upstream subscription delivers here — the handler
+    only records/enqueues, every Feishu read/write goes through Totem
+    actions (totem ADR-0011). Verification implements the platform's
+    pre-recorded contract (standard §8.3): HMAC-SHA256 over the raw body,
+    ``x-totem-signature``, constant-time compare. No API key — the
+    signature is the credential.
     """
     raw_body = await request.body()
     hub = get_hub()
@@ -162,9 +167,9 @@ async def list_sources(entity_id: str, request: Request) -> dict:
 async def refresh_sources(entity_id: str, request: Request) -> dict:
     """Reconcile bindings with the hub: upsert newly authorized accounts.
 
-    Call this after the user returns from the hub's auth link as a
-    belt-and-suspenders path (the ``account.connected`` webhook is the
-    primary one).
+    Call this after the user returns from the hub's auth link; in v1 it
+    is the primary binding path (Totem delivers no ``account.connected``
+    push — ADR-0011).
     """
     _entity_from_request(request, entity_id)
     hub = get_hub()

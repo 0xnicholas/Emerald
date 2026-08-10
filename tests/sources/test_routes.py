@@ -44,12 +44,12 @@ def test_connect_returns_auth_link(monkeypatch):
 
     resp = client.post(
         "/v1/sources/connect",
-        json={"entity_id": "user_1", "provider": "googledrive"},
+        json={"entity_id": "user_1", "provider": "feishu"},
     )
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["auth_link_url"].startswith("https://hub.example.com/connect")
-    assert data["provider"] == "googledrive"
+    assert data["provider"] == "feishu"
     assert len(hub.created_sessions) == 1
     assert hub.created_sessions[0].metadata == {"entity_id": "user_1"}
 
@@ -71,24 +71,24 @@ def test_webhook_rejects_bad_signature(monkeypatch):
 
     resp = client.post(
         "/v1/sources/webhook",
-        content=b'{"event":"file.changed"}',
-        headers={"x-stackone-signature": "forged"},
+        content=b'{"event":"doc.changed"}',
+        headers={"x-totem-signature": "forged"},
     )
     assert resp.status_code == 401
 
 
 def test_webhook_accepts_valid_signature(monkeypatch):
     hub = FakeHub()
-    hub.listings["acc_1"] = [{"id": "f1", "title": "notes.md", "etag": "v1"}]
-    hub.contents["acc_1:f1"] = {"id": "f1", "content": "## Notes body"}
+    hub.listings["acc_1"] = [
+        {"doc_id": "dox1", "title": "notes.md", "doc_type": "docx", "updated_at": "v1"}
+    ]
+    hub.contents["acc_1:dox1"] = {"doc_id": "dox1", "content": "## Notes body"}
 
     client, store = _make_client(monkeypatch, hub)
     import asyncio
 
     async def _seed() -> None:
-        await store.upsert(
-            entity_id="user_1", provider="googledrive", hub_account_id="acc_1"
-        )
+        await store.upsert(entity_id="user_1", provider="feishu", hub_account_id="acc_1")
 
     asyncio.run(_seed())
 
@@ -102,18 +102,15 @@ def test_webhook_accepts_valid_signature(monkeypatch):
 
     monkeypatch.setattr(adapter_mod, "default_content_cb", lambda: _sink)
 
-    body = (
-        b'{"event":"file.changed","provider":"googledrive",'
-        b'"account_id":"acc_1","payload":{}}'
-    )
+    body = b'{"event":"doc.changed","provider":"feishu","account_id":"acc_1","payload":{}}'
     resp = client.post(
         "/v1/sources/webhook",
         content=body,
-        headers={"x-stackone-signature": _sign(body, "test-secret")},
+        headers={"x-totem-signature": _sign(body, "test-secret")},
     )
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["event_type"] == "file.changed"
+    assert data["event_type"] == "doc.changed"
     assert data["ingested"] == 1
     assert captured[0]["content"] == "## Notes body"
 
@@ -122,14 +119,11 @@ def test_webhook_unknown_account_returns_200_with_error(monkeypatch):
     """Deliveries for unbound accounts must not crash the endpoint."""
     hub = FakeHub()
     client, _ = _make_client(monkeypatch, hub)
-    body = (
-        b'{"event":"file.changed","provider":"googledrive",'
-        b'"account_id":"ghost","payload":{}}'
-    )
+    body = b'{"event":"doc.changed","provider":"feishu","account_id":"ghost","payload":{}}'
     resp = client.post(
         "/v1/sources/webhook",
         content=body,
-        headers={"x-stackone-signature": _sign(body, "test-secret")},
+        headers={"x-totem-signature": _sign(body, "test-secret")},
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["errors"] == ["no binding for account"]
@@ -149,8 +143,8 @@ def test_refresh_creates_bindings_from_hub_accounts(monkeypatch):
     from emerald.sources.hub import HubAccount
 
     hub.accounts["user_1"] = [
-        HubAccount(id="acc_1", provider="googledrive", origin_owner_id="user_1"),
-        HubAccount(id="acc_2", provider="notion", origin_owner_id="user_1"),
+        HubAccount(id="acc_1", provider="feishu", origin_owner_id="user_1"),
+        HubAccount(id="acc_2", provider="feishu", origin_owner_id="user_1"),
     ]
     client, _ = _make_client(monkeypatch, hub)
 
@@ -160,7 +154,7 @@ def test_refresh_creates_bindings_from_hub_accounts(monkeypatch):
     assert len(resp.json()["data"]["bindings"]) == 2
 
     listed = client.get("/v1/sources", params={"entity_id": "user_1"}).json()["data"]
-    assert {b["provider"] for b in listed} == {"googledrive", "notion"}
+    assert {b["provider"] for b in listed} == {"feishu"}
     assert all(b["sync_status"] == "active" for b in listed)
 
 
@@ -192,7 +186,7 @@ def test_connect_hub_failure_returns_502_not_500(monkeypatch):
     client, _ = _make_client(monkeypatch, _FailingHub())
     resp = client.post(
         "/v1/sources/connect",
-        json={"entity_id": "user_1", "provider": "googledrive"},
+        json={"entity_id": "user_1", "provider": "feishu"},
     )
     assert resp.status_code == 502
 

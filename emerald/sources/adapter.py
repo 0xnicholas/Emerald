@@ -21,46 +21,35 @@ logger = structlog.get_logger(__name__)
 
 # ---- Provider profiles: which hub actions produce content we ingest ----
 #
-# Action names are StackOne's, per its connector catalog. They are the
-# one thing to re-verify when a real account is connected (pilot step);
-# the mapping lives here so fixes are one line each.
+# Action names are Totem's registry names (totem consumption standard §7;
+# machine contract: GET {TOTEM_URL}/openapi.json). v1 upstream is Feishu
+# Docs only. Totem has no list-all action — search_docs is the only scan
+# primitive (title search), so the list call sends a broad query and etag
+# dedup keeps rescan cheap; tune the query in one place here.
 
 
 @dataclass(frozen=True)
 class ProviderProfile:
     provider: str
-    list_action: str  # list items on the account (returns id/title/etag)
+    list_action: str  # list items on the account (returns data/next envelope)
     get_action: str  # fetch one item's content by id
     default_content_type: str
+    id_arg: str = "id"  # arg name the get_action expects for the item id
+    list_args: dict[str, Any] = field(default_factory=dict)
 
 
 PROVIDER_PROFILES: dict[str, ProviderProfile] = {
-    # Verified against StackOne's Google Drive connector catalog (2026-08-09):
-    # unified actions use StackOne's schema; download_unified_file fetches
-    # content (get_unified_file is metadata-only).
-    "googledrive": ProviderProfile(
-        provider="googledrive",
-        list_action="list_unified_files",
-        get_action="download_unified_file",
+    # Totem v1 actions (verified against the registry 2026-08-10):
+    # search_docs {query, limit} -> {data: [{doc_id,title,doc_type}], next};
+    # get_doc_content {doc_id} -> {doc_id, content} (plain text with
+    # markdown-style headings preserved).
+    "feishu": ProviderProfile(
+        provider="feishu",
+        list_action="search_docs",
+        get_action="get_doc_content",
         default_content_type="text/markdown",
-    ),
-    "notion": ProviderProfile(
-        provider="notion",
-        list_action="list_pages",
-        get_action="get_page_content",
-        default_content_type="text/markdown",
-    ),
-    "gmail": ProviderProfile(
-        provider="gmail",
-        list_action="list_emails",
-        get_action="get_email_content",
-        default_content_type="text/plain",
-    ),
-    "github": ProviderProfile(
-        provider="github",
-        list_action="list_repositories",
-        get_action="get_repository_content",
-        default_content_type="text/markdown",
+        id_arg="doc_id",
+        list_args={"query": " "},  # broadest query the schema accepts (minLength 1)
     ),
 }
 
@@ -90,11 +79,12 @@ class IngestResult:
 def _item_from_raw(raw: dict[str, Any], profile: ProviderProfile) -> SourceItem | None:
     """Normalize a hub list/get response item into a SourceItem.
 
-    Hub-specific field names are read tolerantly (id/title/content are
-    the common shapes); missing identity means the item is unusable.
+    Hub-specific field names are read tolerantly (id/doc_id/title/content
+    are the common shapes); missing identity means the item is unusable.
     """
     source_id = (
         raw.get("id")
+        or raw.get("doc_id")
         or raw.get("file_id")
         or raw.get("page_id")
         or raw.get("item_id")
@@ -103,11 +93,7 @@ def _item_from_raw(raw: dict[str, Any], profile: ProviderProfile) -> SourceItem 
         return None
     title = raw.get("title") or raw.get("name") or source_id
     content = (
-        raw.get("content")
-        or raw.get("text")
-        or raw.get("body")
-        or raw.get("plain_text")
-        or ""
+        raw.get("content") or raw.get("text") or raw.get("body") or raw.get("plain_text") or ""
     )
     content_type = raw.get("content_type") or profile.default_content_type
     return SourceItem(
@@ -119,9 +105,25 @@ def _item_from_raw(raw: dict[str, Any], profile: ProviderProfile) -> SourceItem 
         metadata={
             k: v
             for k, v in raw.items()
-            if k not in ("id", "file_id", "page_id", "item_id", "title", "name",
-                         "content", "text", "body", "plain_text", "etag",
-                         "updated_at", "version", "content_type")
+            if k
+            not in (
+                "id",
+                "doc_id",
+                "file_id",
+                "page_id",
+                "item_id",
+                "title",
+                "name",
+                "content",
+                "text",
+                "body",
+                "plain_text",
+                "etag",
+                "updated_at",
+                "version",
+                "content_type",
+                "doc_type",
+            )
         },
     )
 
@@ -136,8 +138,7 @@ class HubAdapter:
         profile = PROVIDER_PROFILES.get(provider)
         if profile is None:
             raise ValueError(
-                f"No provider profile for '{provider}'. "
-                f"Known: {list(PROVIDER_PROFILES)}"
+                f"No provider profile for '{provider}'. Known: {list(PROVIDER_PROFILES)}"
             )
         return profile
 
@@ -161,6 +162,7 @@ class HubAdapter:
             listing = await self.hub.execute_action(
                 account_id=account_id,
                 action=profile.list_action,
+                query=profile.list_args or None,
             )
         except Exception as exc:  # noqa: BLE001 - per-account isolation
             result.failed += 1
@@ -168,13 +170,13 @@ class HubAdapter:
             logger.warning("hub_list_failed", account_id=account_id, error=str(exc))
             return result
 
-        items = listing.get("results") or listing.get("data") or []
+        # Totem list envelope: {data: [...], next} (standard §7). Older
+        # hubs' {results: [...]} shape is tolerated for symmetry.
+        items = listing.get("data") or listing.get("results") or []
         if isinstance(items, dict):
             items = items.get("results", [])
         if not isinstance(items, list):
-            logger.warning(
-                "unexpected_list_shape", account_id=account_id, provider=provider
-            )
+            logger.warning("unexpected_list_shape", account_id=account_id, provider=provider)
             return result
 
         # Load dedup state: seen[source_id] -> etag
@@ -188,7 +190,11 @@ class HubAdapter:
             if item is None:
                 result.skipped += 1
                 continue
-            if seen.get(item.source_id) == item.etag:
+            # Dedup key: the hub's version field when present, else the
+            # source id itself (Totem v1 search_docs carries no version;
+            # id-presence is the only change signal a rescan can use).
+            etag_key = item.etag or item.source_id
+            if seen.get(item.source_id) == etag_key:
                 result.skipped += 1
                 continue
 
@@ -199,7 +205,7 @@ class HubAdapter:
                     fetched_raw = await self.hub.execute_action(
                         account_id=account_id,
                         action=profile.get_action,
-                        query={"id": item.source_id},
+                        query={profile.id_arg: item.source_id},
                     )
                     fetched = _item_from_raw(fetched_raw, profile) or item
                     if not fetched.content and isinstance(fetched_raw, dict):
@@ -224,7 +230,7 @@ class HubAdapter:
                             **fetched.metadata,
                         },
                     )
-                seen[item.source_id] = item.etag or item.source_id
+                seen[item.source_id] = etag_key
                 result.ingested += 1
             except Exception as exc:  # noqa: BLE001 - one bad item must not block the rest
                 result.failed += 1
@@ -262,15 +268,18 @@ class HubAdapter:
 
         # Any content-change event triggers an incremental sync of the
         # account; dedup by etag keeps it cheap. Account lifecycle events
-        # (connected/revoked) update the binding status instead.
-        if event.event_type in ("account.connected", "account.reconnected"):
-            await binding_store.update_sync_state(
-                binding, status="active"
-            )
-        elif event.event_type in ("account.revoked", "account.disconnected"):
-            await binding_store.update_sync_state(
-                binding, status="revoked"
-            )
+        # (connected/revoked) update the binding status instead. Totem's
+        # pre-recorded v2 events (§8.2: connection.created/updated/deleted)
+        # and the legacy account.* names are both handled.
+        if event.event_type in (
+            "account.connected",
+            "account.reconnected",
+            "connection.created",
+            "connection.updated",
+        ):
+            await binding_store.update_sync_state(binding, status="active")
+        elif event.event_type in ("account.revoked", "account.disconnected", "connection.deleted"):
+            await binding_store.update_sync_state(binding, status="revoked")
             return IngestResult(
                 account_id=event.account_id,
                 provider=binding.provider,

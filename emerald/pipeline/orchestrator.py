@@ -16,6 +16,13 @@ from celery import chain
 from emerald.config import get_settings
 from emerald.db.session import session_factory
 from emerald.models.pipeline_job import PipelineJob
+
+# Ensure the configured app (redis broker) is the current app for
+# shared_task resolution. Without this import, any process that submits
+# a chain (e.g. a script calling process_async directly) resolves tasks
+# against celery's default app (amqp://guest@localhost:5672) and every
+# submission dies with connection refused.
+from emerald.pipeline.celery import celery_app  # noqa: F401
 from emerald.pipeline.chunking.registry import ChunkerRegistry
 from emerald.pipeline.extraction.registry import ExtractorRegistry
 from emerald.pipeline.tasks import (
@@ -47,8 +54,8 @@ class PipelineOrchestrator:
         # Lazy import to avoid circular dependency:
         # pipeline.orchestrator -> core.engine -> core.chunker -> pipeline.chunking.base
         from emerald.core.engine import MemoryEngine
-        from emerald.pipeline.extraction import get_default_registry as get_default_extractors
         from emerald.pipeline.chunking import get_default_registry as get_default_chunkers
+        from emerald.pipeline.extraction import get_default_registry as get_default_extractors
 
         self.extractors = extractor_registry or get_default_extractors()
         self.chunkers = chunker_registry or get_default_chunkers()
@@ -98,17 +105,14 @@ class PipelineOrchestrator:
         import uuid
 
         pipeline_id = uuid4().hex
-        content_hash = sha256(
-            content.encode() if isinstance(content, str) else content
-        ).hexdigest()
+        content_hash = sha256(content.encode() if isinstance(content, str) else content).hexdigest()
 
         async with session_factory.session() as session:
             from sqlalchemy import select
+
             from emerald.models.entity import Entity
 
-            result = await session.execute(
-                select(Entity).where(Entity.external_id == entity_id)
-            )
+            result = await session.execute(select(Entity).where(Entity.external_id == entity_id))
             entity = result.scalar_one_or_none()
             if not entity:
                 raise ValueError(f"Entity '{entity_id}' not found")

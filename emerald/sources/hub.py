@@ -1,9 +1,10 @@
 """Connection Hub — the abstract boundary between Emerald and external providers.
 
 Emerald never talks to provider APIs directly. All external content flows
-through a connection hub (ADR-0004): OAuth, credential storage, sync and
-webhook renewal are the hub's job. This module defines the *interface*
-Emerald depends on; concrete hubs (StackOne is the first) implement it.
+through a connection hub (ADR-0004): OAuth, credential storage and token
+renewal are the hub's job (Totem is the current implementation, see
+:mod:`emerald.sources.totem`). This module defines the *interface*
+Emerald depends on; concrete hubs implement it.
 
 Swapping the hub must only require: a new implementation of this ABC, a
 factory entry, and config. Nothing else in Emerald may reference a

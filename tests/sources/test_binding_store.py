@@ -28,7 +28,7 @@ def _make_binding(entity_id: uuid.UUID, hub_account_id: str) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         entity_id=entity_id,
-        provider="googledrive",
+        provider="feishu",
         hub_account_id=hub_account_id,
         sync_status="active",
         sync_metadata=None,
@@ -42,12 +42,8 @@ def _make_binding(entity_id: uuid.UUID, hub_account_id: str) -> SimpleNamespace:
 async def test_get_binding_by_account_returns_first_of_duplicates(monkeypatch):
     """P1-1 companion: the same hub account bound to two entities must not
     raise MultipleResultsFound — event ingestion would otherwise crash."""
-    first = _make_binding(
-        uuid.UUID("550e8400-e29b-41d4-a716-446655440000"), "acc_1"
-    )
-    second = _make_binding(
-        uuid.UUID("550e8400-e29b-41d4-a716-446655440001"), "acc_1"
-    )
+    first = _make_binding(uuid.UUID("550e8400-e29b-41d4-a716-446655440000"), "acc_1")
+    second = _make_binding(uuid.UUID("550e8400-e29b-41d4-a716-446655440001"), "acc_1")
     result = MagicMock()
     result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[first, second])))
     session = MagicMock()

@@ -1,7 +1,9 @@
 """FakeHub — in-memory ConnectionHub implementation for tests.
 
 Exercises the contract without HTTP. Also ships an in-memory binding
-store so adapter/route tests don't need a database.
+store so adapter/route tests don't need a database. Mirrors the Totem
+contract (Bearer + x-connection-id, {action, args}, {data, next} list
+envelope, x-totem-signature).
 """
 
 from __future__ import annotations
@@ -69,13 +71,12 @@ class FakeHub(ConnectionHub):
         query: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self.action_calls.append(
-            {"account_id": account_id, "action": action, "query": query or {}}
-        )
-        if action.endswith("list") or action.startswith("list"):
-            return {"results": self.listings.get(account_id, [])}
-        # get_action: fetch one item's content
-        source_id = (query or {}).get("id")
+        self.action_calls.append({"account_id": account_id, "action": action, "query": query or {}})
+        if action == "search_docs":
+            # Totem list envelope: {data: [...], next} (standard §7).
+            return {"data": self.listings.get(account_id, []), "next": None}
+        # get_action: fetch one item's content by id (doc_id for feishu).
+        source_id = (query or {}).get("doc_id") or (query or {}).get("id")
         key = f"{account_id}:{source_id}"
         if key in self.contents:
             return self.contents[key]
@@ -86,7 +87,7 @@ class FakeHub(ConnectionHub):
         raw_body: bytes,
         headers: Mapping[str, str],
     ) -> bool:
-        signature = headers.get("x-stackone-signature", "")
+        signature = headers.get("x-totem-signature", "")
         if not signature:
             return False
         expected = _sign(raw_body, self.webhook_secret)

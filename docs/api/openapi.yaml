@@ -893,11 +893,11 @@ paths:
       description: 'Open the account-linking flow: returns the hub''s auth link.
 
 
-        The end user is sent to ``auth_link_url``; after authorizing, the
+        The end user is sent to ``auth_link_url``; after authorizing on the
 
-        hub delivers an ``account.connected`` event to the webhook endpoint
+        hub, the connection appears under the tenant and is bound via
 
-        and the binding is created.'
+        ``POST /v1/sources/refresh`` (Totem v1: no account.connected push).'
       operationId: create_connect_session_v1_sources_connect_post
       requestBody:
         content:
@@ -925,12 +925,20 @@ paths:
       tags:
       - Sources
       summary: Receive Webhook
-      description: 'Hub event delivery endpoint.
+      description: 'Hub event delivery endpoint (the "bell").
 
 
-        Signed by the hub (HMAC-SHA256 over the raw body); no API key — the
+        v1: Emerald''s own upstream subscription delivers here — the handler
 
-        signature is the credential. Events trigger incremental ingestion.'
+        only records/enqueues, every Feishu read/write goes through Totem
+
+        actions (totem ADR-0011). Verification implements the platform''s
+
+        pre-recorded contract (standard §8.3): HMAC-SHA256 over the raw body,
+
+        ``x-totem-signature``, constant-time compare. No API key — the
+
+        signature is the credential.'
       operationId: receive_webhook_v1_sources_webhook_post
       responses:
         '200':
@@ -978,11 +986,11 @@ paths:
       description: 'Reconcile bindings with the hub: upsert newly authorized accounts.
 
 
-        Call this after the user returns from the hub''s auth link as a
+        Call this after the user returns from the hub''s auth link; in v1 it
 
-        belt-and-suspenders path (the ``account.connected`` webhook is the
+        is the primary binding path (Totem delivers no ``account.connected``
 
-        primary one).'
+        push — ADR-0011).'
       operationId: refresh_sources_v1_sources_refresh_post
       parameters:
       - name: entity_id
@@ -1462,7 +1470,7 @@ components:
         provider:
           type: string
           title: Provider
-          description: Provider key on the hub (googledrive, notion, gmail, github)
+          description: Provider key on the hub (feishu)
       type: object
       required:
       - entity_id

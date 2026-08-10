@@ -103,4 +103,4 @@ fastembed 官方支持模型表（https://qdrant.github.io/fastembed/examples/Su
 - 入口：`emerald/core/embedder.py:330 get_embedding_provider()`——`openai` 分支用 `OPENAI_API_KEY` + `OPENAI_EMBEDDING_MODEL`；`bge/text2vec/local` 分支走 `FastembedProvider(BGE_MODEL_PATH)`。任何 fastembed 支持列表内的模型可经 env 直切（`BGE_MODEL_PATH=BAAI/bge-small-zh-v1.5` 等）。
 - 维度约束：`OpenAIProvider` 维度表仅认 3-small/3-large（embedder.py:59-62，未知模型默认 1536）；`embedder.py:350` 注释明确向量列 `Vector(1536)`——换 384/512/1024 维模型（bge 系列/bge-m3）需核对 `emerald/core/vector.py` 与 `docs/architecture/data-model.md:376-377` 的维度登记。
 - 基准脚本：`scripts/run_benchmarks.py` `--real` 经 `get_embedding_provider()` 取嵌入（line 125），报告头 `provider_name` 硬编码为 "OpenAI (text-embedding-3-small)"（line 1046，仅展示用）；`scripts/run_real_benchmarks.sh` 生成报告到 `docs/benchmarks/`。跑 3-large：设 `OPENAI_EMBEDDING_MODEL=text-embedding-3-large` 即可，无需改代码。
-- 数据边界语境：连接器已外包至连接中心（ADR-0004，见 `docs/verification/stackone-pilot-verification.md` 头部 2026-08-10 决策），但**私有化部署用户的记忆文本出口敏感度不因此降低**——嵌入 API 仍直连外部厂商，这是本地 bge-m3 路线的核心价值。
+- 数据边界语境：连接器已外包至连接中心（ADR-0004，接入内部自托管 Totem，见 `docs/verification/totem-pilot-verification.md`），但**私有化部署用户的记忆文本出口敏感度不因此降低**——嵌入 API 仍直连外部厂商，这是本地 bge-m3 路线的核心价值。

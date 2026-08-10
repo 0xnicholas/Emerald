@@ -1,5 +1,10 @@
 # StackOne Pilot 验证记录（issue #6，ADR-0004）
 
+> **⚠️ 2026-08-10（supersede）**：本票已改为**接入 Totem**（同团队内部项目，功能对齐
+> StackOne）并完成 Totem Pilot 验证——**不再考虑接入 StackOne**。最新验证记录见
+> [Totem Pilot 验证记录](totem-pilot-verification.md)；本文档保留 StackOne 期的验证历史
+> （含 P0×3/P1×3 修复记录，其中 P0-1/P0-2/P0-3 与 P1-1/P1-2/P1-3 的修复与测试均保留在代码库中）。
+>
 > 验证日期：2026-08-09 · 验证对象：commit `6514c20`（Pilot 代码基线）
 > 结论：**有条件通过** — 绑定/Webhook/凭证安全路径验证通过；同步路径因 Pilot 代码缺陷
 > （P1×3）与核心管线既有缺陷（P0×3）无法端到端跑通，需修复后复验。
