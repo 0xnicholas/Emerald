@@ -18,8 +18,9 @@ python scripts/run_benchmarks.py
 export OPENAI_API_KEY="sk-..."
 ./scripts/run_real_benchmarks.sh
 # 依次跑 text-embedding-3-small (1536 dim) 与 text-embedding-3-large (3072 dim)
-# 两次结果合并为每维度两列对照的 Markdown 报告到 docs/benchmarks/
-# 3-large 跑失败时自动回退单列报告，不会整体中断
+# 生成 docs/benchmarks/absolute-scores-<date>.md（每维度三列对比 + 双门槛结论）
+# 3-large 跑失败时自动回退单列，不会整体中断；
+# 中间产物（双列对照、DeepSeek 报告）输出到 gitignored 的 reports/
 ```
 
 ### 指定嵌入模型
@@ -50,9 +51,15 @@ python scripts/run_benchmarks.py --real --llm
 
 ## 已发布的报告
 
-- [Mock 嵌入基线](./mock-results.md)（CI 基线）
-- [真实 LLM 嵌入跑分](./real-llm-results.md)（首次真实嵌入）
-- [真实 LLM + DeepSeek 关系分类](./real-llm-deepseek-results.md)
+- [Mock 嵌入基线](./mock-baseline.json) — 已入库对比基线，双门槛评估（发布门槛 / 通过门槛）同源；由 CI mock 跑分维护（`python scripts/run_benchmarks.py --mock` 后 `cp reports/benchmark-<ts>.json docs/benchmarks/mock-baseline.json`）
+
+绝对分报告按日期命名入库（`absolute-scores-<YYYY-MM-DD>.md`，可多期共存、可回溯），由维护者手动跑真实嵌入后提交：
+
+1. `export OPENAI_API_KEY="sk-..."`（可选 `DEEPSEEK_API_KEY="sk-..."`）
+2. `./scripts/run_real_benchmarks.sh` — 生成 `docs/benchmarks/absolute-scores-<date>.md`（每维度 3-small / 3-large / mock 基线三列 + 双门槛结论）
+3. 审阅报告与门槛结论，`git add` 提交，并把链接加进本节
+
+> 历史死链已移除（issue #20）：`mock-results.md` / `real-llm-results.md` / `real-llm-deepseek-results.md` 三个文件从未生成，其链接已删除；对应中间产物改由脚本输出到 gitignored 的 `reports/`，`docs/benchmarks/` 只保留可回溯的日期命名报告。
 
 ## 已知局限
 
