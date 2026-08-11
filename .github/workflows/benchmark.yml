@@ -72,8 +72,9 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          # Full dev toolchain + pytest-timeout (--timeout=60 flag below;
+          # missing it made the job fail at argument parsing, 2026-08-11).
+          pip install -r requirements.txt -r requirements-dev.txt pytest-timeout
 
       - name: Run Alembic migrations
         run: |

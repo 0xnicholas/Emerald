@@ -17,3 +17,4 @@ Pillow>=10.0
 pytesseract>=0.3
 trafilatura>=1.12
 tree-sitter>=0.22
+pytest-timeout>=2.0
