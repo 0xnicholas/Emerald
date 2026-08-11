@@ -56,8 +56,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio
+          # requirements-dev.txt brings the dev toolchain (pytest,
+          # pytest-asyncio, tenacity…) — tenacity is imported by
+          # tests/quality/conftest.py; installing only requirements.txt
+          # made the aggregate gate fail at collection (08-10, 08-11).
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run quality suites (aggregate gate)
         run: |
