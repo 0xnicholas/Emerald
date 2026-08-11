@@ -96,6 +96,7 @@ jobs:
       - name: Run unit tests
         run: |
           pytest tests/ -x -q --ignore=tests/docker --ignore=tests/tracing \
+            --ignore=tests/integration \
             -m "not integration and not docker" \
             --timeout=60
         env:
