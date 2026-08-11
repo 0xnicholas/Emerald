@@ -18,3 +18,4 @@ pytesseract>=0.3
 trafilatura>=1.12
 tree-sitter>=0.22
 pytest-timeout>=2.0
+fastmcp>=2.0
