@@ -7,12 +7,16 @@ on:
       - "emerald/core/**"
       - "emerald/pipeline/**"
       - "scripts/run_benchmarks.py"
+      - "requirements*.txt"
+      - "pyproject.toml"
       - ".github/workflows/benchmark.yml"
   pull_request:
     paths:
       - "emerald/core/**"
       - "emerald/pipeline/**"
       - "scripts/run_benchmarks.py"
+      - "requirements*.txt"
+      - "pyproject.toml"
       - ".github/workflows/benchmark.yml"
   schedule:
     # Every Monday at 6:00 UTC
