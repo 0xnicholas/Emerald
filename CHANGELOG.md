@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **fix(relationships): 规则矛盾检测误伤无关记忆**（2026-08-11 基准发现，产品级缺陷）——`_is_contradictory` 只要新文本含单字「不」就判 UPDATES（取代），且重叠守卫仅要求共享主语：一条含「不」的意见事实（“覆盖率不能低于 80%”）曾把实体其余 19 条事实全部标记过期。修复：① 否定词触发需 ≥2 个实质共享 bigram（排除主语片段）；② 强信号词表收紧——移除「新」（“新壁纸”使 13 条无关事实被取代）、「现在」的裸词判定改为保留（更新链闭合依赖，见下）；③ 主语提取只取文本开头的英文专名（句中 Python/Vim 是内容词，误当主语会丢弃其 bigram）；④ 「刚」保留（“会议刚改到周三”）。质量套件三节（时序 65 例 / 遗忘 / 图谱 61 例）全绿；Fact Recall 基准从 0.133 → 0.933，Distractor Resistance 从 0.0 → 0.6。
+- **fix(benchmarks): 真实嵌入跑分被 Redis 旧缓存污染**——`engine._embed` 缓存键为纯文本哈希（不含模型标识），此前 mock 跑分写入的 128 维向量在真实跑分时被当作缓存命中（`vector.store dims=128` 而嵌入器产出 1024），主向量库全程使用 mock 数据。修复：缓存键纳入模型标识（`{model_id}|{text}`），MockEmbeddingProvider 暴露 `_model`；跑分前清空历史 `emb:*` 键。
+- **fix(benchmarks): 单模型绝对分报告渲染**——`benchmark_to_markdown.py --absolute` 无第二模型时列标题硬编码 `text-embedding-3-large`、Δ 列恒为 —。修复：缺失模型列显示 —，Δ 退化为「模型 − mock 基线」（单模型报告的信息量补回），模型列名从报告 config 读取。
+
+### Added
+
+- **真实嵌入绝对分报告发布（roadmap M2 #12/#13）**——首个绝对分报告 `docs/benchmarks/absolute-scores-2026-08-11.md`：
+  - **模型口径变更**（2026-08-11）：发布环境无法直连 api.openai.com（网络层不可达，IPv4/IPv6 均超时），改用 **SiliconFlow 网关的 BAAI/bge-m3**（1024 维）作为真实嵌入模型。`OpenAIProvider` 新增 `base_url` 参数 + `settings.openai_base_url`（默认 api.openai.com，兼容网关）；维度映射支持 `bge-m3` / `BAAI/bge-m3` → 1024；`run_benchmarks.py --embedding-model` 显式路径接线 base_url。OpenAI 官方 3-small/3-large 双列仍是首选口径（网络可达时按原流程）。
+  - **结果**：7/7 维度通过（100%），Aggregate **0.943**；发布门槛 7/7（每维 ≥ mock 基线，Fact Recall 0.933 vs 0.167、Distractor 0.600 vs 0.200——真实语义嵌入 vs mock 的差距实证）；通过门槛达标（矛盾链 1.000，等权均分 0.898 ≥ 0.70）。
+  - mock 基线同步更新（0.792，规则修复后语义）并重新入库。
+  - 新增测试：`OpenAIProvider` base_url 默认/自定义、bge-m3 维度映射、CLI 接线（+5 例）；`tests/unit/test_embedder.py` fixture 隔离真实 Redis（修复 4 个环境依赖基线失败）。
+
+### Security
+
+- **安全审计（roadmap M2 #14）完成 — 0 个 P0/P1 漏洞**（报告落 `docs/verification/security-audit-2026-08.md`）：
+  - **依赖扫描**：pip-audit 2.10.1 双模式（venv 实装 + 干净环境最新约束解析）均 0 已知漏洞；CI 门禁由 warning 升级为**硬失败**（移除 `|| echo ::warning` 兜底），PYSEC-2024-1 豁免保留。
+  - **Secret 检测**：Gitleaks 全历史（237 commits）**零真实泄漏**——原始扫描 31 个命中逐项核验全部为 dev 占位凭据（`.env.*` / config.py 默认值 / CI 沙箱 / 开发脚本），无 API key/token/私钥/生产连接串。修复三个配置缺陷：① 连接串规则 `[^@]+` 跨行贪婪误报（Go 否定字符类含 `\n`）→ 改为 `[^@\n]+`；② `[allowlist.rules]` map 结构与 `paths` 共存时被 gitleaks 8.24.3/8.30.1 静默丢弃 → 迁移官方 `[allowlist] regexes` 字段 + 示例/测试配置文件路径豁免；③ gitleaks-action 仅扫 push commit range（`base^..HEAD`），全历史从未被 CI 覆盖 → 新增 `secret-scan-full-history` job（固定 gitleaks 8.30.1）。
+  - **API 层清单五项**（CORS / 实体隔离 / 鉴权边界 / 限流 / 上传+Webhook 验签）：4 项达标；**发现并修复 1 项**——`POST /v1/extract-url` 无鉴权执行出站 HTTP fetch（未认证 SSRF 面 + 资源滥用，`follow_redirects=True`）→ 挂载 `api_key_auth` + `rate_limit`，新增回归测试 `tests/api/test_extract_auth.py`（2 例：401 前置拦截断言 httpx 零调用 / 认证后正常提取），OpenAPI 重新生成。
+  - 观察项 5 条（Redis 不可用时限流 fail-open、authorize_entity 测试便利 no-op、tests/docs 目录豁免偏宽等）记录于报告 §5，不阻塞。
+
 ### Added
 
 - **结构化数据（JSON/CSV）分块与自动检测**（spec issue #1）：

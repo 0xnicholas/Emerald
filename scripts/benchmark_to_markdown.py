@@ -162,7 +162,7 @@ def render_absolute(
 
     small_label = _model_label(small, "text-embedding-3-small")
     small_dim = small.get("config", {}).get("embedding_dim", "?")
-    large_label = "text-embedding-3-large"
+    large_label = _MISSING
     large_dim = "?"
     if large is not None:
         large_label = _model_label(large, "text-embedding-3-large")
@@ -178,7 +178,7 @@ def render_absolute(
 
     lines: list[str] = []
     lines.append("# Emerald 绝对分报告\n")
-    lines.append(f"**日期:** {date}（3-small 跑分时间戳）\n")
+    lines.append(f"**日期:** {date}（主跑分时间戳）\n")
     lines.append(
         f"**模型:** {small_label} ({small_dim} dims)"
         + (f" vs {large_label} ({large_dim} dims)" if large is not None else "")
@@ -236,19 +236,30 @@ def render_absolute(
         large_cell = _fmt_score(large_score) if large_score is not None else _MISSING
         base_cell = _fmt_score(base_score) if base_score is not None else _MISSING
         diff = _MISSING
-        if (
+        if large is not None:
+            if (
+                small_score is not None
+                and large_score is not None
+                and isinstance(small_score, (int, float))
+                and isinstance(large_score, (int, float))
+            ):
+                diff = f"{large_score - small_score:+.3f}"
+        elif (
             small_score is not None
-            and large_score is not None
+            and base_score is not None
             and isinstance(small_score, (int, float))
-            and isinstance(large_score, (int, float))
+            and isinstance(base_score, (int, float))
         ):
-            diff = f"{large_score - small_score:+.3f}"
+            # Single-model report: Δ = model vs mock baseline.
+            diff = f"{small_score - base_score:+.3f}"
         lines.append(
             f"| {name} | {small_cell} | {large_cell} | {base_cell} | {diff} |"
         )
     lines.append("")
     if large is not None:
         lines.append("Δ = 3-large 分数 − 3-small 分数。\n")
+    else:
+        lines.append("Δ = 模型分数 − mock 基线分数。\n")
 
     # ── Dual-gate conclusions ────────────────────────────────────────────
     lines.append("## 双门槛结论\n")
@@ -264,7 +275,7 @@ def render_absolute(
         lines.append(f"| {label} | {release} | {pass_gate} |")
     lines.append("")
     if large is None:
-        lines.append(f"> ⚠️ {large_label} 跑分缺失，未评估其门槛。\n")
+        lines.append(f"> ⚠️ 第二模型（text-embedding-3-large 对照）跑分缺失，未评估其门槛。\n")
 
     failed = [
         (label, d.name, d.score, d.baseline)

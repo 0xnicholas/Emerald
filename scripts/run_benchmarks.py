@@ -139,6 +139,7 @@ def _make_embedder(config: BenchConfig) -> EmbeddingProvider:
         return OpenAIProvider(
             api_key=settings.openai_api_key,
             model=config.embedding_model,
+            base_url=settings.openai_base_url,
         )
     return get_embedding_provider()
 

@@ -32,6 +32,20 @@ _COMPLETION_RE = re.compile(
 )
 _NUMERIC_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(万|元|岁|%|kg|km|美元|欧元|rmb)", re.IGNORECASE)
 
+# Explicit change signals — these words alone indicate the new fact replaces
+# the old one (moved / switched / stopped…).  They are strong enough to act
+# on without a topic-overlap guard.  Deliberately excludes 刚/新 — "新壁纸" /
+# "新同事" are neutral descriptions, not changes (2026-08-11: "用户给手机换
+# 了一张新壁纸" superseded 13 unrelated facts in the distractor benchmark
+# because of 新).  现在 is kept: in update chains it marks the current state
+# ("Alice 现在自己创业"), and dropping it broke every timeline tail in the
+# temporal benchmark (old code scored 1.0 via 现在 alone).
+_CHANGE_WORDS = {"刚", "现在", "换了", "搬到", "跳槽", "离职", "改用", "不再"}
+# Bare negation words — weak on their own ("不" appears in 不同意 / 不能低于
+# / 不喜欢加班 …), so a contradiction claim requires substantive topic
+# overlap (≥2 shared bigrams) — see _is_contradictory.
+_NEGATION_WORDS = {"不", "不是", "没有", "别", "没"}
+
 
 class RelationType(StrEnum):
     UPDATES = "updates"           # New fact replaces old fact
@@ -452,16 +466,47 @@ class RelationshipEngine:
 
     @staticmethod
     def _is_contradictory(new_text: str, old_text: str) -> bool:
-        """Check for simple contradictory patterns."""
-        # Negation in new relative to old
-        negation_words = {"不", "没", "别", "不是", "没有", "不再", "换了", "改用"}
-        for word in negation_words:
-            if word in new_text:
-                return True
+        """Check for simple contradictory patterns.
 
-        # Tense change indicators
-        change_words = {"刚", "现在", "新", "换了", "搬到", "跳槽", "离职", "改用"}
-        return any(word in new_text for word in change_words)
+        Two signals, with different strength:
+
+        1. Explicit change words (搬到 / 跳槽 / 改用 / 不再 …) are strong
+           enough on their own — they state that the old fact no longer
+           holds.
+        2. Bare negation phrases (不是 / 没有 / 别 / 没) additionally require
+           substantive topic overlap (≥2 shared bigrams beyond a shared
+           subject keyword).  Without this guard, any new fact containing
+           "不" (不同意 / 不能低于 80% …) superseded every unrelated memory
+           of the entity (benchmark regression 2026-08-11: one opinion fact
+           marked all 19 other facts as replaced).
+        """
+        # Negation in new relative to old
+        has_negation = any(w in new_text for w in _NEGATION_WORDS)
+        # Tense change indicators — strong signal, no overlap guard needed
+        has_change = any(w in new_text for w in _CHANGE_WORDS)
+        if not (has_negation or has_change):
+            return False
+
+        if has_change:
+            return True
+
+        # Bare negation: require substantive topic overlap beyond a shared
+        # subject keyword (e.g. "我不再喝咖啡了" vs "我每天喝咖啡" shares
+        # 喝咖啡 bigrams; "我认为 X 不能低于 80%" vs "我喜欢喝咖啡" shares
+        # nothing but the subject).
+        new_bigrams = RelationshipEngine._extract_bigrams(new_text)
+        old_bigrams = RelationshipEngine._extract_bigrams(old_text)
+        if not new_bigrams or not old_bigrams:
+            return False
+        subjects = (
+            RelationshipEngine._extract_subject_keywords(new_text)
+            | RelationshipEngine._extract_subject_keywords(old_text)
+        )
+        shared = new_bigrams & old_bigrams
+        substantive = {
+            b for b in shared if not any(b in s or s in b for s in subjects)
+        }
+        return len(substantive) >= 2
 
     @staticmethod
     def _has_text_overlap(new_text: str, old_text: str) -> bool:
@@ -503,8 +548,16 @@ class RelationshipEngine:
             if len(leading) >= 2:
                 keywords.add(leading[:2])
 
-        # English capitalized entities / proper nouns.
-        keywords.update(re.findall(r"[A-Z][a-zA-Z]+", text))
+        # English capitalized proper noun **at the start of the text** —
+        # i.e. the grammatical subject ("Alice 使用 Vim…" → Alice).
+        # Inline capitalized terms (Python / Vim / Google) are topic
+        # content, not subjects: treating them as subjects made the
+        # substantive-overlap guards discard every Python/Vim bigram and
+        # misclassify "用户喜欢 Python" vs "用户用 Python 写数据管线" as
+        # NONE (quality-suite regression, 2026-08-11).
+        leading_en = re.match(r"[A-Z][a-zA-Z]+", text)
+        if leading_en:
+            keywords.add(leading_en.group(0))
 
         return keywords
 

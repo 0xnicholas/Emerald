@@ -353,7 +353,18 @@ class MemoryEngine:
         import hashlib
         import json
 
-        hashes = [hashlib.sha256(t.encode()).hexdigest() for t in texts]
+        # Cache key must include the embedding model identity: a pure-text
+        # hash lets vectors from a different provider/dimension (e.g. mock
+        # 128-dim written by an earlier run) silently serve as cache hits
+        # for real embeddings — corrupting every downstream search score
+        # (observed in the 2026-08-11 bge-m3 benchmark run: vector.store
+        # logged dims=128 while the embedder produced 1024).
+        model_id = getattr(self.embedder, "_model", None)
+        if model_id is None:
+            dim_fn = getattr(self.embedder, "dimension", None)
+            dim = dim_fn() if callable(dim_fn) else "?"
+            model_id = f"mock-{dim}"
+        hashes = [hashlib.sha256(f"{model_id}|{t}".encode()).hexdigest() for t in texts]
 
         embeddings: list[list[float] | None] = [None] * len(texts)
         to_embed: list[str] = []

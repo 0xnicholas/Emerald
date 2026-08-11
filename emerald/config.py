@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     embedding_provider: EmbeddingProvider = EmbeddingProvider.openai
     openai_api_key: str = ""
     openai_embedding_model: str = "text-embedding-3-small"
+    # Base URL for the OpenAI-compatible embeddings endpoint.  Defaults to
+    # OpenAI; point it at a compatible gateway (e.g. SiliconFlow for
+    # BAAI/bge-m3) when api.openai.com is not reachable from the
+    # deployment network (audit/benchmark 2026-08-11).
+    openai_base_url: str = "https://api.openai.com/v1"
     bge_model_path: str = "/models/bge-large-zh-v1.5"
 
     # ---- OCR / Speech ----

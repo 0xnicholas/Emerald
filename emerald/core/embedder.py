@@ -53,15 +53,25 @@ class OpenAIProvider(EmbeddingProvider):
     BATCH_SIZE = 2048
     MAX_RETRIES = 3
 
-    def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "text-embedding-3-small",
+        base_url: str | None = None,
+    ) -> None:
         self._api_key = api_key
         self._model = model
         self._dimensions_map = {
             "text-embedding-3-small": 1536,
             "text-embedding-3-large": 3072,
+            # OpenAI-compatible gateways (e.g. SiliconFlow) serve BAAI/bge-m3
+            # (1024-dim, strong multilingual incl. Chinese).  Both the bare
+            # and gateway-prefixed ids are mapped.
+            "bge-m3": 1024,
+            "BAAI/bge-m3": 1024,
         }
         self._client = httpx.AsyncClient(
-            base_url="https://api.openai.com/v1",
+            base_url=base_url or "https://api.openai.com/v1",
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         )
@@ -130,7 +140,7 @@ class OpenAIProvider(EmbeddingProvider):
                 f"HTTP {response.status_code}: {response.text}"
             )
         if response.status_code == 401:
-            raise AuthenticationError("Invalid OpenAI API key")
+            raise AuthenticationError("Invalid API key")
         if response.status_code == 400:
             raise ValueError(f"Bad request: {response.text}")
 
@@ -304,6 +314,9 @@ class MockEmbeddingProvider(EmbeddingProvider):
 
     def __init__(self, dimension: int = 128) -> None:
         self._dimension = dimension
+        # Identity used in embedding cache keys (engine._embed); prevents
+        # cross-provider cache collisions when dimension differs.
+        self._model = f"mock-{dimension}"
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import hashlib
@@ -336,6 +349,7 @@ def get_embedding_provider() -> EmbeddingProvider:
             return OpenAIProvider(
                 api_key=settings.openai_api_key,
                 model=settings.openai_embedding_model,
+                base_url=settings.openai_base_url,
             )
         logger.warning(
             "OpenAI API key missing; attempting local embedding fallback"

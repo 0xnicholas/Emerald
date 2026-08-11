@@ -49,6 +49,40 @@ def test_make_engine_explicit_small_model_dimension_1536(monkeypatch):
     assert engine.embedder.dimension() == 1536
 
 
+def test_make_engine_explicit_bge_m3_dimension_1024(monkeypatch):
+    """bge-m3 (SiliconFlow gateway) → provider dimension 1024.
+
+    Gateway model support added 2026-08-11 for deployments that cannot
+    reach api.openai.com; the explicit-model path must honor
+    ``settings.openai_base_url``.
+    """
+    _fake_openai_settings(monkeypatch)
+    config = rb.BenchConfig(
+        use_real_embeddings=True, embedding_model="bge-m3"
+    )
+    engine = rb._make_engine(config)
+    assert engine.embedder.dimension() == 1024
+    assert str(engine.embedder._client.base_url).rstrip("/") == "https://api.openai.com/v1"
+
+
+def test_make_engine_explicit_model_uses_openai_base_url_setting(monkeypatch):
+    """Explicit-model path respects settings.openai_base_url (gateway)."""
+    from emerald.config import Settings
+
+    monkeypatch.setattr(
+        "emerald.config.get_settings",
+        lambda: Settings(
+            openai_api_key="sk-test",
+            openai_base_url="https://api.siliconflow.cn/v1",
+        ),
+    )
+    config = rb.BenchConfig(
+        use_real_embeddings=True, embedding_model="bge-m3"
+    )
+    engine = rb._make_engine(config)
+    assert str(engine.embedder._client.base_url).rstrip("/") == "https://api.siliconflow.cn/v1"
+
+
 def test_make_engine_default_uses_provider_factory(monkeypatch):
     """No --embedding-model → get_embedding_provider() (current behavior)."""
     called = {"factory": False}

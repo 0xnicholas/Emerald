@@ -42,8 +42,40 @@ async def test_mock_embedder_empty_list(mock_embedder):
 # ---- OpenAIProvider tests ----
 
 @pytest.fixture
-def openai_provider():
+
+def openai_provider(monkeypatch):
+    # Isolate every OpenAIProvider test from a live local Redis: without
+    # this, the tests write emb: cache keys into the real Redis (when one
+    # is running) and then poison each other — the first test's mock
+    # vectors get served as cache hits to later runs (observed 2026-08-11,
+    # baseline failures in CI-free local runs).  The dedicated cache test
+    # patches ensure_redis_for_loop itself (fakeredis) and overrides this.
+    async def _no_redis():
+        raise RuntimeError("no redis in tests")
+
+    monkeypatch.setattr("emerald.db.redis.ensure_redis_for_loop", _no_redis)
     return OpenAIProvider(api_key="sk-test", model="text-embedding-3-small")
+
+
+def test_openai_provider_custom_base_url():
+    """base_url override points the client at an OpenAI-compatible gateway.
+
+    Added for the SiliconFlow / bge-m3 benchmark path (2026-08-11):
+    deployments that cannot reach api.openai.com route embeddings through
+    a compatible gateway via ``settings.openai_base_url``.
+    """
+    p = OpenAIProvider(api_key="sk-test", model="bge-m3", base_url="https://api.siliconflow.cn/v1")
+    # httpx normalizes the base URL with a trailing slash.
+    assert str(p._client.base_url).rstrip("/") == "https://api.siliconflow.cn/v1"
+    # bge-m3 dimension is mapped (multilingual gateway model).
+    assert p.dimension() == 1024
+
+
+def test_openai_provider_default_base_url():
+    """Default base_url stays OpenAI (no behavior change for existing callers)."""
+    p = OpenAIProvider(api_key="sk-test")
+    assert str(p._client.base_url).rstrip("/") == "https://api.openai.com/v1"
+    assert p.dimension() == 1536
 
 
 @pytest.mark.asyncio
