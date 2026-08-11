@@ -21,8 +21,22 @@ def graph():
 
 
 @pytest.fixture
-def manager(graph):
-    return ProfileManager(graph=graph)
+def manager(graph, monkeypatch):
+    m = ProfileManager(graph=graph)
+    # Isolate from a live local Redis: without this, the first test that
+    # computes a profile for an entity caches it (profile:{entity_id}) and
+    # every later test for the same entity reads the stale cached profile
+    # (observed 2026-08-11: test_empty_profile poisoned user_123 for the
+    # whole suite, and the same failures showed up in CI unit-test step).
+    import fakeredis.aioredis
+
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+    async def _fake_loop_redis():
+        return fake_redis
+
+    monkeypatch.setattr(m, "_get_loop_redis", _fake_loop_redis)
+    return m
 
 
 @pytest.mark.asyncio

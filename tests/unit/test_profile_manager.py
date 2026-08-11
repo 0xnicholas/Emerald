@@ -10,9 +10,21 @@ from emerald.core.graph import GraphStore
 
 
 @pytest.fixture
-def manager():
+def manager(monkeypatch):
     graph = GraphStore(use_db=False)
-    return ProfileManager(graph=graph)
+    m = ProfileManager(graph=graph)
+    # Isolate from a live local Redis (same rationale as the core suite
+    # fixture): cached profiles from earlier tests must not leak into
+    # later ones via the shared Redis instance.
+    import fakeredis.aioredis
+
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+    async def _fake_loop_redis():
+        return fake_redis
+
+    monkeypatch.setattr(m, "_get_loop_redis", _fake_loop_redis)
+    return m
 
 
 @pytest.fixture
@@ -125,8 +137,12 @@ async def test_get_cache_hit_returns_cached(manager, entity_id):
 
 
 @pytest.mark.asyncio
-async def test_get_returns_memory_cache_when_no_redis(manager, entity_id):
+async def test_get_returns_memory_cache_when_no_redis(manager, entity_id, monkeypatch):
     """In-memory cache works as fallback when Redis is unavailable."""
+    async def _no_redis():
+        return None
+
+    monkeypatch.setattr(manager, "_get_loop_redis", _no_redis)
     await _seed_memory(manager.graph, entity_id, "cached", "fact", 0.9)
 
     p1 = await manager.get(entity_id)
@@ -138,8 +154,12 @@ async def test_get_returns_memory_cache_when_no_redis(manager, entity_id):
 # ---- invalidate ----
 
 @pytest.mark.asyncio
-async def test_invalidate_clears_memory_cache(manager, entity_id):
+async def test_invalidate_clears_memory_cache(manager, entity_id, monkeypatch):
     """invalidate() removes profile from in-memory cache."""
+    async def _no_redis():
+        return None
+
+    monkeypatch.setattr(manager, "_get_loop_redis", _no_redis)
     await _seed_memory(manager.graph, entity_id, "test", "fact", 0.9)
     await manager.get(entity_id)
     assert entity_id in manager._memory_cache
