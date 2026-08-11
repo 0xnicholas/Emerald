@@ -23,3 +23,6 @@ backups/*
 
 # pi subagent artifacts
 .pi-subagents/
+
+# Coverage data
+.coverage
