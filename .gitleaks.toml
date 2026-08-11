@@ -1,5 +1,17 @@
 # Gitleaks configuration for Emerald
 # Detects hardcoded secrets, API keys, tokens, and credentials in the codebase.
+#
+# Config notes (audit 2026-08-10):
+# - Connection-string rules exclude '\n' from the credential class.  Go
+#   negative character classes match newlines, so 'redis://[^@]+@' used to
+#   swallow multi-line blocks up to the next '@' and produced 31 findings
+#   across example/test files (all false positives).
+# - Use the [allowlist] `regexes` field (matches the rule match text
+#   itself).  The legacy '[allowlist.rules]' map form is not honored when
+#   the [allowlist] block also defines `paths` (gitleaks 8.24.3 and
+#   8.30.1 both drop it silently).
+# - Example/test config files are exempted by path: their sole purpose is
+#   to showcase placeholder credentials (emerald_dev etc.).
 
 title = "Emerald Gitleaks Config"
 
@@ -10,6 +22,25 @@ title = "Emerald Gitleaks Config"
     '''docs/''',
     '''.venv/''',
     '''backups/''',
+    # Example / test configuration files — placeholder credentials only.
+    '''\.env\.example''',
+    '''\.env\.test''',
+    '''\.env\.docker\.example''',
+  ]
+  # Regexes are matched against the rule match text (the captured secret).
+  # Entries below carry the connection-string prefix exactly as the rule
+  # captures it (up to the first '@').  These are the repository's dev
+  # placeholder credentials (emerald_dev / emerald) used by docker-compose,
+  # CI services and config defaults — not production secrets.
+  regexes = [
+    # Dev defaults in config.py / scripts / CI
+    '''postgresql+asyncpg://emerald:emerald_dev@''',
+    '''postgresql://emerald:emerald_dev@''',
+    '''redis://:emerald_dev@''',
+    '''redis://localhost:6379/0@''',
+    # Test fixtures / config defaults (not real secrets)
+    '''change-me''',
+    '''0" * 64''',
   ]
 
 [[rules]]
@@ -39,45 +70,22 @@ title = "Emerald Gitleaks Config"
 [[rules]]
   id = "neo4j-connection"
   description = "Neo4j connection string with credentials"
-  regex = '''bolt://[^@]+@'''
+  # [^@\n]+ — exclude newline so the class cannot span lines; Go regex
+  # negative character classes match \n, which made this rule swallow
+  # multi-line blocks up to the next '@' (31 false-positive findings).
+  regex = '''bolt://[^@\n]+@'''
   tags = ["database", "neo4j"]
 
 [[rules]]
   id = "redis-connection"
   description = "Redis connection string with credentials"
-  regex = '''redis://[^@]+@'''
+  # See neo4j-connection: negative class must not span lines.
+  regex = '''redis://[^@\n]+@'''
   tags = ["database", "redis"]
 
 [[rules]]
   id = "postgres-connection"
   description = "PostgreSQL connection string with credentials"
-  regex = '''postgresql://[^@]+@'''
+  # See neo4j-connection: negative class must not span lines.
+  regex = '''postgresql://[^@\n]+@'''
   tags = ["database", "postgres"]
-
-[allowlist.rules]
-  "generic-api-key" = [
-    # Test fixtures / config defaults (not real secrets)
-    '''api_key_secret: str = "change-me"''',
-    '''"api_key_secret": "change-me"''',
-    '''encryption_key: str = "0" * 64''',
-    '''session_jwt_secret: str = "change-me-change-me-change-me-change-me"''',
-  ]
-  "neo4j-connection" = [
-    # Dev defaults in config.py
-    '''neo4j_uri: str = "bolt://localhost:7687"''',
-    '''NEO4J_URI: bolt://localhost:7687''',
-  ]
-  "redis-connection" = [
-    # Dev defaults in config.py and docker-compose
-    '''redis_url: str = "redis://:emerald_dev@localhost:6379/0"''',
-    '''REDIS_URL: redis://localhost:6379/0''',
-    '''celery_broker_url: str = "redis://:emerald_dev@localhost:6379/1"''',
-    '''celery_result_backend: str = "redis://:emerald_dev@localhost:6379/2"''',
-  ]
-  "postgres-connection" = [
-    # Dev defaults in config.py
-    '''database_url: str = "postgresql+asyncpg://emerald:emerald_dev@localhost:5432/emerald"''',
-    '''DATABASE_URL: postgresql+asyncpg://emerald:emerald_dev@localhost:5432/emerald''',
-    '''database_url_sync: str = "postgresql://emerald:emerald_dev@localhost:5432/emerald"''',
-    '''DATABASE_URL_SYNC: postgresql://emerald:emerald_dev@localhost:5432/emerald''',
-  ]

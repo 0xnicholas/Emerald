@@ -616,7 +616,14 @@ paths:
       tags:
       - Extract
       summary: Extract Url
-      description: Extract title, description, favicon from a URL.
+      description: 'Extract title, description, favicon from a URL.
+
+
+        Authenticated and rate-limited: the endpoint performs an outbound
+
+        HTTP fetch, so without auth it is an unauthenticated SSRF/resource-
+
+        abuse surface (audit finding 2026-08-10, fixed).'
       operationId: extract_url_v1_extract_url_post
       requestBody:
         content:

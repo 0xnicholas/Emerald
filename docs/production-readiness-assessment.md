@@ -135,7 +135,7 @@
 | 文件大小限制 | 🟢 | upload 50MB 限制 |
 | 输入校验 | 🟢 | Pydantic 模型校验，FastAPI 自动处理 |
 | Webhook 签名验证 | 🟢 | GitHub HMAC-SHA256 验证 |
-| 依赖安全扫描 | 🟢 | v0.4.0: `.github/workflows/security.yml` — pip-audit（每周+PR）、Gitleaks 密钥检测、CodeQL 静态分析；`.gitleaks.toml` 含项目定制规则 |
+| 依赖安全扫描 | 🟢 | v0.4.0: `.github/workflows/security.yml` — pip-audit（每周+PR）、Gitleaks 密钥检测、CodeQL 静态分析；`.gitleaks.toml` 含项目定制规则。2026-08-11 安全审计（M2 #14）：pip-audit 升级为 0 漏洞硬门禁；Gitleaks 新增全历史扫描 job（8.30.1 固定版本）；规则跨行误报与 allowlist 结构失效修复；`/v1/extract-url` 无鉴权 SSRF 面修复（挂载 auth + 限流）。详见 `docs/verification/security-audit-2026-08.md` |
 | SQL 注入防护 | 🟢 | SQLAlchemy 参数化查询 |
 | PII 日志脱敏 | 🟢 | v0.4.0: `emerald/core/sanitizer.py` — structlog processor，生产环境自动启用；覆盖 email/电话/APIkey/IP/信用卡/SSN/JWT + 敏感字段名红action |
 | 安全策略文档 | 🟢 | `SECURITY.md` — 支持版本、漏洞报告流程、信任边界图、12 项安全措施清单 |

@@ -9,8 +9,10 @@ import uuid
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from emerald.api.dependencies import api_key_auth, rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +83,17 @@ def _extract_meta(html: str, url: str) -> dict[str, str]:
     return result
 
 
-@router.post("/extract-url")
+@router.post(
+    "/extract-url",
+    dependencies=[Depends(api_key_auth), Depends(rate_limit)],
+)
 async def extract_url(body: ExtractUrlRequest, request: Request) -> dict:
-    """Extract title, description, favicon from a URL."""
+    """Extract title, description, favicon from a URL.
+
+    Authenticated and rate-limited: the endpoint performs an outbound
+    HTTP fetch, so without auth it is an unauthenticated SSRF/resource-
+    abuse surface (audit finding 2026-08-10, fixed).
+    """
     start = time.perf_counter()
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
 
