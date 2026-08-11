@@ -106,11 +106,6 @@ REQUIRED_V1_ENDPOINTS = [
     "/v1/sessions/verify",
     # Conflicts
     "/v1/conflicts/{conflict_id}/resolve",
-    # Connectors
-    "/v1/connectors/{provider}",
-    "/v1/connectors/{provider}/connect",
-    "/v1/connectors/{provider}/callback",
-    "/v1/connectors/{provider}/webhook",
     # System
     "/v1/health",
     "/v1/memories/graph",

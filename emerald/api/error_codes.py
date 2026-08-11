@@ -18,7 +18,6 @@ class ErrorCategory(str, Enum):
     CONFLICT = "conflict"
     RATE_LIMIT = "rate_limit"
     SERVER = "server"
-    CONNECTOR = "connector"
 
 
 @dataclass(frozen=True)
@@ -109,18 +108,7 @@ _INTERNAL_EXCEPTION_MAP: dict[str, str] = {
     "CHUNKINGERROR": "PIPELINE_FAILED",
     "EMBEDDINGERROR": "EMBEDDING_FAILED",
     "INDEXINGERROR": "PIPELINE_FAILED",
-    "CONNECTORERROR": "CONNECTOR_AUTH_FAILED",
-    "UNSUPPORTEDCONNECTORERROR": "CONNECTOR_NOT_SUPPORTED",
-    "CONNECTORAUTHERROR": "CONNECTOR_AUTH_FAILED",
 }
-
-# -- Connector errors (502) --
-CONNECTOR_AUTH_FAILED = _register("CONNECTOR_AUTH_FAILED", 502, ErrorCategory.CONNECTOR,
-    "OAuth authentication with external provider failed")
-CONNECTOR_WEBHOOK_INVALID = _register("CONNECTOR_WEBHOOK_INVALID", 400, ErrorCategory.CONNECTOR,
-    "Received invalid webhook payload from connector")
-CONNECTOR_NOT_SUPPORTED = _register("CONNECTOR_NOT_SUPPORTED", 400, ErrorCategory.CONNECTOR,
-    "The requested connector provider is not supported")
 
 
 def get_error_code(code: str) -> ErrorCode:

@@ -74,16 +74,7 @@ All Emerald API errors return a standardized JSON body with a machine-readable
 | `PIPELINE_FAILED` | 500 | A pipeline stage failed |
 | `EXTRACTION_FAILED` | 500 | Content extraction failed |
 | `EMBEDDING_FAILED` | 500 | Embedding generation failed |
-| `CONNECTOR_AUTH_FAILED` | 502 | OAuth authentication with external provider failed |
 | `SERVICE_UNAVAILABLE` | 503 | A dependent service is temporarily unavailable |
-
-### Connector (400/502)
-
-| Code | HTTP | Description |
-|---|---|---|
-| `CONNECTOR_NOT_SUPPORTED` | 400 | The requested connector provider is not supported |
-| `CONNECTOR_WEBHOOK_INVALID` | 400 | Received invalid webhook payload |
-| `CONNECTOR_AUTH_FAILED` | 502 | OAuth authentication failed |
 
 ## SDK Usage
 

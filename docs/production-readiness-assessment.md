@@ -148,9 +148,9 @@
 |---|---|---|
 | 单元测试数量 | 🟢 | 629 个测试函数通过（不含 Docker/fastembed ONNX），覆盖核心引擎、搜索、画像、认证、限流、异常、边缘情况 |
 | 测试类型 | 🟢 | 单元测试、集成测试（Docker Compose）、负向测试、边缘情况、并发测试 |
-| 连接器测试 | 🟡 迁移中 | 自研连接器 E2E 测试（27 个集成测试）将在连接中心 Pilot 验证后随旧代码删除（ADR-0004） |
+| 连接器测试 | 🟢 已退役 | 自研连接器 E2E/集成测试已随旧代码删除（issue #7，ADR-0004）；连接中心路径由 Totem Pilot 验证（`docs/verification/totem-pilot-verification.md`） |
 | 端到端测试 | 🟢 | `docker-compose.test.yml` + `.env.test`，629 tests passing |
-| 覆盖率配置 | 🟡 | `.coveragerc` omit 了 8 个文件（连接器任务、音视频提取等） |
+| 覆盖率配置 | 🟢 | `.coveragerc` omit 3 个文件（celery、音视频提取） |
 | 测试运行 | 🟢 | `pytest` 全量测试通过，< 30s |
 | 基准测试 | 🟡 | 有 `test_memory_benchmarks.py`，但未公布成绩 |
 

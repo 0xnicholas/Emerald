@@ -2,8 +2,9 @@
 
 > **2026-08-09 决策（ADR-0004）**：连接器外包给连接中心。**2026-08-10 更新（issue #6）**：
 > 连接中心实现从 StackOne 改为 **Totem**（同团队内部项目，`../totem`；契约见 Totem
-> `docs/standards/consumption-standard.md`）。本文档描述新架构；旧的自研连接器
-> （`emerald/connectors/`）在 Pilot 验证后删除（issue #7）。
+> `docs/standards/consumption-standard.md`）。**2026-08-11 更新（issue #7）**：旧的自研连接器
+> （`emerald/connectors/`，2,194 行）已删除，含测试/路由/模型/迁移（009_drop_connectors）。
+> 本文档只描述新架构。
 
 ---
 
@@ -66,5 +67,5 @@
 
 1. ~~Pilot：实现 HubAdapter + 绑定管理 + 事件接收，选一个 provider 跑通全链路~~ **已重做（2026-08-10，issue #6）**：接入目标从 StackOne 改为 **Totem**；Pilot 验证记录见 [Totem Pilot 验证记录](../verification/totem-pilot-verification.md)（真实 Totem + mock Feishu 上游，25/25 检查通过）。旧 [StackOne Pilot 验证记录](../verification/stackone-pilot-verification.md) 保留为历史
 2. ~~验证结论：有条件通过~~ 已由 Totem Pilot 取代（2026-08-10 决策：不再考虑接入 StackOne，其外部阻塞与账号配置问题一并消除）
-3. 验证通过后：删除 `emerald/connectors/`（2,194 行）及对应测试、路由、`.coveragerc` omit 条目（T4b，issue #7，与 Totem 接入时间点绑定）
-4. `/v1/connectors/*` API 语义迁移为数据源绑定管理（connect session → 绑定记录）
+3. ~~验证通过后：删除 `emerald/connectors/`（2,194 行）及对应测试、路由、`.coveragerc` omit 条目~~ **已完成（2026-08-11，issue #7）**：自研连接器及配套全部删除，迁移 `009_drop_connectors` 落地
+4. `/v1/connectors/*` API 语义迁移为数据源绑定管理（connect session → 绑定记录）——**已完成（issue #7）**：/v1/connectors/* 移除，`/v1/sources/*`（connect/list/refresh/delete/webhook）为唯一绑定面

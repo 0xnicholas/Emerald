@@ -242,18 +242,51 @@ export class EmeraldClient {
     return data.data;
   }
 
-  // ─── Connectors ───────────────────────────────────────────────────
+  // ─── Sources (ADR-0004 connection hub bindings) ─────────────────
 
-  async getConnectorStatus(provider: string): Promise<{ sync_status: string; last_synced_at: string | null; error_message: string | null; connected_at: string | null }> {
-    const data = await this.request<{ data: { sync_status: string; last_synced_at: string | null; error_message: string | null; connected_at: string | null } }>(
-      "GET",
-      `/v1/connectors/${encodeURIComponent(provider)}`
+  async listSources(entityId: string): Promise<{
+    id: string;
+    provider: string;
+    hub_account_id: string;
+    sync_status: string;
+    last_synced_at: string | null;
+    error_message: string | null;
+  }[]> {
+    const data = await this.request<{
+      data: {
+        id: string;
+        provider: string;
+        hub_account_id: string;
+        sync_status: string;
+        last_synced_at: string | null;
+        error_message: string | null;
+      }[];
+    }>("GET", `/v1/sources?entity_id=${encodeURIComponent(entityId)}`);
+    return data.data;
+  }
+
+  async connectSource(entityId: string, provider: string): Promise<{ auth_link_url: string; session_id: string; provider: string }> {
+    const data = await this.request<{ data: { auth_link_url: string; session_id: string; provider: string } }>(
+      "POST",
+      "/v1/sources/connect",
+      { entity_id: entityId, provider }
     );
     return data.data;
   }
 
-  async disconnectConnector(provider: string): Promise<void> {
-    await this.request("DELETE", `/v1/connectors/${encodeURIComponent(provider)}`);
+  async refreshSources(entityId: string): Promise<{ accounts: number; bindings: string[] }> {
+    const data = await this.request<{ data: { accounts: number; bindings: string[] } }>(
+      "POST",
+      `/v1/sources/refresh?entity_id=${encodeURIComponent(entityId)}`
+    );
+    return data.data;
+  }
+
+  async deleteSource(bindingId: string, entityId: string): Promise<void> {
+    await this.request(
+      "DELETE",
+      `/v1/sources/${encodeURIComponent(bindingId)}?entity_id=${encodeURIComponent(entityId)}`
+    );
   }
 
   // ─── Health ───────────────────────────────────────────────────────

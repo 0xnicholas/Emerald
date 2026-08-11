@@ -332,7 +332,6 @@ EMERALD_LOG_LEVEL=INFO               # DEBUG | INFO | WARNING | ERROR
 # API 密钥
 # ============================================
 API_KEY_SECRET=your-secret-here      # 用于生成/验证 API Key 的 HMAC 密钥
-ENCRYPTION_KEY=...                   # 64 位十六进制 (32 bytes)，用于加密 connector credentials
 
 # ============================================
 # PostgreSQL

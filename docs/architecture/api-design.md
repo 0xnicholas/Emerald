@@ -478,62 +478,63 @@ GET /v1/files?entity_id=user_123&status=done&page=1&page_size=20
 
 ---
 
-### 5.5 连接器
+### 5.5 数据源绑定（连接中心）
 
-#### 发起 OAuth 连接
+> ADR-0004：凭证/同步/执行外包给连接中心（当前实现 Totem，`../totem`）。Emerald 只维护
+> 「数据源绑定」（授权关系 + 数据源身份）。详见[连接中心架构](connectors.md)。
+
+#### 发起授权流
 
 ```
-POST /v1/connectors/{provider}/connect
+POST /v1/sources/connect
 ```
 
-路径参数：`provider` = `google_drive` | `gmail` | `notion` | `github`
+请求体：`{ "entity_id": "...", "provider": "feishu" }`（provider 当前仅支持 `feishu`）
 
 **响应：**
 
 ```json
 {
     "data": {
-        "provider": "google_drive",
-        "auth_url": "https://accounts.google.com/o/oauth2/auth?...",
-        "state_token": "state_abc123",
-        "expires_in": 600
+        "auth_link_url": "https://totem.internal/oauth/start?...",
+        "session_id": "...",
+        "provider": "feishu"
     }
 }
 ```
 
-#### Webhook 回调
+用户被送往 `auth_link_url` 在连接中心完成授权；返回后调用 refresh 完成绑定。
+
+#### 列出现有绑定
 
 ```
-POST /v1/connectors/{provider}/webhook
+GET /v1/sources?entity_id=...
 ```
 
-请求体验证签名后触发增量同步。详见[连接器架构](connectors.md)。
-
-#### 查询连接器状态
+#### 刷新绑定（授权后回调用）
 
 ```
-GET /v1/connectors/{provider}
+POST /v1/sources/refresh?entity_id=...
 ```
 
-```json
-{
-    "data": {
-        "provider": "google_drive",
-        "sync_status": "active",
-        "last_synced_at": "2026-05-22T09:30:00Z",
-        "error_message": null,
-        "connected_at": "2026-05-15T14:00:00Z"
-    }
-}
-```
+与连接中心对账，将新授权的账户 upsert 为绑定。
 
-#### 撤销连接
+#### 删除绑定
 
 ```
-DELETE /v1/connectors/{provider}
+DELETE /v1/sources/{binding_id}?entity_id=...
 ```
 
-返回 204 No Content。
+数据保留在图谱中，停止后续同步。
+
+#### Webhook（上游订阅「铃铛」）
+
+```
+POST /v1/sources/webhook
+```
+
+连接中心/上游事件投递端点，验签后归一化入队（Totem v1 无投递面，见 ADR-0011；
+标准契约见 Totem consumption standard §8）。
 
 ---
 
@@ -650,7 +651,6 @@ Python SDK 与 REST API 的映射关系必须一致：
 | `client.upload(file, ...)` | `POST /v1/upload` | 上传文件 |
 | `client.get_memory(id)` | `GET /v1/memories/{id}` | 获取记忆 |
 | `client.list_files(...)` | `GET /v1/files` | 列出文件 |
-| `client.connect(provider)` | `POST /v1/connectors/{provider}/connect` | 发起 OAuth |
 | `client.pipeline_status(id)` | `GET /v1/pipelines/{id}` | 管线状态 |
 
 ---

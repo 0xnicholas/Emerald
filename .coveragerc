@@ -1,10 +1,5 @@
 [run]
 omit = 
-    emerald/connectors/gmail.py
-    emerald/connectors/google_drive.py
-    emerald/connectors/notion.py
-    emerald/connectors/scheduler.py
-    emerald/connectors/tasks.py
     emerald/pipeline/celery.py
     emerald/pipeline/extraction/audio.py
     emerald/pipeline/extraction/video.py

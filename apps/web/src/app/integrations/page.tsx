@@ -13,53 +13,31 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/typography";
 import {
-  Loader, CheckCircle2, XCircle, ExternalLink, Plug,
-  Mail, HardDrive, BookOpen, Terminal, RefreshCw, Code2,
+  Loader, CheckCircle2, XCircle, Plug, Mail, RefreshCw, Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
 
-interface ConnectorStatus {
+interface SourceBinding {
+  id: string;
   provider: string;
+  hub_account_id: string;
   sync_status: string;
   last_synced_at: string | null;
   error_message: string | null;
-  connected_at: string | null;
 }
 
-const CONNECTOR_META: Record<string, {
+// Connection hub (ADR-0004) — Totem v1 upstream: Feishu Docs only.
+const SOURCE_META: Record<string, {
   name: string;
   description: string;
   icon: React.ReactNode;
   color: string;
-  docsUrl: string;
 }> = {
-  "google-drive": {
-    name: "Google Drive",
-    description: "Sync documents, spreadsheets, and presentations",
-    icon: <HardDrive className="h-5 w-5" />,
-    color: "text-yellow-500",
-    docsUrl: "https://supermemory.ai/docs/connectors/google-drive",
-  },
-  "notion": {
-    name: "Notion",
-    description: "Import pages and databases from your workspace",
-    icon: <BookOpen className="h-5 w-5" />,
-    color: "text-white",
-    docsUrl: "https://supermemory.ai/docs/connectors/notion",
-  },
-  "github": {
-    name: "GitHub",
-    description: "Index repositories, issues, and pull requests",
-    icon: <Code2 className="h-5 w-5" />,
-    color: "text-white",
-    docsUrl: "https://supermemory.ai/docs/connectors/github",
-  },
-  "gmail": {
-    name: "Gmail",
-    description: "Search and remember email conversations",
+  feishu: {
+    name: "Feishu Docs",
+    description: "Sync documents from your Feishu workspace via the connection hub",
     icon: <Mail className="h-5 w-5" />,
-    color: "text-red-400",
-    docsUrl: "https://supermemory.ai/docs/connectors/gmail",
+    color: "text-blue-400",
   },
 };
 
@@ -86,35 +64,21 @@ function IntegrationsShell() {
   const baseUrl = useAppStore((s) => s.baseUrl);
   const queryClient = useQueryClient();
 
-  const connectors = useQuery({
-    queryKey: ["connectors", entityId],
+  const sources = useQuery({
+    queryKey: ["sources", entityId],
     queryFn: async () => {
-      const statuses: ConnectorStatus[] = [];
-      for (const provider of Object.keys(CONNECTOR_META)) {
-        try {
-          const data = await getClient().getConnectorStatus(provider);
-          statuses.push({ provider, ...data });
-        } catch {
-          statuses.push({
-            provider,
-            sync_status: "inactive",
-            last_synced_at: null,
-            error_message: null,
-            connected_at: null,
-          });
-        }
-      }
-      return statuses;
+      const bindings = await getClient().listSources(entityId!);
+      return bindings.map((b) => ({ ...b, provider: b.provider }));
     },
     enabled: !!entityId,
     staleTime: 10_000,
   });
 
-  const activeCount = connectors.data?.filter(
-    (c) => c.sync_status === "active" || c.sync_status === "syncing"
+  const activeCount = sources.data?.filter(
+    (s) => s.sync_status === "active" || s.sync_status === "syncing"
   ).length ?? 0;
 
-  if (connectors.isLoading) {
+  if (sources.isLoading) {
     return <Shell children={<LoadingState />} />;
   }
 
@@ -133,21 +97,21 @@ function IntegrationsShell() {
         <div className="grid grid-cols-3 gap-3">
           <Card className="col-span-1">
             <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-fg-primary">{Object.keys(CONNECTOR_META).length}</p>
-              <p className="text-xs text-fg-muted">Available connectors</p>
+              <p className="text-2xl font-bold text-fg-primary">{Object.keys(SOURCE_META).length}</p>
+              <p className="text-xs text-fg-muted">Available sources</p>
             </CardContent>
           </Card>
           <Card className="col-span-1">
             <CardContent className="p-4 text-center">
               <p className="text-2xl font-bold text-brand-accent">{activeCount}</p>
-              <p className="text-xs text-fg-muted">Active connections</p>
+              <p className="text-xs text-fg-muted">Active bindings</p>
             </CardContent>
           </Card>
           <Card className="col-span-1">
             <CardContent className="p-4 text-center">
               <p className="text-2xl font-bold text-fg-primary">
-                {connectors.data?.length
-                  ? connectors.data.filter((c) => c.sync_status === "error").length
+                {sources.data?.length
+                  ? sources.data.filter((s) => s.sync_status === "error").length
                   : 0}
               </p>
               <p className="text-xs text-fg-muted">With errors</p>
@@ -155,17 +119,20 @@ function IntegrationsShell() {
           </Card>
         </div>
 
-        {/* Connector list */}
+        {/* Source list */}
         <div className="space-y-2">
-          <Label level="2" weight="medium" className="text-fg-faint">CONNECTORS</Label>
+          <div className="flex items-center justify-between">
+            <Label level="2" weight="medium" className="text-fg-faint">SOURCES</Label>
+            <RefreshButton />
+          </div>
           <div className="space-y-2">
-            {Object.entries(CONNECTOR_META).map(([provider, meta]) => {
-              const status = connectors.data?.find((c) => c.provider === provider);
-              const isActive = status?.sync_status === "active";
-              const isError = status?.sync_status === "error";
+            {(sources.data?.length ? sources.data : [{ provider: "feishu" } as SourceBinding]).map((src) => {
+              const meta = SOURCE_META[src.provider] ?? SOURCE_META.feishu;
+              const isActive = src.sync_status === "active";
+              const isError = src.sync_status === "error";
 
               return (
-                <Card key={provider}>
+                <Card key={src.id ?? src.provider}>
                   <CardContent className="flex items-center gap-4 p-4">
                     <div className={`flex h-10 w-10 items-center justify-center rounded-xl bg-surface-hover ${meta.color}`}>
                       {meta.icon}
@@ -190,26 +157,21 @@ function IntegrationsShell() {
                         )}
                       </div>
                       <p className="text-xs text-fg-muted mt-0.5">{meta.description}</p>
-                      {status?.last_synced_at && (
+                      {src.error_message && (
+                        <p className="text-[10px] text-text-error mt-0.5">{src.error_message}</p>
+                      )}
+                      {src.last_synced_at && (
                         <p className="text-[10px] text-fg-faint mt-0.5">
-                          Last synced: {new Date(status.last_synced_at).toLocaleDateString()}
+                          Last synced: {new Date(src.last_synced_at).toLocaleDateString()}
                         </p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {isActive ? (
-                        <DisconnectButton provider={provider} />
+                      {src.id ? (
+                        <DisconnectButton bindingId={src.id} />
                       ) : (
-                        <Button variant="outline" size="sm" disabled>
-                          <Plug className="h-3.5 w-3.5 mr-1" />
-                          Connect
-                        </Button>
+                        <ConnectButton provider={src.provider} />
                       )}
-                      <a href={meta.docsUrl} target="_blank" rel="noopener noreferrer">
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </Button>
-                      </a>
                     </div>
                   </CardContent>
                 </Card>
@@ -252,18 +214,73 @@ function IntegrationsShell() {
   );
 }
 
-function DisconnectButton({ provider }: { provider: string }) {
+function RefreshButton() {
+  const entityId = useAppStore((s) => s.entityId);
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState(false);
+
+  const refresh = useMutation({
+    mutationFn: async () => {
+      await getClient().refreshSources(entityId!);
+    },
+    onMutate: () => setPending(true),
+    onSuccess: () => {
+      toast.success("Bindings refreshed");
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+    onError: () => toast.error("Failed to refresh bindings"),
+    onSettled: () => setPending(false),
+  });
+
+  return (
+    <Button variant="ghost" size="sm" onClick={() => refresh.mutate()} disabled={pending}>
+      {pending ? <Loader className="h-3.5 w-3.5 animate-spin mr-1" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
+      Refresh
+    </Button>
+  );
+}
+
+function ConnectButton({ provider }: { provider: string }) {
+  const entityId = useAppStore((s) => s.entityId);
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState(false);
+
+  const connect = useMutation({
+    mutationFn: async () => {
+      const session = await getClient().connectSource(entityId!, provider);
+      window.open(session.auth_link_url, "_blank", "noopener,noreferrer");
+      return session;
+    },
+    onMutate: () => setPending(true),
+    onSuccess: () => {
+      toast.success("Authorize in the opened tab, then click Refresh");
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+    onError: () => toast.error("Failed to start authorization"),
+    onSettled: () => setPending(false),
+  });
+
+  return (
+    <Button variant="outline" size="sm" onClick={() => connect.mutate()} disabled={pending}>
+      {pending ? <Loader className="h-3.5 w-3.5 animate-spin mr-1" /> : <Plug className="h-3.5 w-3.5 mr-1" />}
+      Connect
+    </Button>
+  );
+}
+
+function DisconnectButton({ bindingId }: { bindingId: string }) {
+  const entityId = useAppStore((s) => s.entityId);
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
 
   const disconnect = useMutation({
     mutationFn: async () => {
-      await getClient().disconnectConnector(provider);
+      await getClient().deleteSource(bindingId, entityId!);
     },
     onMutate: () => setPending(true),
     onSuccess: () => {
-      toast.success(`${provider} disconnected`);
-      queryClient.invalidateQueries({ queryKey: ["connectors"] });
+      toast.success("Source disconnected");
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
     },
     onError: () => toast.error("Failed to disconnect"),
     onSettled: () => setPending(false),

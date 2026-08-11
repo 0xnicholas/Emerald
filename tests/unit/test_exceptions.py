@@ -12,7 +12,6 @@ from emerald.core.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     PipelineError,
-    UnsupportedConnectorError,
     UnsupportedContentTypeError,
 )
 
@@ -82,8 +81,3 @@ def test_duplicate_error():
     e = DuplicateError("Entity", "user_123")
     assert "Entity" in str(e)
     assert "user_123" in str(e)
-
-
-def test_unsupported_connector_error():
-    e = UnsupportedConnectorError("dropbox")
-    assert "dropbox" in str(e)

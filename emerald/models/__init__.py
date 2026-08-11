@@ -2,7 +2,6 @@
 
 from emerald.models.api_key import ApiKey
 from emerald.models.base import Base, TimestampMixin
-from emerald.models.connector import Connector
 from emerald.models.document import Document
 from emerald.models.embedding import Embedding
 from emerald.models.entity import Entity
@@ -16,7 +15,6 @@ __all__ = [
     "Entity",
     "ApiKey",
     "Document",
-    "Connector",
     "Embedding",
     "FastLaneChunk",
     "PipelineJob",

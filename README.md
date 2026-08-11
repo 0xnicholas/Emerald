@@ -326,9 +326,9 @@ docker compose up -d mcp
 | 用户画像 | ✅ 完整 | 静态+动态事实，Redis 缓存，< 50ms 冷启动 |
 | 混合搜索 | ✅ 完整 | Memory + RAG 合并，支持重排序和查询改写 |
 | 遗忘引擎 | ✅ 完整 | 时间过期、噪音过滤、情节衰减（Celery Beat） |
-| REST API | ✅ 完整 | 17 个 v1 端点（memories/search/profiles/upload/pipelines/conflicts/sessions/connectors/system） |
+| REST API | ✅ 完整 | 12 组 v1 路由（memories/search/profiles/upload/pipelines/conflicts/extract/sessions/sources/spaces/system/keys） |
 | Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status，typed 异常 + async context manager |
-| 连接器 | 🔄 迁移中 | 接入连接中心 Totem（ADR-0004，内部自托管：OAuth/执行/审计外包，Emerald 维护数据源绑定）；Pilot 验证通过（见 [验证记录](docs/verification/totem-pilot-verification.md)）；旧自研连接器 Pilot 后删除（issue #7） |
+| 连接器 | ✅ 已退役 | 自研连接器已删除（issue #7，ADR-0004）；统一接入连接中心 Totem（内部自托管：OAuth/执行/审计外包，Emerald 维护数据源绑定，见 [验证记录](docs/verification/totem-pilot-verification.md)） |
 | MCP Server | ✅ 完整 | stdio + SSE 双模式，3 个工具（add / search / profile） |
 | 基准测试 | 🟡 基建就位 | 6 维度合成对抗场景（LongMemEval / LoCoMo / ConvoMem 风格）；真实嵌入绝对分报告公开进行中（ADR-0001，见 `docs/adr/`） |
 | 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + OpenTelemetry 手动 span 集成 |

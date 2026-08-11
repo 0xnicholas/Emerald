@@ -127,19 +127,3 @@ class PermissionDeniedError(EmeraldError):
             f"Permission denied: requires '{required}', has {actual}"
         )
 
-
-# -- Connector errors --
-class ConnectorError(EmeraldError):
-    """Base for connector-related errors."""
-
-
-class UnsupportedConnectorError(ConnectorError):
-    """Raised when a connector provider is not supported."""
-
-    def __init__(self, provider: str) -> None:
-        self.provider = provider
-        super().__init__(f"No connector for provider: '{provider}'")
-
-
-class ConnectorAuthError(ConnectorError):
-    """Raised when OAuth authentication fails."""

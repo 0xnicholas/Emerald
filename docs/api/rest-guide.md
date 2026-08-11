@@ -691,13 +691,21 @@ Authorization: Bearer em_xxx
 
 ---
 
-## 连接器端点
+## 数据源绑定端点
 
-### 10. 发起 OAuth 连接 — `POST /connectors/{provider}/connect`
+> ADR-0004（连接中心，当前实现 Totem）：凭证/OAuth/同步执行外包给连接中心，Emerald 只维护「数据源绑定」（授权关系 + 数据源身份）。自研连接器端点（/v1/connectors/*）已随退役移除（issue #7）。
+
+### 10. 发起授权流 — `POST /sources/connect`
 
 ```http
-POST /v1/connectors/google_drive/connect
+POST /v1/sources/connect
 Authorization: Bearer em_xxx
+Content-Type: application/json
+
+{
+  "entity_id": "user_123",
+  "provider": "feishu"
+}
 ```
 
 **响应：**
@@ -705,94 +713,91 @@ Authorization: Bearer em_xxx
 ```json
 {
   "data": {
-    "provider": "google_drive",
-    "auth_url": "https://accounts.google.com/o/oauth2/auth?...",
-    "state_token": "abc123",
-    "expires_in": 600
-  },
-  "meta": {
-    "request_id": "c9d0e1f2",
-    "took_ms": 20
+    "auth_link_url": "https://totem.internal/oauth/start?tenant=...",
+    "session_id": "...",
+    "provider": "feishu"
   }
 }
 ```
 
-**支持的提供商：** `google_drive`、`gmail`、`notion`、`github`
+用户被送往 `auth_link_url`，在连接中心完成授权；返回后调用 `POST /v1/sources/refresh` 完成绑定。
+
+**支持的提供商：** `feishu`（Totem v1 upstream）
 
 ---
 
-### 11. OAuth 回调 — `GET /connectors/{provider}/callback`
-
-OAuth 授权后的回调端点。由提供商重定向调用，**无需手动调用**。
+### 11. 列出现有绑定 — `GET /sources`
 
 ```http
-GET /v1/connectors/google_drive/callback?code=xxx&state=abc123
-```
-
----
-
-### 12. Webhook 接收 — `POST /connectors/{provider}/webhook`
-
-接收外部提供商的变更通知。**由提供商调用，无需手动调用。**
-
-```http
-POST /v1/connectors/github/webhook
-X-Hub-Signature-256: sha256=xxx
-
-{ "repository": { "owner": { "login": "user_123" } }, ... }
-```
-
----
-
-### 13. 获取连接状态 — `GET /connectors/{provider}`
-
-```http
-GET /v1/connectors/google_drive
+GET /v1/sources?entity_id=user_123
 Authorization: Bearer em_xxx
 ```
 
-**响应（已连接）：**
+**响应：**
 
 ```json
 {
-  "data": {
-    "provider": "google_drive",
-    "sync_status": "active",
-    "last_synced_at": "2026-05-29T06:00:00Z",
-    "error_message": null,
-    "connected_at": "2026-05-20T10:00:00Z"
-  },
-  "meta": {
-    "request_id": "g3h4i5j6",
-    "took_ms": 18
-  }
-}
-```
-
-**响应（未连接）：**
-
-```json
-{
-  "data": {
-    "provider": "google_drive",
-    "sync_status": "inactive",
-    "last_synced_at": null,
-    "error_message": null,
-    "connected_at": null
-  }
+  "data": [
+    {
+      "id": "9c2e...",
+      "provider": "feishu",
+      "hub_account_id": "conn_abc123",
+      "sync_status": "active",
+      "last_synced_at": "2026-08-10T06:00:00Z",
+      "error_message": null
+    }
+  ]
 }
 ```
 
 ---
 
-### 14. 撤销连接 — `DELETE /connectors/{provider}`
+### 12. 刷新绑定（授权后回调用）— `POST /sources/refresh`
 
 ```http
-DELETE /v1/connectors/google_drive
+POST /v1/sources/refresh?entity_id=user_123
 Authorization: Bearer em_xxx
 ```
 
-**响应：** `204 No Content`
+与连接中心对账，将新授权的账户 upsert 为绑定。
+
+**响应：**
+
+```json
+{
+  "data": { "accounts": 1, "bindings": ["9c2e..."] }
+}
+```
+
+---
+
+### 13. 删除绑定 — `DELETE /sources/{binding_id}`
+
+```http
+DELETE /v1/sources/9c2e...?entity_id=user_123
+Authorization: Bearer em_xxx
+```
+
+数据保留在图谱中，停止后续同步。
+
+**响应：**
+
+```json
+{
+  "data": { "deleted": true, "binding_id": "9c2e..." }
+}
+```
+
+---
+
+### 14. Webhook（上游订阅「铃铛」）— `POST /sources/webhook`
+
+接收连接中心/上游的事件投递，验签（HMAC-SHA256，`x-totem-signature`）后归一化入队。**由连接中心调用，无需手动调用。**
+
+```http
+POST /v1/sources/webhook
+X-Totem-Signature: base64url(...)
+```
 
 ---
 

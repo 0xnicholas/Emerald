@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Removed
+
+- **自研连接器退役（ADR-0004 契约阶段，issue #7）**——`emerald/connectors/`（2,194 行：gmail/github/google_drive/notion 的 OAuth、凭证加密、webhook 接收与续期、Celery 定时同步）及配套全部移除：
+  - 路由 `/v1/connectors/*`（connect/callback/webhook/status/revoke）、`Connector` 模型、`OAuthStateStore`、`emerald/api/error_codes.py` 的 CONNECTOR 类目与 `emerald/core/exceptions.py` 的 Connector 异常；`pipeline/celery.py` 移除 5 项 beat 任务（renew_webhooks + 4× provider 同步）；`.coveragerc` omit 条目清理；依赖移除 `cryptography`（仅被旧凭证加密使用）
+  - 测试：`tests/connectors/`、4 个 provider e2e、`test_connectors`、`test_oauth_state_store`、`test_exceptions` 连接器用例；OpenAPI 重新生成（26 paths / 34 operations）
+  - 迁移 `009_drop_connectors`：删除 `connectors` 表（数据绑定已由 `source_bindings` 承接，ADR-0004）
+  - 保留：`ConnectionHub` 抽象 + `TotemHubClient`、`/v1/sources/*` 绑定路由、事件驱动摄入；web 集成页改接 `/v1/sources`（feishu）；docs 全量收敛（rest-guide/api-design/data-model/deployment/README/roadmap）
+  - 测试基线：`828 passed / 18 failed`（可选提取依赖×17 + docker 镜像×1），连接器 e2e 基线 6 项随删除消失，无新增失败
+
 ## [0.5.0] — 2026-08-11
 
 ### Fixed

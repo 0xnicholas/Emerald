@@ -255,29 +255,26 @@ CREATE INDEX idx_documents_entity ON documents(entity_id);
 CREATE INDEX idx_documents_status ON documents(status);
 ```
 
-### 2.4 连接器表
+### 2.4 数据源绑定表
 
 ```sql
-CREATE TABLE connectors (
+CREATE TABLE source_bindings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_id       UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-    provider        VARCHAR(50) NOT NULL,            -- "google_drive" | "gmail" | "notion" | "github"
-    credentials     BYTEA NOT NULL,                  -- 加密后的 OAuth token
-    webhook_secret  VARCHAR(255),
-    sync_status     VARCHAR(20) NOT NULL DEFAULT 'active'
-                    CHECK (sync_status IN ('active', 'paused', 'revoked', 'error')),
+    provider        VARCHAR(50) NOT NULL,            -- hub provider key（当前：feishu）
+    hub_account_id  VARCHAR(255) NOT NULL,           -- 连接中心侧的 connection id
+    sync_status     VARCHAR(20) NOT NULL DEFAULT 'active',
     last_synced_at  TIMESTAMPTZ,
     error_message   TEXT,
+    sync_metadata   JSONB,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE(entity_id, provider)
+    UNIQUE(entity_id, hub_account_id)
 );
-
-CREATE INDEX idx_connectors_entity ON connectors(entity_id);
 ```
 
-`credentials` 字段使用 AES-256-GCM 加密存储，密钥通过环境变量注入。
+绑定只记录「授权关系 + 数据源身份」；凭证存储/OAuth/token 刷新/同步执行全部在连接中心侧（ADR-0004，当前实现 Totem）。原 `connectors` 表（自研连接器）已随退役删除（迁移 `009_drop_connectors`）。
 
 ### 2.5 管线任务表
 

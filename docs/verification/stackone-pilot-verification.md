@@ -201,6 +201,10 @@ P1-2/P1-3 不阻塞退役（refresh 路由与错误路径独立于自研连接�
   - 环境依赖 e2e（自研连接器 OAuth 测试需 Redis 初始化，T4b 退役范围内；docker image 测试需本地构建镜像）：`test_github_e2e`×3、`test_gdrive_e2e`×3、`test_production_image`×1 —— 共 7 个
 - `git diff 6514c20...HEAD` 仅两个文档文件（本票零产品代码改动）。
 
+> **2026-08-11 更新（issue #7 退役执行后）**：连接器 e2e 基线（`test_github_e2e`×3、`test_gdrive_e2e`×3）
+> 已随自研连接器退役删除，不再属于基线；当前基线为 `828 passed / 18 failed`
+> （可选提取依赖×17 + `test_production_image`×1，与 v0.5.0 基线一致，无新增失败）。
+
 ---
 
 ## 附录：验证脚本与复现命令
