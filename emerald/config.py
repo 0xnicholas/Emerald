@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     otel_instrument_celery: bool = True
     otel_console_exporter: bool = False
     otel_service_namespace: str = "memory-infrastructure"
-    otel_service_version: str = "0.4.0"
+    otel_service_version: str = "0.5.0"
 
     # ---- Search / Recall ----
     search_default_top_k: int = 30
