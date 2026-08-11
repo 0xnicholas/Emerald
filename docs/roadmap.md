@@ -246,10 +246,10 @@ M2 ─┤              ├─→ M3 ─────────────┘
 4. **MIME 解析一致性修复**（backlog #4）：`text/markdown` 提取器缺口——Markdown 内容经 MIME 路径摄入不再抛 `UnsupportedContentType`
 5. **安全审计**（#14，原 A6）：3 维——依赖扫描（pip-audit 0 已知漏洞硬门禁，PYSEC-2024-1 现有豁免保留）/ Secret 检测（Gitleaks 全历史零命中，历史泄漏即轮换并记录 revoked）/ API 层清单五项（CORS 加固、实体隔离、鉴权边界、限流、上传+Webhook 验签）；报告落 `docs/verification/security-audit-2026-08.md`，AFK 驱动，验收以报告 + 门禁状态为准
 6. `container_tag` 可空修复（移除 `"default"` 伪空间，ADR-0002 约束落地）——✅ 已完成（不占工作量）
+7. **API Key 管理端点**（backlog #5）——2026-08-10 拉前执行（用户显式覆盖图决议「延后」，基础设施已就绪），已实现并关闭（`938fdde` + `d4b527a`），生产 onboarding 路径就绪（POST/GET/DELETE /v1/keys，admin + 实体作用域）
 
 **延后项**（2026-08-10 决定，不在 v0.5.0 内）：
 - ❌ **性能 SLA 验证**（画像 <100ms、搜索 P50/P99）——集中在功能，不集中在性能；整体延后至后续里程碑
-- ❌ **API Key 管理端点**（backlog #5）——延后至 v0.5.0 之后
 - ❌ **退役自研连接器**（backlog #7）——延后；与 Totem 接入时间点绑定（2026-08-10 起 Totem Pilot 已通过，`emerald/connectors/` 删除条件满足，排期独立确认）
 
 **版本号**：v0.5.0
