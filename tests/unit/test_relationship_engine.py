@@ -68,6 +68,33 @@ async def test_classify_same_structure_different_fillers_updates(engine):
     assert result == RelationType.UPDATES
 
 
+@pytest.mark.parametrize(
+    ("new_text", "old_text"),
+    [
+        ("用户在字节工作", "用户在 Stripe 工作"),  # CJK new, Latin old
+        ("用户在 Stripe 工作", "用户在字节工作"),  # Latin new, CJK old
+    ],
+)
+@pytest.mark.asyncio
+async def test_classify_cjk_latin_company_names_updates(engine, new_text, old_text):
+    """CJK and Latin company names share one structure template (issue #28).
+
+    Both facts reduce to the template 用户在*工作 — the placeholder's
+    surrounding whitespace must not decide whether they are an update.
+    """
+    result = await engine.classify_relation("a", "b", "e", new_text, old_text)
+    assert result == RelationType.UPDATES
+
+
+@pytest.mark.asyncio
+async def test_classify_cjk_company_names_share_template(engine):
+    """CJK↔CJK company names already share the template (regression guard)."""
+    result = await engine.classify_relation(
+        "a", "b", "e", "用户在字节工作", "用户在腾讯工作"
+    )
+    assert result == RelationType.UPDATES
+
+
 @pytest.mark.asyncio
 async def test_classify_unrelated_returns_none(engine):
     result = await engine.classify_relation(

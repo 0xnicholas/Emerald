@@ -438,7 +438,8 @@ class RelationshipEngine:
     def _extract_structure(text: str) -> str | None:
         """Extract a structural template from text by replacing entities.
 
-        Example: "用户在 Google 工作" → "用户在 * 工作"
+        Example: "用户在 Google 工作" → "用户在*工作" (placeholder spacing
+        is normalized, so CJK and Latin names share one template — #28).
         """
         # Replace known entity patterns with placeholders
         pattern = text
@@ -453,7 +454,12 @@ class RelationshipEngine:
         pattern = re.sub(r"(Python|TypeScript|JavaScript|Rust|Go|Java|C\+\+)",
                          "*", pattern)
 
-        return pattern if pattern != text else None
+        if pattern == text:
+            return None
+        # Normalize placeholder spacing (issue #28): Latin names leave
+        # surrounding spaces (用户在 * 工作) while CJK names do not
+        # (用户在*工作) — both are the same template.
+        return re.sub(r"\s*\*\s*", "*", pattern)
 
     @staticmethod
     def _extract_fillers(text: str, structure: str) -> list[str]:
