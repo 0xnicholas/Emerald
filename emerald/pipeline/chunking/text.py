@@ -6,6 +6,7 @@ import re
 
 import structlog
 
+from emerald.core.mentions import MentionExtractor, RuleMentionExtractor
 from emerald.core.temporal import TemporalExtractor
 from emerald.pipeline.chunking.base import BaseChunker, Chunk
 from emerald.pipeline.chunking.fact_extractor import FactExtractor
@@ -28,6 +29,22 @@ class TextChunker(BaseChunker):
     # Rough heuristic: ~4 chars per token for mixed-language text
     _chars_per_token = 4
 
+    def __init__(
+        self,
+        mention_extractor: MentionExtractor | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Create a text chunker.
+
+        ``mention_extractor`` defaults to the deterministic rule/gazetteer
+        path, so chunking without an LLM still extracts named-entity
+        mentions (B3 NER, ticket #22).
+        """
+        # ``kwargs`` are accepted for call-compat with subclasses that
+        # forward them (e.g. SemanticTextChunker); BaseChunker itself
+        # takes no constructor arguments.
+        self.mention_extractor = mention_extractor or RuleMentionExtractor()
+
     async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         if not text.strip():
             return []
@@ -43,9 +60,7 @@ class TextChunker(BaseChunker):
         raw_chunks = []
         for para_text, para_start in paragraphs:
             if len(para_text) > target_chars:
-                raw_chunks.extend(
-                    self._split_sentences(para_text, para_start, target_chars)
-                )
+                raw_chunks.extend(self._split_sentences(para_text, para_start, target_chars))
             else:
                 raw_chunks.append((para_text, para_start))
 
@@ -56,7 +71,12 @@ class TextChunker(BaseChunker):
         final_chunks = self._add_overlap(merged, overlap_chars)
 
         # Step 5: Build Chunk objects with metadata
-        return self._build_chunks(final_chunks, text)
+        chunks = self._build_chunks(final_chunks, text)
+
+        # Step 6: Deterministic rule-path mention extraction (B3 NER)
+        for chunk in chunks:
+            chunk.mentions = self.mention_extractor.extract(chunk.text)
+        return chunks
 
     # ---- internal helpers ----
 
@@ -199,9 +219,7 @@ class SemanticTextChunker(TextChunker):
             try:
                 metadata = kwargs.get("metadata") or {}
                 entity_context = metadata.get("entity_context")
-                facts = await self.fact_extractor.extract(
-                    text, entity_context=entity_context
-                )
+                facts = await self.fact_extractor.extract(text, entity_context=entity_context)
                 if facts:
                     temporal = (
                         self.temporal_extractor
@@ -226,6 +244,7 @@ class SemanticTextChunker(TextChunker):
                                 summary=f.summary,
                                 valid_until=valid_until,
                                 metadata=metadata,
+                                mentions=f.mentions,
                             )
                         )
                     return chunks

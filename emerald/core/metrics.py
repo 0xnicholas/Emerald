@@ -8,8 +8,9 @@ automatically.
 from __future__ import annotations
 
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
 from prometheus_client import Counter, Histogram
 
@@ -43,6 +44,11 @@ relationship_infer_total = Counter(
     "emerald_relationship_infer_total",
     "Total number of relationships inferred.",
     ["rel_type"],
+)
+
+mentions_extracted_total = Counter(
+    "emerald_mentions_extracted_total",
+    "Total number of named-entity mentions extracted during ingestion (B3 NER).",
 )
 
 # ---------------------------------------------------------------------------

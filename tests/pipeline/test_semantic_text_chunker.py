@@ -135,3 +135,29 @@ class TestSemanticTextChunker:
         assert chunks[1].index == 1
         assert chunks[2].index == 2
         assert chunks[2].memory_type == "episodic"
+
+
+    @pytest.mark.asyncio
+    async def test_fact_mentions_propagate_to_chunks(self):
+        """LLM-extracted mentions land on the semantic chunks (B3 NER)."""
+        from emerald.core.mentions import Mention
+
+        extractor = self._mock_extractor(
+            [
+                Fact(
+                    text="Alex works at Stripe",
+                    memory_type="fact",
+                    confidence=0.9,
+                    summary="Job",
+                    mentions=[
+                        Mention("Stripe", "Stripe", "organization", 0.95),
+                        Mention("Alex", "Alex", "person", 0.9),
+                    ],
+                ),
+            ]
+        )
+        chunker = SemanticTextChunker(fact_extractor=extractor)
+        chunks = await chunker.chunk("Alex works at Stripe.")
+        assert len(chunks) == 1
+        assert [m.canonical_form for m in chunks[0].mentions] == ["Stripe", "Alex"]
+        assert chunks[0].mentions[0].type == "organization"

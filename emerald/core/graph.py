@@ -13,6 +13,8 @@ from uuid import uuid4
 
 import structlog
 
+from emerald.core.mentions import Mention
+
 logger = structlog.get_logger(__name__)
 
 
@@ -30,6 +32,8 @@ class GraphStore:
         self._memories: dict[str, list[dict[str, Any]]] = {}
         # In-memory store: "space:{entity_id}" → list of space dicts
         self._spaces: dict[str, list[dict[str, Any]]] = {}
+        # In-memory store: entity_id → list of Mention node dicts (B3 NER)
+        self._mentions: dict[str, list[dict[str, Any]]] = {}
 
     def _init_driver(self) -> None:
         """Lazy-init Neo4j driver; retry on each call if not yet available."""
@@ -916,6 +920,201 @@ class GraphStore:
                         rel[key] = value
                         return True
         return False
+
+    # ------------------------------------------------------------------
+    # Mention nodes (B3 NER) — internal methods only, no public API (#22)
+    # ------------------------------------------------------------------
+
+    async def attach_mentions(
+        self,
+        memory_id: str,
+        entity_id: str,
+        mentions: list[Mention],
+    ) -> int:
+        """Attach Mention nodes to a memory (B3 NER, ticket #22).
+
+        For each mention creates, within the entity's context pool:
+
+            (:Entity)-[:HAS_MENTION]->(:Mention)
+            (:Memory)-[:MENTIONS]->(:Mention)
+
+        Mention nodes carry id, entity_id, canonical_form, type, aliases,
+        mention_count, created_at and last_seen_at; MENTIONS edges carry
+        surface_form and confidence (direction Memory → Mention).
+
+        One node per mention: cross-memory resolution of different surface
+        forms to a single canonical node lands in #23.
+
+        Best-effort: mentions with an empty surface/canonical form are
+        skipped and a missing memory is a no-op — extraction must never
+        fail ingestion. Returns the number of mentions attached.
+        """
+        self._init_driver()
+        # A missing memory is a no-op on both backends: the Cypher MATCH
+        # silently produces no rows, so the existence check happens here
+        # to keep the return value honest (0 = nothing attached).
+        if await self.get_memory(memory_id) is None:
+            return 0
+
+        now = datetime.now(UTC)
+
+        prepared: list[dict[str, Any]] = []
+        for mention in mentions:
+            data = mention.to_dict()
+            surface = str(data.get("surface_form", "")).strip()
+            canonical = str(data.get("canonical_form", "")).strip()
+            if not surface or not canonical:
+                continue
+            try:
+                confidence = float(data.get("confidence", 0.9))
+            except (TypeError, ValueError):
+                confidence = 0.9
+            prepared.append({
+                "id": uuid4().hex,
+                "surface_form": surface,
+                "canonical_form": canonical,
+                "type": str(data.get("type", "concept")) or "concept",
+                "confidence": max(0.0, min(1.0, confidence)),
+            })
+
+        if not prepared:
+            return 0
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (m:Memory {id: $memory_id})
+                    MATCH (e:Entity {id: $entity_id})
+                    FOREACH (mention IN $mentions |
+                        CREATE (mn:Mention {
+                            id: mention.id,
+                            entity_id: $entity_id,
+                            canonical_form: mention.canonical_form,
+                            type: mention.type,
+                            aliases: [mention.surface_form],
+                            mention_count: 1,
+                            created_at: datetime(),
+                            last_seen_at: datetime()
+                        })
+                        CREATE (e)-[:HAS_MENTION {created_at: datetime()}]->(mn)
+                        CREATE (m)-[:MENTIONS {
+                            surface_form: mention.surface_form,
+                            confidence: mention.confidence,
+                            created_at: datetime()
+                        }]->(mn)
+                    )
+                    """,
+                    memory_id=memory_id,
+                    entity_id=entity_id,
+                    mentions=prepared,
+                )
+        else:
+            target = None
+            for memories in self._memories.values():
+                for memory in memories:
+                    if memory["id"] == memory_id:
+                        target = memory
+                        break
+                if target is not None:
+                    break
+            if target is None:
+                return 0  # defensive parity with the existence check above
+
+            pool = self._mentions.setdefault(entity_id, [])
+            for mention_dict in prepared:
+                pool.append({
+                    "id": mention_dict["id"],
+                    "entity_id": entity_id,
+                    "canonical_form": mention_dict["canonical_form"],
+                    "type": mention_dict["type"],
+                    "aliases": [mention_dict["surface_form"]],
+                    "mention_count": 1,
+                    "created_at": now,
+                    "last_seen_at": now,
+                })
+                target.setdefault("mentions", []).append({
+                    "mention_id": mention_dict["id"],
+                    "surface_form": mention_dict["surface_form"],
+                    "confidence": mention_dict["confidence"],
+                    "created_at": now,
+                })
+
+        logger.info(
+            "graph.mentions.attached",
+            memory_id=memory_id,
+            entity_id=entity_id,
+            count=len(prepared),
+        )
+        return len(prepared)
+
+    async def get_memory_mentions(self, memory_id: str) -> list[dict[str, Any]]:
+        """Read back the mentions of a memory (B3 NER internal method).
+
+        Returns one dict per MENTIONS edge (Memory → Mention), merging the
+        Mention node fields with the edge's surface_form/confidence:
+
+        {id, entity_id, canonical_form, type, aliases, mention_count,
+         surface_form, confidence}
+
+        Empty list when the memory has no mentions or does not exist.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (m:Memory {id: $id})-[r:MENTIONS]->(mn:Mention)
+                    RETURN mn.id AS id,
+                           mn.entity_id AS entity_id,
+                           mn.canonical_form AS canonical_form,
+                           mn.type AS type,
+                           mn.aliases AS aliases,
+                           mn.mention_count AS mention_count,
+                           r.surface_form AS surface_form,
+                           r.confidence AS confidence
+                    """,
+                    id=memory_id,
+                )
+                mentions = []
+                async for record in result:
+                    mentions.append({
+                        "id": record["id"],
+                        "entity_id": record["entity_id"],
+                        "canonical_form": record["canonical_form"],
+                        "type": record["type"],
+                        "aliases": record["aliases"],
+                        "mention_count": record["mention_count"],
+                        "surface_form": record["surface_form"],
+                        "confidence": record["confidence"],
+                    })
+                return mentions
+
+        for memories in self._memories.values():
+            for memory in memories:
+                if memory["id"] != memory_id:
+                    continue
+                pool: list[dict[str, Any]] = self._mentions.get(
+                    memory.get("entity_id", ""), []
+                )
+                by_id = {n["id"]: n for n in pool}
+                mentions = []
+                for edge in memory.get("mentions", []):
+                    node = by_id.get(edge["mention_id"])
+                    if node is None:
+                        continue
+                    mentions.append({
+                        "id": node["id"],
+                        "entity_id": node["entity_id"],
+                        "canonical_form": node["canonical_form"],
+                        "type": node["type"],
+                        "aliases": node["aliases"],
+                        "mention_count": node["mention_count"],
+                        "surface_form": edge["surface_form"],
+                        "confidence": edge["confidence"],
+                    })
+                return mentions
+        return []
 
     # ------------------------------------------------------------------
     # Space CRUD

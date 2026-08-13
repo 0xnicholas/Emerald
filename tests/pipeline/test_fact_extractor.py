@@ -269,3 +269,172 @@ class TestDeepSeekFactExtractor:
 
         assert len(facts) == 1
         assert facts[0].valid_until is None
+
+
+# ---------------------------------------------------------------------------
+# Mentions (B3 NER, ticket #22) — LLM path requests them and degrades
+# gracefully when they are missing or malformed.
+# ---------------------------------------------------------------------------
+
+
+class TestMentions(TestDeepSeekFactExtractor):
+    @pytest.fixture
+    def extractor(self):
+        return DeepSeekFactExtractor(api_key="test-key")
+
+    @pytest.mark.asyncio
+    async def test_mentions_parsed_from_valid_response(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "Alex works at Stripe",
+                "type": "fact",
+                "confidence": 0.9,
+                "summary": "Job",
+                "mentions": [
+                    {"surface_form": "Stripe", "canonical_form": "Stripe",
+                     "type": "organization", "confidence": 0.95},
+                    {"surface_form": "Alex", "canonical_form": "Alex",
+                     "type": "person", "confidence": 0.9},
+                ],
+            },
+        )
+
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("Alex works at Stripe.")
+
+        assert len(facts) == 1
+        assert len(facts[0].mentions) == 2
+        stripe, alex = facts[0].mentions
+        assert stripe.surface_form == "Stripe"
+        assert stripe.canonical_form == "Stripe"
+        assert stripe.type == "organization"
+        assert stripe.confidence == 0.95
+        assert alex.type == "person"
+
+    @pytest.mark.asyncio
+    async def test_missing_mentions_field_is_graceful(self, extractor):
+        """No mentions key at all → zero mentions, fact still ingested."""
+        mock_post = self._mock_api_response(
+            {"text": "用户喜欢喝咖啡", "type": "preference",
+             "confidence": 0.85, "summary": "咖啡"},
+        )
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("用户喜欢喝咖啡")
+        assert len(facts) == 1
+        assert facts[0].mentions == []
+
+    @pytest.mark.asyncio
+    async def test_none_mentions_field_is_graceful(self, extractor):
+        mock_post = self._mock_api_response(
+            {"text": "text", "type": "fact", "confidence": 0.8,
+             "summary": "s", "mentions": None},
+        )
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("text")
+        assert len(facts) == 1
+        assert facts[0].mentions == []
+
+    @pytest.mark.asyncio
+    async def test_malformed_mentions_are_skipped(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "text",
+                "type": "fact",
+                "confidence": 0.8,
+                "summary": "s",
+                "mentions": [
+                    "not-a-dict",
+                    {"surface_form": "", "canonical_form": "X",
+                     "type": "organization", "confidence": 0.9},
+                    {"surface_form": "Google", "canonical_form": "Google",
+                     "type": "organization", "confidence": 0.9},
+                ],
+            },
+        )
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("text")
+        assert len(facts) == 1
+        assert len(facts[0].mentions) == 1
+        assert facts[0].mentions[0].surface_form == "Google"
+
+    @pytest.mark.asyncio
+    async def test_mention_canonical_falls_back_to_surface(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "我在用 Gmail",
+                "type": "fact",
+                "confidence": 0.8,
+                "summary": "s",
+                "mentions": [
+                    {"surface_form": "Gmail", "type": "technology",
+                     "confidence": 0.9},
+                ],
+            },
+        )
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("我在用 Gmail")
+        mention = facts[0].mentions[0]
+        assert mention.surface_form == "Gmail"
+        assert mention.canonical_form == "Gmail"
+
+    @pytest.mark.asyncio
+    async def test_mention_type_missing_defaults_to_concept(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "text",
+                "type": "fact",
+                "confidence": 0.8,
+                "summary": "s",
+                "mentions": [
+                    {"surface_form": "某物", "canonical_form": "某物",
+                     "confidence": 0.9},
+                ],
+            },
+        )
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("text")
+        assert facts[0].mentions[0].type == "concept"
+
+    @pytest.mark.asyncio
+    async def test_mention_confidence_clamped_and_garbage_safe(self, extractor):
+        mock_post = self._mock_api_response(
+            {
+                "text": "text",
+                "type": "fact",
+                "confidence": 0.8,
+                "summary": "s",
+                "mentions": [
+                    {"surface_form": "A", "canonical_form": "A",
+                     "type": "organization", "confidence": 2.0},
+                    {"surface_form": "B", "canonical_form": "B",
+                     "type": "organization", "confidence": "oops"},
+                ],
+            },
+        )
+        with patch("httpx.AsyncClient.post", new=mock_post):
+            facts = await extractor.extract("text")
+        assert len(facts[0].mentions) == 2
+        assert facts[0].mentions[0].confidence == 1.0
+        assert facts[0].mentions[1].confidence == 0.9
+
+    @pytest.mark.asyncio
+    async def test_mention_prompt_requests_mentions(self, extractor):
+        """The system prompt instructs the LLM to return mentions."""
+        captured = {}
+
+        async def capturing_post(*_args, **kwargs):
+            captured["messages"] = kwargs["json"]["messages"]
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = {
+                "choices": [{"message": {"content": json.dumps({"facts": []})}}],
+            }
+            return mock_response
+
+        with patch("httpx.AsyncClient.post", new=capturing_post):
+            await extractor.extract("text")
+
+        system_prompt = captured["messages"][0]["content"]
+        assert "mentions" in system_prompt
+        assert "surface_form" in system_prompt
+        assert "canonical_form" in system_prompt

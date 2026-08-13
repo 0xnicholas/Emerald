@@ -112,3 +112,27 @@ async def test_no_fact_extractor_uses_turn_based():
     text = "User: hello\nAssistant: hi"
     chunks = await chunker.chunk(text)
     assert len(chunks) == 2
+
+
+async def test_fact_extraction_propagates_mentions():
+    """Mentions extracted by the LLM path land on the conversation chunks."""
+    from emerald.core.mentions import Mention
+
+    mock_extractor = AsyncMock(spec=FactExtractor)
+    mock_extractor.extract.return_value = [
+        Fact(
+            text="Alex works at Stripe",
+            memory_type="fact",
+            confidence=0.9,
+            summary="Job",
+            mentions=[
+                Mention("Stripe", "Stripe", "organization", 0.95),
+                Mention("Alex", "Alex", "person", 0.9),
+            ],
+        ),
+    ]
+    chunker = ConversationChunker(fact_extractor=mock_extractor)
+    chunks = await chunker.chunk("Alex works at Stripe.")
+    assert len(chunks) == 1
+    assert [m.canonical_form for m in chunks[0].mentions] == ["Stripe", "Alex"]
+    assert chunks[0].mentions[0].type == "organization"

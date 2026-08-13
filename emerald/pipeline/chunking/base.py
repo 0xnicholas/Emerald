@@ -5,7 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from emerald.core.mentions import Mention
 
 
 @dataclass
@@ -30,6 +34,9 @@ class Chunk:
     provenance: str = "explicit_statement"
     summary: str = ""
     valid_until: datetime | None = None
+    # Named entities mentioned by this chunk (B3 NER) — populated by the
+    # rule path (deterministic gazetteer) or the LLM fact-extraction path.
+    mentions: list[Mention] = field(default_factory=list)
 
 
 class BaseChunker(ABC):

@@ -4,6 +4,7 @@ name: Quality Suites (temporal)
 # - temporal correctness  (tests/quality/temporal/test_temporal_correctness.py)
 # - forgetting effectiveness (tests/quality/temporal/test_forgetting_effectiveness.py)
 # - graph relationship precision (tests/quality/temporal/test_graph_relationship_precision.py)
+# - mention precision (tests/quality/mentions/test_mention_precision.py)
 # - real-storage variants on Neo4j (tests/quality/temporal/test_neo4j_quality_variants.py)
 #
 # The suite is green only when every section's metrics meet their thresholds;

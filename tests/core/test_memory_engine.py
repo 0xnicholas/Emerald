@@ -167,3 +167,45 @@ async def test_add_metadata_valid_until_overrides_chunk(engine):
     assert memory["valid_until"] is not None
     # Metadata override wins over chunk-derived tomorrow deadline.
     assert memory["valid_until"] > datetime.now(UTC) + timedelta(days=7)
+
+
+# ---------------------------------------------------------------------------
+# Mention extraction end-to-end (B3 NER, ticket #22)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_attaches_mentions_to_graph(engine):
+    """A memory mentioning known entities gets typed Mention nodes."""
+    result = await engine.add(
+        "用户在 Google 用 Python 写代码", entity_id="user_123",
+    )
+    memory_id = result.memory_ids[0]
+
+    mentions = await engine.graph.get_memory_mentions(memory_id)
+    assert len(mentions) == 2
+    by_canonical = {m["canonical_form"]: m for m in mentions}
+    assert by_canonical["Google"]["type"] == "organization"
+    assert by_canonical["Python"]["type"] == "technology"
+    assert all(m["entity_id"] == "user_123" for m in mentions)
+
+
+@pytest.mark.asyncio
+async def test_add_memory_without_mentions_still_ingests(engine):
+    """No named entities → zero mentions, ingestion unaffected."""
+    result = await engine.add("用户喜欢喝咖啡", entity_id="user_123")
+    assert len(result.memory_ids) == 1
+    assert await engine.graph.get_memory_mentions(result.memory_ids[0]) == []
+
+
+@pytest.mark.asyncio
+async def test_add_logs_mention_count(engine):
+    """The ingestion completion log records the extracted mention count."""
+    import structlog
+
+    with structlog.testing.capture_logs() as logs:
+        await engine.add("用户在 Google 用 Python 写代码", entity_id="user_123")
+
+    complete = [e for e in logs if e.get("event") == "memory.add.complete"]
+    assert complete
+    assert complete[-1]["mention_count"] == 2

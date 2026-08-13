@@ -289,3 +289,89 @@ def test_embed_task_executes_full_helper(monkeypatch):
     assert errors.calls == []
     embeddings = json.loads(redis.data["pipeline:p-1:embeddings"])
     assert embeddings == [[0.1, 0.2], [0.3, 0.4]]
+
+
+# ---------------------------------------------------------------------------
+# Mentions (B3 NER, ticket #22) — the Celery path carries them end to end.
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_to_dict_serializes_mentions():
+    """Mention objects survive the Redis/JSON transport as dicts."""
+    from emerald.core.mentions import Mention
+
+    chunk = Chunk(
+        text="用户在 Google 用 Python",
+        index=0,
+        mentions=[
+            Mention("Google", "Google", "organization", 0.95),
+            Mention("Python", "Python", "technology", 0.9),
+        ],
+    )
+    data = _chunk_to_dict(chunk)
+    assert data["mentions"] == [
+        {"surface_form": "Google", "canonical_form": "Google",
+         "type": "organization", "confidence": 0.95},
+        {"surface_form": "Python", "canonical_form": "Python",
+         "type": "technology", "confidence": 0.9},
+    ]
+
+
+def test_chunk_to_dict_mentions_empty_by_default():
+    chunk = Chunk(text="用户喜欢喝咖啡", index=0)
+    assert _chunk_to_dict(chunk)["mentions"] == []
+
+
+async def test_run_index_attaches_mentions(monkeypatch):
+    """_run_index calls attach_mentions with the deserialized mentions."""
+    import structlog
+
+    chunk_data = {
+        "id": "c1",
+        "text": "用户在 Google 工作",
+        "index": 0,
+        "token_count": 1,
+        "memory_type": "fact",
+        "internal_type": None,
+        "confidence": 0.8,
+        "summary": "s",
+        "valid_until": None,
+        "mentions": [
+            {"surface_form": "Google", "canonical_form": "Google",
+             "type": "organization", "confidence": 0.9},
+        ],
+    }
+    fake_redis = _FakeRedis([chunk_data], [[0.1, 0.2, 0.3]])
+    attached = []
+
+    class FakeGraph(_FakeGraphStore):
+        async def attach_mentions(self, memory_id, entity_id, mentions):
+            attached.append((memory_id, entity_id, [m.to_dict() for m in mentions]))
+
+    fake_graph = FakeGraph()
+    monkeypatch.setattr("emerald.core.graph.GraphStore", lambda **_: fake_graph)
+    monkeypatch.setattr("emerald.core.vector.VectorStore", lambda **_: _FakeVectorStore())
+
+    async def _ensure_redis():
+        return fake_redis
+
+    monkeypatch.setattr("emerald.db.redis.ensure_redis_for_loop", _ensure_redis)
+    monkeypatch.setattr("emerald.pipeline.tasks._update_status", _async_noop)
+    monkeypatch.setattr("emerald.pipeline.tasks._update_fact_extraction_status", _async_noop)
+    monkeypatch.setattr("emerald.db.neo4j.init_neo4j", _async_noop)
+    monkeypatch.setattr("emerald.db.neo4j.close_neo4j", _async_noop)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await _run_index(None, {"pipeline_id": "p-1"}, "user_123")
+
+    assert result["memory_ids"] == ["memory-1"]
+    assert len(attached) == 1
+    memory_id, entity_id, mentions = attached[0]
+    assert memory_id == "memory-1"
+    assert entity_id == "user_123"
+    assert mentions[0]["canonical_form"] == "Google"
+    assert mentions[0]["type"] == "organization"
+
+    # The Celery path records the mention count in its completion log too.
+    complete = [e for e in logs if e.get("event") == "pipeline.index.complete"]
+    assert complete and complete[-1]["mention_count"] == 1

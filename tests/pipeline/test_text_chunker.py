@@ -85,3 +85,60 @@ async def test_target_and_overlap_properties(chunker):
     """Target and overlap sizes are as documented."""
     assert chunker.target_size == 512
     assert chunker.overlap_size == 64
+
+
+# ---------------------------------------------------------------------------
+# Mentions (B3 NER, ticket #22) — the rule/mock path deterministically
+# attaches mentions to chunks without any LLM call.
+# ---------------------------------------------------------------------------
+
+
+async def test_chunk_mentions_extracted_by_default_gazetteer():
+    """The rule path attaches known-entity mentions to every chunk."""
+    chunker = TextChunker()
+    chunks = await chunker.chunk("用户用 Python 写代码，在 Google 工作")
+    assert len(chunks) == 1
+    mentions = chunks[0].mentions
+    assert [m.canonical_form for m in mentions] == ["Python", "Google"]
+    assert [m.type for m in mentions] == ["technology", "organization"]
+
+
+async def test_chunk_without_known_entities_has_no_mentions():
+    chunker = TextChunker()
+    chunks = await chunker.chunk("用户喜欢喝咖啡")
+    assert len(chunks) == 1
+    assert chunks[0].mentions == []
+
+
+async def test_custom_gazetteer_mention_extractor():
+    """A corpus-specific gazetteer drives deterministic extraction."""
+    from emerald.core.mentions import RuleMentionExtractor
+
+    chunker = TextChunker(
+        mention_extractor=RuleMentionExtractor(
+            known_entities={"北京": ("北京", "location")},
+        ),
+    )
+    chunks = await chunker.chunk("用户住在北京")
+    assert chunks[0].mentions[0].type == "location"
+
+
+async def test_rule_path_is_deterministic():
+    """Same input twice → identical mention structure."""
+    chunker = TextChunker()
+    text = "用户在 Google 用 Python，也在 Stripe 用 Rust"
+    first = await chunker.chunk(text)
+    second = await chunker.chunk(text)
+    assert first[0].mentions == second[0].mentions
+
+
+async def test_long_text_chunks_each_carry_their_own_mentions():
+    """Multi-chunk text: each chunk gets the mentions inside it."""
+    chunker = TextChunker()
+    text = ("用户在 Google 工作。 用户用 Python 写数据管线。 " * 120)
+    chunks = await chunker.chunk(text)
+    assert len(chunks) > 1
+    all_mentions = [m for c in chunks for m in c.mentions]
+    assert all_mentions, "expected mentions somewhere in the chunks"
+    for chunk in chunks:
+        assert isinstance(chunk.mentions, list)

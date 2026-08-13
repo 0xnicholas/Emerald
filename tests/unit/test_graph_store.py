@@ -125,3 +125,156 @@ async def test_list_entity_ids_excludes_not_latest(graph):
 
     ids = await graph.list_entity_ids()
     assert "ghost" not in ids
+
+
+# ---------------------------------------------------------------------------
+# Mention nodes (B3 NER, ticket #22) — in-memory fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_creates_typed_nodes_in_entity_pool(graph):
+    """Each mention becomes a typed Mention node under the entity's pool."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("用户用 Python 写代码", entity_id="e1")
+    count = await graph.attach_mentions(
+        mid, "e1",
+        [Mention("Python", "Python", "technology", 0.9)],
+    )
+    assert count == 1
+
+    pool = graph._mentions.get("e1", [])
+    assert len(pool) == 1
+    node = pool[0]
+    assert node["canonical_form"] == "Python"
+    assert node["type"] == "technology"
+    assert node["entity_id"] == "e1"
+    assert node["mention_count"] == 1
+    assert node["aliases"] == ["Python"]
+    assert node["created_at"] is not None
+    assert node["last_seen_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_memory_edges_point_memory_to_mention(graph):
+    """MENTIONS edges live on the memory, pointing at the mention node."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("用户在 Google 工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid, "e1",
+        [Mention("Google", "Google", "organization", 0.95)],
+    )
+    memory = await graph.get_memory(mid)
+    edges = memory.get("mentions", [])
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge["surface_form"] == "Google"
+    assert edge["confidence"] == 0.95
+    node_ids = {n["id"] for n in graph._mentions["e1"]}
+    assert edge["mention_id"] in node_ids
+
+
+@pytest.mark.asyncio
+async def test_get_memory_mentions_reads_back_nodes_and_edges(graph):
+    """The internal read-back method merges node fields with edge fields."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("用户在 Google 用 Python", entity_id="e1")
+    await graph.attach_mentions(
+        mid, "e1",
+        [
+            Mention("Google", "Google", "organization", 0.9),
+            Mention("Python", "Python", "technology", 0.8),
+        ],
+    )
+    mentions = await graph.get_memory_mentions(mid)
+    assert len(mentions) == 2
+    by_canonical = {m["canonical_form"]: m for m in mentions}
+    google = by_canonical["Google"]
+    assert google["type"] == "organization"
+    assert google["entity_id"] == "e1"
+    assert google["surface_form"] == "Google"
+    assert google["confidence"] == 0.9
+    assert google["mention_count"] == 1
+    assert google["aliases"] == ["Google"]
+    python = by_canonical["Python"]
+    assert python["type"] == "technology"
+    assert python["confidence"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_get_memory_mentions_empty_for_memory_without_mentions(graph):
+    """No mentions attached → empty list, not an error."""
+    mid = await graph.create_memory("用户喜欢喝咖啡", entity_id="e1")
+    assert await graph.get_memory_mentions(mid) == []
+
+
+@pytest.mark.asyncio
+async def test_get_memory_mentions_unknown_memory_returns_empty(graph):
+    assert await graph.get_memory_mentions("nonexistent") == []
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_unknown_memory_is_noop(graph):
+    """Attaching to a missing memory is a no-op (parity with Cypher MATCH)."""
+    from emerald.core.mentions import Mention
+
+    count = await graph.attach_mentions(
+        "nonexistent", "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    assert count == 0
+    assert "e1" not in graph._mentions
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_skips_invalid_mentions(graph):
+    """Empty surface/canonical mentions are skipped without raising."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("content", entity_id="e1")
+    count = await graph.attach_mentions(
+        mid, "e1",
+        [
+            Mention("", "", "organization", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+    assert count == 1
+    pool = graph._mentions.get("e1", [])
+    assert len(pool) == 1
+    assert pool[0]["canonical_form"] == "Google"
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_missing_type_defaults_to_concept(graph):
+    """A mention without a declared type lands as concept (taxonomy default)."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("content", entity_id="e1")
+    await graph.attach_mentions(mid, "e1", [Mention("某物", "某物", "", 0.9)])
+    pool = graph._mentions["e1"]
+    assert pool[0]["type"] == "concept"
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_logs_count(graph):
+    """Attaching mentions logs a graph.mentions.attached event."""
+    import structlog
+
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("content", entity_id="e1")
+    with structlog.testing.capture_logs() as logs:
+        await graph.attach_mentions(
+            mid, "e1",
+            [
+                Mention("Google", "Google", "organization", 0.9),
+                Mention("Python", "Python", "technology", 0.9),
+            ],
+        )
+    attached = [e for e in logs if e.get("event") == "graph.mentions.attached"]
+    assert attached and attached[-1]["count"] == 2
+    assert attached[-1]["memory_id"] == mid
+    assert attached[-1]["entity_id"] == "e1"

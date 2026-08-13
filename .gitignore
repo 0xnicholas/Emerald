@@ -26,3 +26,6 @@ backups/*
 
 # Coverage data
 .coverage
+
+# pi harness artifacts
+.pi/

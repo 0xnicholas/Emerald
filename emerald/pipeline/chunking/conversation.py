@@ -56,6 +56,7 @@ class ConversationChunker(BaseChunker):
                             confidence=f.confidence,
                             summary=f.summary,
                             metadata={"speaker": "unknown", "turn_index": i},
+                            mentions=f.mentions,
                         )
                         for i, f in enumerate(facts)
                     ]

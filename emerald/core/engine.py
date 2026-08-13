@@ -21,7 +21,12 @@ from emerald.core.extractor import ExtractedContent, ExtractorRegistry
 from emerald.core.extractor import get_default_registry as get_default_extractor_registry
 from emerald.core.fast_lane import FastLaneStore
 from emerald.core.graph import GraphStore
-from emerald.core.metrics import memory_add_latency_seconds, memory_add_total, timed
+from emerald.core.metrics import (
+    memory_add_latency_seconds,
+    memory_add_total,
+    mentions_extracted_total,
+    timed,
+)
 from emerald.core.profile import ProfileManager
 from emerald.core.relationship import RelationshipEngine
 from emerald.core.tracing import get_tracer
@@ -247,10 +252,17 @@ class MemoryEngine:
                 for mt, count in type_counts.items():
                     memory_add_total.labels(memory_type=mt).inc(count)
 
+                # Observability (spec #21): every ingestion records how many
+                # mentions were extracted, in the log and in the metric.
+                total_mentions = sum(len(c.mentions) for c in chunks)
+                if total_mentions:
+                    mentions_extracted_total.inc(total_mentions)
+
                 logger.info(
                     "memory.add.complete",
                     entity_id=entity_id,
                     memory_count=len(memory_ids),
+                    mention_count=total_mentions,
                 )
 
                 return result
@@ -463,6 +475,21 @@ class MemoryEngine:
                 metadata=memory_metadata,
             )
             chunk.id = memory_id
+
+            # 1.5 Attach extracted mentions (B3 NER, ticket #22). Best-effort:
+            #     a mention-attach failure must never fail ingestion.
+            if chunk.mentions:
+                try:
+                    await self.graph.attach_mentions(
+                        memory_id, entity_id, chunk.mentions
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "index.mentions_attach_failed",
+                        memory_id=memory_id,
+                        entity_id=entity_id,
+                        error=str(exc),
+                    )
 
             # 2. Store embedding in vector store
             try:

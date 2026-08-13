@@ -11,6 +11,7 @@ import structlog
 from celery import shared_task
 
 from emerald.async_utils import run_async
+from emerald.core.mentions import Mention
 from emerald.core.metrics import pipeline_jobs_total
 from emerald.core.tracing import attach_traceparent, detach, get_traceparent, get_tracer
 from emerald.pipeline.chunking.base import Chunk
@@ -55,6 +56,7 @@ def _chunk_to_dict(c: Chunk) -> dict[str, Any]:
         "confidence": c.confidence,
         "summary": c.summary,
         "valid_until": c.valid_until.isoformat() if c.valid_until else None,
+        "mentions": [m.to_dict() for m in c.mentions],
     }
 
 
@@ -227,6 +229,7 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
     """Stage 4: Write to Neo4j + pgvector, infer relationships."""
     pipeline_id = prev_result["pipeline_id"]
     memory_ids: list[str] = []
+    total_mentions = 0
     try:
         async with _neo4j_driver_for_loop():
             await _update_status(pipeline_id, "indexing")
@@ -254,12 +257,39 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
                     valid_until=valid_until,
                 )
                 memory_ids.append(mid)
+                # Attach extracted mentions (B3 NER). Best-effort: a
+                # mention-attach failure must never fail the pipeline.
+                raw_mentions = chunk_data.get("mentions") or []
+                if raw_mentions:
+                    total_mentions += len(raw_mentions)
+                    try:
+                        await graph.attach_mentions(
+                            mid,
+                            entity_id,
+                            [Mention(**m) for m in raw_mentions],
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "index.mentions_attach_failed",
+                            memory_id=mid,
+                            entity_id=entity_id,
+                            error=str(exc),
+                        )
                 await vector.store(
                     chunk_id=mid,
                     text=chunk_data["text"],
                     embedding=embedding,
                     entity_id=entity_id,
                 )
+
+        # Observability (spec #21): every ingestion records the extracted
+        # mention count, on the Celery path as well as the sync path.
+        logger.info(
+            "pipeline.index.complete",
+            pipeline_id=pipeline_id,
+            memory_count=len(memory_ids),
+            mention_count=total_mentions,
+        )
 
         return {"pipeline_id": pipeline_id, "memory_ids": memory_ids}
     except Exception as exc:

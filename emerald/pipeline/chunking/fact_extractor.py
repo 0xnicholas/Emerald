@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +16,7 @@ import httpx
 import structlog
 
 from emerald.config import get_settings
+from emerald.core.mentions import Mention
 
 logger = structlog.get_logger(__name__)
 
@@ -39,12 +40,25 @@ _SYSTEM_PROMPT_TEMPLATE = """你是事实提取引擎。从对话/文本中提�
 7. summary 字段为 1 句话简短摘要（与原文保持相同语言），用于搜索/画像展示
 8. 若事实有明确 temporal deadline（如 明天、下周、2025-06），
    添加可选 valid_until 字段，ISO-8601 格式（如 2025-06-30T23:59:59Z）
+9. 每条事实可附带 mentions 字段：该事实中提到的命名实体
+   （人/组织/地点/技术/时间/角色/概念）
+10. 每条 mention 字段：
+    - surface_form: 原文中的表层形式（保持原文大小写与措辞，如 "谷歌"）
+    - canonical_form: 该实体的规范形式（如 "Google"；无更好规范形式时与 surface_form 相同）
+    - type: person | organization | location | technology | datetime | role | concept
+    - confidence: 0-1，命名实体识别的置信度
+11. 只提取事实文本中明确出现的命名实体；没有则 mentions 为空数组
+12. 不要编造实体，不做共指/代词解析（"他" 不解析为名字）
 
 输出严格 JSON：
 {{"facts": [
   {{"text": "...", "type": "fact|preference|episodic",
    "internal_type": "...", "confidence": 0.85,
-   "summary": "...", "valid_until": "..."}}
+   "summary": "...", "valid_until": "...",
+   "mentions": [
+     {{"surface_form": "谷歌", "canonical_form": "Google",
+       "type": "organization", "confidence": 0.9}}
+   ]}}
 ]}}"""
 
 
@@ -58,6 +72,7 @@ class Fact:
     summary: str  # Brief summary for search/profile display
     valid_until: datetime | None = None  # Temporal expiry if known
     internal_type: str | None = None  # Fine-grained internal tag (not exposed publicly)
+    mentions: list[Mention] = field(default_factory=list)  # Named entities (B3 NER)
 
 
 class FactExtractor:
@@ -236,6 +251,7 @@ class DeepSeekFactExtractor(FactExtractor):
                     confidence=confidence,
                     summary=summary,
                     valid_until=valid_until,
+                    mentions=self._parse_mentions(item.get("mentions")),
                 )
             )
 
@@ -243,6 +259,40 @@ class DeepSeekFactExtractor(FactExtractor):
                 break
 
         return facts
+
+    @staticmethod
+    def _parse_mentions(raw: Any) -> list[Mention]:
+        """Parse a per-fact mentions array (B3 NER).
+
+        Graceful degradation: missing, non-list or malformed input yields
+        an empty list — mention extraction must never fail ingestion
+        (spec #21 / ticket #22). Closed-taxonomy validation of ``type``
+        and confidence gating land in #24.
+        """
+        if not isinstance(raw, list):
+            return []
+        mentions: list[Mention] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            surface_form = str(item.get("surface_form", "")).strip()
+            if not surface_form:
+                continue
+            canonical_form = str(item.get("canonical_form", "")).strip()
+            try:
+                confidence = float(item.get("confidence", 0.9))
+            except (TypeError, ValueError):
+                confidence = 0.9
+            mentions.append(
+                Mention(
+                    surface_form=surface_form,
+                    canonical_form=canonical_form,
+                    type=str(item.get("type", "concept")).strip().lower()
+                    or "concept",
+                    confidence=max(0.0, min(1.0, confidence)),
+                )
+            )
+        return mentions
 
 
 def get_fact_extractor() -> FactExtractor | None:
