@@ -11,8 +11,10 @@ Terminology (spec #21, pending /domain-modeling in CONTEXT.md):
 - **Mention** = a named thing a memory talks about, resolved within exactly
   one Entity's context pool. Never shared across entities.
 
-Ticket scope (#22, B3 T1): the happy path. Cross-memory resolution of
-different surface forms to one canonical node (#23), closed-taxonomy
+Ticket scope (#22/#23, B3 T1/T2): the happy path plus cross-memory
+resolution — different surface forms of the same thing resolve to one
+canonical Mention node per entity, with surface forms accumulating as
+aliases (dedup key (entity_id, canonical_form, type)). Closed-taxonomy
 validation and confidence gating (#24), cross-entity isolation tests (#25),
 UPDATES integration (#26) and forgetting (#27) build on this module.
 """
@@ -107,6 +109,7 @@ DEFAULT_KNOWN_ENTITIES: dict[str, tuple[str, str]] = {
     "iphone": ("iPhone", "technology"),
     "android": ("Android", "technology"),
     "google": ("Google", "organization"),
+    "谷歌": ("Google", "organization"),
     "stripe": ("Stripe", "organization"),
     "openai": ("OpenAI", "organization"),
     "anthropic": ("Anthropic", "organization"),

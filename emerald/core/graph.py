@@ -931,9 +931,9 @@ class GraphStore:
         entity_id: str,
         mentions: list[Mention],
     ) -> int:
-        """Attach Mention nodes to a memory (B3 NER, ticket #22).
+        """Attach Mention nodes to a memory (B3 NER, tickets #22/#23).
 
-        For each mention creates, within the entity's context pool:
+        For each mention ensures, within the entity's context pool:
 
             (:Entity)-[:HAS_MENTION]->(:Mention)
             (:Memory)-[:MENTIONS]->(:Mention)
@@ -942,12 +942,18 @@ class GraphStore:
         mention_count, created_at and last_seen_at; MENTIONS edges carry
         surface_form and confidence (direction Memory → Mention).
 
-        One node per mention: cross-memory resolution of different surface
-        forms to a single canonical node lands in #23.
+        Cross-memory resolution (#23): the dedup key is
+        (entity_id, canonical_form, type) — different surface forms of the
+        same real-world thing (e.g. "Google" / "谷歌") resolve to one shared
+        Mention node. Newly seen surface forms accumulate into the node's
+        aliases; mention_count counts the MENTIONS edges into the node.
+        Repeated creation is idempotent: re-attaching the same memory's
+        mention neither duplicates the node nor the edge, nor inflates the
+        count.
 
         Best-effort: mentions with an empty surface/canonical form are
         skipped and a missing memory is a no-op — extraction must never
-        fail ingestion. Returns the number of mentions attached.
+        fail ingestion. Returns the number of new MENTIONS edges attached.
         """
         self._init_driver()
         # A missing memory is a no-op on both backends: the Cypher MATCH
@@ -959,55 +965,89 @@ class GraphStore:
         now = datetime.now(UTC)
 
         prepared: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
         for mention in mentions:
             data = mention.to_dict()
             surface = str(data.get("surface_form", "")).strip()
             canonical = str(data.get("canonical_form", "")).strip()
             if not surface or not canonical:
                 continue
+            mention_type = str(data.get("type", "concept")) or "concept"
+            # The identical mention twice in one call attaches once (#23).
+            key = (surface, canonical, mention_type)
+            if key in seen:
+                continue
+            seen.add(key)
             try:
                 confidence = float(data.get("confidence", 0.9))
             except (TypeError, ValueError):
                 confidence = 0.9
-            prepared.append({
-                "id": uuid4().hex,
-                "surface_form": surface,
-                "canonical_form": canonical,
-                "type": str(data.get("type", "concept")) or "concept",
-                "confidence": max(0.0, min(1.0, confidence)),
-            })
+            prepared.append(
+                {
+                    "id": uuid4().hex,
+                    "surface_form": surface,
+                    "canonical_form": canonical,
+                    "type": mention_type,
+                    "confidence": max(0.0, min(1.0, confidence)),
+                }
+            )
 
         if not prepared:
             return 0
 
         if self._use_db and self._driver:
             async with self._driver.session() as session:
-                await session.run(
+                result = await session.run(
                     """
                     MATCH (m:Memory {id: $memory_id})
                     MATCH (e:Entity {id: $entity_id})
-                    FOREACH (mention IN $mentions |
-                        CREATE (mn:Mention {
-                            id: mention.id,
-                            entity_id: $entity_id,
-                            canonical_form: mention.canonical_form,
-                            type: mention.type,
-                            aliases: [mention.surface_form],
-                            mention_count: 1,
-                            created_at: datetime(),
-                            last_seen_at: datetime()
-                        })
-                        CREATE (e)-[:HAS_MENTION {created_at: datetime()}]->(mn)
+                    UNWIND $mentions AS mention
+                    MERGE (mn:Mention {
+                        entity_id: $entity_id,
+                        canonical_form: mention.canonical_form,
+                        type: mention.type
+                    })
+                    ON CREATE SET
+                        mn.id = mention.id,
+                        mn.aliases = [mention.surface_form],
+                        // Starts at 0: the guarded SET below counts this
+                        // first edge, mirroring the in-memory branch's
+                        // mention_count=1 at node creation.
+                        mn.mention_count = 0,
+                        mn.created_at = datetime(),
+                        mn.last_seen_at = datetime()
+                    MERGE (e)-[:HAS_MENTION]->(mn)
+                    WITH m, mn, mention
+                    OPTIONAL MATCH (m)-[existing:MENTIONS
+                        {surface_form: mention.surface_form}]->(mn)
+                    WITH m, mn, mention, existing
+                    FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
                         CREATE (m)-[:MENTIONS {
                             surface_form: mention.surface_form,
                             confidence: mention.confidence,
                             created_at: datetime()
                         }]->(mn)
+                        SET mn.mention_count = mn.mention_count + 1,
+                            mn.aliases = CASE
+                                WHEN mention.surface_form IN mn.aliases
+                                THEN mn.aliases
+                                ELSE mn.aliases + mention.surface_form
+                            END,
+                            mn.last_seen_at = datetime()
                     )
+                    RETURN count(existing) AS preexisting
                     """,
                     memory_id=memory_id,
                     entity_id=entity_id,
                     mentions=prepared,
+                )
+                record = await result.single()
+                # No rows: the memory or entity node is missing — nothing
+                # was attached (parity with the no-op above).
+                attached = (
+                    0
+                    if record is None
+                    else len(prepared) - int(record["preexisting"])
                 )
         else:
             target = None
@@ -1022,31 +1062,62 @@ class GraphStore:
                 return 0  # defensive parity with the existence check above
 
             pool = self._mentions.setdefault(entity_id, [])
+            edges = target.setdefault("mentions", [])
+            attached = 0
             for mention_dict in prepared:
-                pool.append({
-                    "id": mention_dict["id"],
-                    "entity_id": entity_id,
-                    "canonical_form": mention_dict["canonical_form"],
-                    "type": mention_dict["type"],
-                    "aliases": [mention_dict["surface_form"]],
-                    "mention_count": 1,
-                    "created_at": now,
-                    "last_seen_at": now,
-                })
-                target.setdefault("mentions", []).append({
-                    "mention_id": mention_dict["id"],
-                    "surface_form": mention_dict["surface_form"],
-                    "confidence": mention_dict["confidence"],
-                    "created_at": now,
-                })
+                surface = mention_dict["surface_form"]
+                node = next(
+                    (
+                        n
+                        for n in pool
+                        if n["canonical_form"] == mention_dict["canonical_form"]
+                        and n["type"] == mention_dict["type"]
+                    ),
+                    None,
+                )
+                if node is None:
+                    # First mention of this thing in the pool: the node
+                    # starts with this edge (count 1) and this alias.
+                    node = {
+                        "id": mention_dict["id"],
+                        "entity_id": entity_id,
+                        "canonical_form": mention_dict["canonical_form"],
+                        "type": mention_dict["type"],
+                        "aliases": [surface],
+                        "mention_count": 1,
+                        "created_at": now,
+                        "last_seen_at": now,
+                    }
+                    pool.append(node)
+                else:
+                    # Idempotency: this memory already carries an edge to
+                    # this node with this surface form — change nothing.
+                    if any(
+                        edge["mention_id"] == node["id"] and edge["surface_form"] == surface
+                        for edge in edges
+                    ):
+                        continue
+                    if surface not in node["aliases"]:
+                        node["aliases"].append(surface)
+                    node["mention_count"] += 1
+                    node["last_seen_at"] = now
+                edges.append(
+                    {
+                        "mention_id": node["id"],
+                        "surface_form": surface,
+                        "confidence": mention_dict["confidence"],
+                        "created_at": now,
+                    }
+                )
+                attached += 1
 
         logger.info(
             "graph.mentions.attached",
             memory_id=memory_id,
             entity_id=entity_id,
-            count=len(prepared),
+            count=attached,
         )
-        return len(prepared)
+        return attached
 
     async def get_memory_mentions(self, memory_id: str) -> list[dict[str, Any]]:
         """Read back the mentions of a memory (B3 NER internal method).

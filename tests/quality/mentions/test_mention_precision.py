@@ -16,9 +16,9 @@ B3 T1 asserts, on the deterministic rule-only path:
 - ingestion logs the mention count (user story 17)
 
 Later B3 tickets extend this section: canonical resolution / alias
-accumulation (#23), closed-taxonomy validation + confidence gating (#24),
-cross-entity isolation + Neo4j variants (#25), UPDATES integration (#26),
-forgetting integration (#27).
+accumulation (#23, in test_mention_resolution.py), closed-taxonomy
+validation + confidence gating (#24), cross-entity isolation + Neo4j
+variants (#25), UPDATES integration (#26), forgetting integration (#27).
 
 Deterministic labelled corpus + mock embeddings + rule-only path.
 """

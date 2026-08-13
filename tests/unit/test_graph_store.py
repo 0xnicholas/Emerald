@@ -278,3 +278,133 @@ async def test_attach_mentions_logs_count(graph):
     assert attached and attached[-1]["count"] == 2
     assert attached[-1]["memory_id"] == mid
     assert attached[-1]["entity_id"] == "e1"
+
+
+# ---------------------------------------------------------------------------
+# Mention resolution + cross-memory dedup (B3 NER, ticket #23)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_resolves_different_surfaces_to_one_node(graph):
+    """Two memories, "Google"/"谷歌" → one node (key: canonical_form + type)."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_b = await graph.create_memory("在谷歌工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid_a, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_b, "e1", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+
+    pool = graph._mentions["e1"]
+    assert len(pool) == 1
+    node = pool[0]
+    assert node["canonical_form"] == "Google"
+    assert node["type"] == "organization"
+    assert node["aliases"] == ["Google", "谷歌"]
+    assert node["mention_count"] == 2
+
+    mentions_a = await graph.get_memory_mentions(mid_a)
+    mentions_b = await graph.get_memory_mentions(mid_b)
+    assert mentions_a[0]["id"] == mentions_b[0]["id"] == node["id"]
+    # Each memory keeps its own edge with its own surface form.
+    edge_a = (await graph.get_memory(mid_a))["mentions"][0]
+    edge_b = (await graph.get_memory(mid_b))["mentions"][0]
+    assert edge_a["surface_form"] == "Google"
+    assert edge_b["surface_form"] == "谷歌"
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_same_canonical_different_type_split(graph):
+    """(canonical_form, type) is the key — type differences split nodes."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("x", entity_id="e1")
+    await graph.attach_mentions(
+        mid, "e1",
+        [
+            Mention("Apple", "Apple", "organization", 0.9),
+            Mention("Apple", "Apple", "technology", 0.9),
+        ],
+    )
+    apples = [n for n in graph._mentions["e1"] if n["canonical_form"] == "Apple"]
+    assert len(apples) == 2
+    assert {n["type"] for n in apples} == {"organization", "technology"}
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_same_canonical_same_type_across_entities_split(graph):
+    """The dedup key is entity-scoped — no cross-entity node sharing."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("a", entity_id="e1")
+    mid_b = await graph.create_memory("b", entity_id="e2")
+    await graph.attach_mentions(
+        mid_a, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_b, "e2", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    assert len(graph._mentions["e1"]) == 1
+    assert len(graph._mentions["e2"]) == 1
+    assert graph._mentions["e1"][0]["id"] != graph._mentions["e2"][0]["id"]
+    assert graph._mentions["e1"][0]["entity_id"] == "e1"
+    assert graph._mentions["e2"][0]["entity_id"] == "e2"
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_repeat_is_idempotent(graph):
+    """Re-attaching the same memory's mentions changes nothing."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mention = Mention("Google", "Google", "organization", 0.9)
+    assert await graph.attach_mentions(mid, "e1", [mention]) == 1
+    assert await graph.attach_mentions(mid, "e1", [mention]) == 0
+
+    pool = graph._mentions["e1"]
+    assert len(pool) == 1
+    assert pool[0]["mention_count"] == 1
+    assert len((await graph.get_memory(mid)).get("mentions", [])) == 1
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_deduplicates_within_one_call(graph):
+    """The identical mention twice in one call attaches exactly once."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("x", entity_id="e1")
+    count = await graph.attach_mentions(
+        mid, "e1",
+        [
+            Mention("Google", "Google", "organization", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+    assert count == 1
+    pool = graph._mentions["e1"]
+    assert len(pool) == 1
+    assert pool[0]["mention_count"] == 1
+    assert len((await graph.get_memory(mid))["mentions"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_resolution_updates_last_seen(graph):
+    """A resolved (re-mentioned) node gets a fresh last_seen_at."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("a", entity_id="e1")
+    mid_b = await graph.create_memory("b", entity_id="e1")
+    await graph.attach_mentions(
+        mid_a, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    first_seen = graph._mentions["e1"][0]["last_seen_at"]
+    await graph.attach_mentions(
+        mid_b, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    node = graph._mentions["e1"][0]
+    assert node["mention_count"] == 2
+    assert node["last_seen_at"] >= first_seen
