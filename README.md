@@ -312,9 +312,9 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**当前版本：v0.4.0**（2026-07-03）。本版本合并了 v0.3.0 之后的所有 M1（部署加固、OTel、CI 自动化）与 M2（API / SDK / 安全加固）工作项。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
+**当前版本：v0.6.0**（2026-08-11）。v0.5.0 完成 M2（测试卫生 / 独立侧质量套件 / 真实嵌入绝对分报告 / 安全审计，按 ADR-0001 重裁剪）；v0.6.0 按 ADR-0004 退役自研连接器（连接能力外包给连接中心 Totem）。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
-**测试规模**：657 测试 pass / 1 skip / 0 fail。最新一次 M2 安全加固在 601 → 657 之间增加 56 个测试（typed 异常、OpenAPI drift、v2 route parity、OAuth state、CORS 校验、SDK override、chunk_task 守卫）。
+**测试规模**：838 测试函数 pass（含独立侧质量套件时序/遗忘/图谱精度三节 + 安全回归 + 基准链路）。
 
 ### v0.3.0 核心模块（已发布）
 
@@ -330,7 +330,7 @@ docker compose up -d mcp
 | Python SDK | ✅ 完整 | add / search / profile / upload / health / pipeline_status，typed 异常 + async context manager |
 | 连接器 | ✅ 已退役 | 自研连接器已删除（issue #7，ADR-0004）；统一接入连接中心 Totem（内部自托管：OAuth/执行/审计外包，Emerald 维护数据源绑定，见 [验证记录](docs/verification/totem-pilot-verification.md)） |
 | MCP Server | ✅ 完整 | stdio + SSE 双模式，3 个工具（add / search / profile） |
-| 基准测试 | 🟡 基建就位 | 6 维度合成对抗场景（LongMemEval / LoCoMo / ConvoMem 风格）；真实嵌入绝对分报告公开进行中（ADR-0001，见 `docs/adr/`） |
+| 基准测试 | ✅ 公开报告 | 7 维度合成对抗场景（含矛盾链）+ 独立侧质量套件三节；真实嵌入绝对分报告已公开（Aggregate 0.943，ADR-0001，见 [`docs/benchmarks/`](docs/benchmarks/)） |
 | 可观测性 | ✅ 完整 | Prometheus 指标 (`/v1/metrics`) + 结构化 JSON 日志 + OpenTelemetry 手动 span 集成 |
 | Docker E2E | ✅ 完整 | `docker-compose.test.yml` + `.env.test`，全栈集成测试通过 |
 
@@ -365,11 +365,27 @@ docker compose up -d mcp
 - ✅ Neo4j 生产配置（连接池、超时、重试）
 - ✅ 多因子画像评分（置信度 35% + 时近性 25% + 类型 20% + 关系 20%）
 
+### v0.5.0 增量（v0.4.0 → v0.5.0）— M2 质量与稳定
+
+按 ADR-0001 重裁剪 M2 范围为「测试卫生 → 独立侧质量套件 → 绝对分报告 → 安全审计」：
+- ✅ 独立侧质量套件三节（`tests/quality/temporal/`：时序正确性 65 例 / 遗忘有效性 / 图谱关系精度 61 例）+ CI 聚合门（`quality-temporal`）
+- ✅ 修复规则矛盾检测误伤（含「不」即判取代曾致 19 条无关事实被标记过期；Fact Recall 0.133 → 0.933）
+- ✅ 首个真实嵌入绝对分报告公开（BAAI/bge-m3，7/7 维度通过，Aggregate 0.943）
+- ✅ 安全审计 0 P0/P1（pip-audit 硬门禁、Gitleaks 全历史、`/v1/extract-url` SSRF 修复）
+- ✅ API Key 管理端点（`POST/GET/DELETE /v1/keys`）、`text/markdown` MIME 摄入修复、JSON/CSV 结构化分块
+
+### v0.6.0 增量（v0.5.0 → v0.6.0）— 连接器退役维护版本
+
+按 ADR-0004 契约阶段退役自研连接器（破坏性变更，故 minor 而非 patch）：
+- ✅ 删除 `emerald/connectors/`（2,194 行：OAuth / 凭证加密 / webhook / Celery 同步）及路由 `/v1/connectors/*`、`Connector` 模型、`cryptography` 依赖
+- ✅ 迁移 `009_drop_connectors`；连接能力外包给连接中心 Totem（Emerald 保留 `ConnectionHub` 抽象 + `/v1/sources/*` 绑定路由）
+- ✅ 里程碑顺延：M3 → v0.7.0、M4 → v0.8.0、M5 生产就绪 Beta → v0.9.0
+
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **M3 (v0.6.0)**：NER 实体抽取、多跳图谱推理、LangChain.js / Vercel AI / Mastra 集成
-- **M4 (v0.7.0)**：高级遗忘、负载测试验证、Staging 压测
-- **M5 (v0.8.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
+- **M3 (v0.7.0)**：NER 实体抽取、多跳图谱推理、LangChain.js / Vercel AI / Mastra 集成
+- **M4 (v0.8.0)**：高级遗忘、负载测试验证、Staging 压测（解决性能 SLA P0）
+- **M5 (v0.9.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
 
 ## OpenAI API Key
 
