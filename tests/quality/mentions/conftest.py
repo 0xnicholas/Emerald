@@ -1,8 +1,12 @@
-"""Fixtures for the mention-precision quality suite (B3 T1, ticket #22).
+"""Fixtures for the mention-precision quality suites (B3, tickets #22-#24).
 
 Mirrors the shared quality engine fixture (tests/quality/conftest.py) but
 injects the labelled corpus's gazetteer, so the rule/mock extraction path
 deterministically produces exactly the corpus's mentions — no LLM.
+
+``make_engine`` lets individual tests vary the gazetteer (invalid-type
+fallback, #24) or the rule-path confidence (confidence gating, #24) while
+keeping everything else deterministic.
 """
 
 from __future__ import annotations
@@ -22,9 +26,11 @@ from emerald.pipeline.extraction.text import TextExtractor
 from tests.quality.mentions.corpus import CORPUS_GAZETTEER
 
 
-@pytest.fixture
-def engine():
-    """MemoryEngine on the rule-only path with the corpus gazetteer.
+def make_engine(
+    gazetteer: dict[str, tuple[str, str]] | None = None,
+    confidence: float = 0.9,
+) -> MemoryEngine:
+    """MemoryEngine on the rule-only path with a caller-chosen gazetteer.
 
     Deterministic: mock embedder, no LLM calls, corpus-scoped mentions.
     """
@@ -35,7 +41,8 @@ def engine():
         "text",
         TextChunker(
             mention_extractor=RuleMentionExtractor(
-                known_entities=CORPUS_GAZETTEER,
+                known_entities=gazetteer or CORPUS_GAZETTEER,
+                confidence=confidence,
             ),
         ),
     )
@@ -51,3 +58,9 @@ def engine():
         relationships=relationships,
         use_db=False,
     )
+
+
+@pytest.fixture
+def engine():
+    """MemoryEngine on the rule-only path with the corpus gazetteer."""
+    return make_engine()

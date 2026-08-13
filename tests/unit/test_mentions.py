@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from emerald.core.mentions import (
     DEFAULT_KNOWN_ENTITIES,
+    MENTION_CONFIDENCE_THRESHOLD,
     VALID_MENTION_TYPES,
     Mention,
     RuleMentionExtractor,
+    coerce_confidence,
+    normalize_mention_type,
 )
 
 
@@ -52,6 +55,46 @@ class TestMention:
             "role",
             "concept",
         } == VALID_MENTION_TYPES
+
+
+class TestNormalizeMentionType:
+    def test_keeps_valid_classes(self):
+        for t in VALID_MENTION_TYPES:
+            assert normalize_mention_type(t) == t
+
+    def test_aliases_map_into_taxonomy(self):
+        assert normalize_mention_type("product") == "technology"
+        assert normalize_mention_type("title") == "role"
+        assert normalize_mention_type("other") == "concept"
+
+    def test_case_and_space_insensitive(self):
+        assert normalize_mention_type("Organization") == "organization"
+        assert normalize_mention_type("  ORGANIZATION ") == "organization"
+
+    def test_unknown_falls_back_to_concept(self):
+        assert normalize_mention_type("unicorn") == "concept"
+        assert normalize_mention_type("") == "concept"
+        assert normalize_mention_type("org") == "concept"
+
+    def test_confidence_threshold_is_in_range(self):
+        assert 0.0 < MENTION_CONFIDENCE_THRESHOLD <= 1.0
+
+
+class TestCoerceConfidence:
+    def test_parses_numbers(self):
+        assert coerce_confidence(0.73) == 0.73
+        assert coerce_confidence("0.5") == 0.5
+
+    def test_clamps_to_unit_interval(self):
+        assert coerce_confidence(1.7) == 1.0
+        assert coerce_confidence(-0.2) == 0.0
+
+    def test_unparseable_falls_back_to_default(self):
+        assert coerce_confidence(None) == 0.9
+        assert coerce_confidence("high") == 0.9
+
+    def test_custom_default(self):
+        assert coerce_confidence(None, default=0.6) == 0.6
 
 
 class TestRuleMentionExtractor:

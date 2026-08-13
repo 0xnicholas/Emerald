@@ -16,7 +16,7 @@ import httpx
 import structlog
 
 from emerald.config import get_settings
-from emerald.core.mentions import Mention
+from emerald.core.mentions import Mention, coerce_confidence
 
 logger = structlog.get_logger(__name__)
 
@@ -266,8 +266,9 @@ class DeepSeekFactExtractor(FactExtractor):
 
         Graceful degradation: missing, non-list or malformed input yields
         an empty list — mention extraction must never fail ingestion
-        (spec #21 / ticket #22). Closed-taxonomy validation of ``type``
-        and confidence gating land in #24.
+        (spec #21 / ticket #22). Closed-taxonomy normalization of ``type``
+        and confidence gating happen at attach time in the graph layer
+        (#24) — this parser stays permissive.
         """
         if not isinstance(raw, list):
             return []
@@ -279,17 +280,14 @@ class DeepSeekFactExtractor(FactExtractor):
             if not surface_form:
                 continue
             canonical_form = str(item.get("canonical_form", "")).strip()
-            try:
-                confidence = float(item.get("confidence", 0.9))
-            except (TypeError, ValueError):
-                confidence = 0.9
+            confidence = coerce_confidence(item.get("confidence"))
             mentions.append(
                 Mention(
                     surface_form=surface_form,
                     canonical_form=canonical_form,
                     type=str(item.get("type", "concept")).strip().lower()
                     or "concept",
-                    confidence=max(0.0, min(1.0, confidence)),
+                    confidence=confidence,
                 )
             )
         return mentions

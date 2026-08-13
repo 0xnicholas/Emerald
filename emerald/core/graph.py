@@ -13,7 +13,12 @@ from uuid import uuid4
 
 import structlog
 
-from emerald.core.mentions import Mention
+from emerald.core.mentions import (
+    MENTION_CONFIDENCE_THRESHOLD,
+    Mention,
+    coerce_confidence,
+    normalize_mention_type,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -953,7 +958,10 @@ class GraphStore:
 
         Best-effort: mentions with an empty surface/canonical form are
         skipped and a missing memory is a no-op — extraction must never
-        fail ingestion. Returns the number of new MENTIONS edges attached.
+        fail ingestion. Closed taxonomy (#24): a type outside the taxonomy
+        falls back to ``concept``; a mention below the confidence threshold
+        is dropped (no node, no edge). Returns the number of new MENTIONS
+        edges attached.
         """
         self._init_driver()
         # A missing memory is a no-op on both backends: the Cypher MATCH
@@ -972,23 +980,26 @@ class GraphStore:
             canonical = str(data.get("canonical_form", "")).strip()
             if not surface or not canonical:
                 continue
-            mention_type = str(data.get("type", "concept")) or "concept"
+            mention_type = normalize_mention_type(
+                str(data.get("type", "concept"))
+            )
+            confidence = coerce_confidence(data.get("confidence"))
+            # Confidence gating (#24): below-threshold mentions are dropped
+            # — they must produce no Mention node and no MENTIONS edge.
+            if confidence < MENTION_CONFIDENCE_THRESHOLD:
+                continue
             # The identical mention twice in one call attaches once (#23).
             key = (surface, canonical, mention_type)
             if key in seen:
                 continue
             seen.add(key)
-            try:
-                confidence = float(data.get("confidence", 0.9))
-            except (TypeError, ValueError):
-                confidence = 0.9
             prepared.append(
                 {
                     "id": uuid4().hex,
                     "surface_form": surface,
                     "canonical_form": canonical,
                     "type": mention_type,
-                    "confidence": max(0.0, min(1.0, confidence)),
+                    "confidence": confidence,
                 }
             )
 

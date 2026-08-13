@@ -408,3 +408,90 @@ async def test_attach_mentions_resolution_updates_last_seen(graph):
     node = graph._mentions["e1"][0]
     assert node["mention_count"] == 2
     assert node["last_seen_at"] >= first_seen
+
+
+# ---------------------------------------------------------------------------
+# Closed taxonomy + confidence gating (B3 NER, ticket #24)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_drops_low_confidence(graph):
+    """Below-threshold mentions create no node and no edge."""
+    from emerald.core.mentions import MENTION_CONFIDENCE_THRESHOLD, Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="e1")
+    count = await graph.attach_mentions(
+        mid,
+        "e1",
+        [
+            Mention(
+                "Google",
+                "Google",
+                "organization",
+                MENTION_CONFIDENCE_THRESHOLD - 0.01,
+            ),
+        ],
+    )
+    assert count == 0
+    assert graph._mentions.get("e1", []) == []
+    assert (await graph.get_memory(mid)).get("mentions", []) == []
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_keeps_threshold_confidence(graph):
+    """The confidence boundary is inclusive: at threshold → kept."""
+    from emerald.core.mentions import MENTION_CONFIDENCE_THRESHOLD, Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="e1")
+    count = await graph.attach_mentions(
+        mid,
+        "e1",
+        [
+            Mention(
+                "Google",
+                "Google",
+                "organization",
+                MENTION_CONFIDENCE_THRESHOLD,
+            ),
+        ],
+    )
+    assert count == 1
+    assert graph._mentions["e1"][0]["canonical_form"] == "Google"
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_normalizes_invalid_type(graph):
+    """A type outside the taxonomy falls back to concept."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("x", entity_id="e1")
+    await graph.attach_mentions(
+        mid,
+        "e1",
+        [Mention("Unicorn", "Unicorn", "fictional_beast", 0.9)],
+    )
+    pool = graph._mentions["e1"]
+    assert len(pool) == 1
+    assert pool[0]["type"] == "concept"
+    assert pool[0]["canonical_form"] == "Unicorn"
+
+
+@pytest.mark.asyncio
+async def test_attach_mentions_mixed_batch_gates_only_low_confidence(graph):
+    """In one call, gated mentions are dropped and valid ones attached."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("x", entity_id="e1")
+    count = await graph.attach_mentions(
+        mid,
+        "e1",
+        [
+            Mention("Google", "Google", "organization", 0.2),
+            Mention("Python", "Python", "technology", 0.9),
+        ],
+    )
+    assert count == 1
+    pool = graph._mentions["e1"]
+    assert len(pool) == 1
+    assert pool[0]["canonical_form"] == "Python"

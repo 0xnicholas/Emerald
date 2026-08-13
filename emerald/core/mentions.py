@@ -11,12 +11,14 @@ Terminology (spec #21, pending /domain-modeling in CONTEXT.md):
 - **Mention** = a named thing a memory talks about, resolved within exactly
   one Entity's context pool. Never shared across entities.
 
-Ticket scope (#22/#23, B3 T1/T2): the happy path plus cross-memory
+Ticket scope (#22/#23/#24, B3 T1-T3): the happy path, cross-memory
 resolution — different surface forms of the same thing resolve to one
 canonical Mention node per entity, with surface forms accumulating as
-aliases (dedup key (entity_id, canonical_form, type)). Closed-taxonomy
-validation and confidence gating (#24), cross-entity isolation tests (#25),
-UPDATES integration (#26) and forgetting (#27) build on this module.
+aliases (dedup key (entity_id, canonical_form, type)) — plus the closed
+mention-type taxonomy and confidence gating: types outside the taxonomy
+fall back to ``concept`` and below-threshold mentions are dropped at
+attach time. Cross-entity isolation tests (#25), UPDATES integration (#26)
+and forgetting (#27) build on this module.
 """
 
 from __future__ import annotations
@@ -29,10 +31,17 @@ from typing import Any
 # Default extraction confidence for the deterministic rule path.
 DEFAULT_RULE_CONFIDENCE = 0.9
 
+# Confidence gating (#24): mentions below this threshold are dropped at
+# attach time — they produce no Mention node and no MENTIONS edge. The
+# boundary is inclusive (== threshold is kept). The rule path emits
+# DEFAULT_RULE_CONFIDENCE, the LLM path 0.5-0.95 by prompt design, so the
+# gate only cuts genuinely uncertain extractions.
+MENTION_CONFIDENCE_THRESHOLD = 0.5
+
 # Closed mention-type taxonomy (spec #21 / ticket #24).
 # Defined here so the graph schema and every extraction path share one
-# source of truth. Full validation/gating behavior lands in #24; #22 keeps
-# types as-provided (LLM) or gazetteer-declared (rule path).
+# source of truth; ``normalize_mention_type`` is the single validation
+# funnel (spec #21: "校验；非法 → concept(other) 或丢弃").
 VALID_MENTION_TYPES = frozenset(
     {
         "person",
@@ -44,6 +53,43 @@ VALID_MENTION_TYPES = frozenset(
         "concept",
     }
 )
+
+# Spec #21's parenthetical synonyms — "technology(or product)",
+# "role(or title)", "concept(other)" — map into the canonical classes.
+MENTION_TYPE_ALIASES: dict[str, str] = {
+    "product": "technology",
+    "title": "role",
+    "other": "concept",
+}
+
+
+def coerce_confidence(value: Any, default: float = 0.9) -> float:
+    """Parse and clamp a confidence value into [0.0, 1.0].
+
+    Shared by every mention path (rule extraction emits a fixed value,
+    LLM extraction parses model output, the graph layer re-checks before
+    gating) so the coercion rules cannot drift between them (#24).
+    Unparseable input falls back to ``default``.
+    """
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = default
+    return max(0.0, min(1.0, confidence))
+
+
+def normalize_mention_type(value: str) -> str:
+    """Normalize a mention type into the closed taxonomy (#24).
+
+    Strips and lowercases the input, maps the spec's parenthetical
+    synonyms into their canonical classes, and falls back to ``concept``
+    for anything outside the taxonomy — malformed types never reach the
+    graph.
+    """
+    key = str(value).strip().lower()
+    if key in VALID_MENTION_TYPES:
+        return key
+    return MENTION_TYPE_ALIASES.get(key, "concept")
 
 
 @dataclass
