@@ -291,7 +291,11 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
+          description: 'Entity-centric retrieval (B4): a mention canonical form or mention id — returns
+            the entity''s memories mentioning it across all surface forms. Skips RAG and fast-lane paths.'
           title: About
+        description: 'Entity-centric retrieval (B4): a mention canonical form or mention id — returns
+          the entity''s memories mentioning it across all surface forms. Skips RAG and fast-lane paths.'
       - name: depth
         in: query
         required: false
@@ -299,8 +303,14 @@ paths:
           type: integer
           maximum: 4
           minimum: 0
+          description: 'Graph traversal hops (B4): >=1 walks shared-subject mention bridges and relationship
+            edges (UPDATES / EXTENDS / DERIVES_FROM, both directions). 0 = status quo. Historical nodes
+            surface only along UPDATES chains and are marked is_latest=false.'
           default: 0
           title: Depth
+        description: 'Graph traversal hops (B4): >=1 walks shared-subject mention bridges and relationship
+          edges (UPDATES / EXTENDS / DERIVES_FROM, both directions). 0 = status quo. Historical nodes
+          surface only along UPDATES chains and are marked is_latest=false.'
       responses:
         '200':
           description: Successful Response
@@ -1694,8 +1704,9 @@ components:
           maximum: 4.0
           minimum: 0.0
           title: Depth
-          description: Graph traversal hops over shared-subject mention bridges (B4). 0 = status quo;
-            >=1 walks Memory-MENTIONS->Mention<-MENTIONS-Memory.
+          description: 'Graph traversal hops (B4): >=1 walks shared-subject mention bridges (Memory-MENTIONS->Mention<-MENTIONS-Memory)
+            and relationship edges (UPDATES / EXTENDS / DERIVES_FROM, both directions). 0 = status quo.
+            Historical nodes surface only along UPDATES chains and are marked is_latest=false.'
           default: 0
       type: object
       required:

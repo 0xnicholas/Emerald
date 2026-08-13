@@ -855,6 +855,97 @@ class GraphStore:
         # are already in the original result set).
         return result
 
+    async def get_relationship_neighbors(
+        self,
+        memory_ids: list[str],
+        rel_types: list[str] | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Adjacent memories via relationship edges, both directions (B4, #32).
+
+        Returns ``{memory_id: [{id, rel_type, direction, entity_id,
+        is_latest}]}`` — one entry per adjacent edge of the keyed memory.
+        ``direction`` is ``"out"`` (keyed → neighbor) or ``"in"``
+        (neighbor → keyed). Historical neighbors (is_latest=False) are
+        included; the walker decides terminality (spec #29: history only
+        surfaces along UPDATES chains and is never walked through).
+        """
+        if rel_types is None:
+            rel_types = ["UPDATES", "EXTENDS", "DERIVES_FROM"]
+
+        self._init_driver()
+        id_set = set(memory_ids)
+        result: dict[str, list[dict[str, Any]]] = {}
+        if not id_set:
+            return result
+
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                res = await session.run(
+                    """
+                    MATCH (m:Memory)-[r]->(other:Memory)
+                    WHERE m.id IN $ids AND type(r) IN $rel_types
+                    RETURN m.id AS mid, other.id AS oid, type(r) AS rel_type,
+                           "out" AS direction, other.entity_id AS entity_id,
+                           other.is_latest AS is_latest
+                    UNION
+                    MATCH (other:Memory)-[r]->(m:Memory)
+                    WHERE m.id IN $ids AND type(r) IN $rel_types
+                    RETURN m.id AS mid, other.id AS oid, type(r) AS rel_type,
+                           "in" AS direction, other.entity_id AS entity_id,
+                           other.is_latest AS is_latest
+                    """,
+                    ids=list(id_set),
+                    rel_types=rel_types,
+                )
+                async for record in res:
+                    result.setdefault(record["mid"], []).append(
+                        {
+                            "id": record["oid"],
+                            "rel_type": record["rel_type"],
+                            "direction": record["direction"],
+                            "entity_id": record["entity_id"],
+                            "is_latest": record["is_latest"],
+                        }
+                    )
+            return result
+
+        # In-memory fallback. Every relationship record is stored on its
+        # target memory (create_relationship / create_update_relation), so
+        # the holder's id IS the edge target.
+        by_id: dict[str, dict[str, Any]] = {}
+        for entity_memories in self._memories.values():
+            for m in entity_memories:
+                by_id[m["id"]] = m
+        for m in by_id.values():
+            for rel in m.get("relationships", []):
+                if rel["type"] not in rel_types:
+                    continue
+                from_id = rel["from_id"]
+                to_id = m["id"]
+                if to_id in id_set:
+                    source = by_id.get(from_id)
+                    if source is not None:
+                        result.setdefault(to_id, []).append(
+                            {
+                                "id": from_id,
+                                "rel_type": rel["type"],
+                                "direction": "in",
+                                "entity_id": source.get("entity_id"),
+                                "is_latest": source.get("is_latest", True),
+                            }
+                        )
+                if from_id in id_set:
+                    result.setdefault(from_id, []).append(
+                        {
+                            "id": to_id,
+                            "rel_type": rel["type"],
+                            "direction": "out",
+                            "entity_id": m.get("entity_id"),
+                            "is_latest": m.get("is_latest", True),
+                        }
+                    )
+        return result
+
     async def keyword_search_memories(
         self,
         entity_id: str,

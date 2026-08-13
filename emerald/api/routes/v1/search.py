@@ -117,8 +117,21 @@ async def search_get(
     rewrite_query: bool = Query(False),
     min_confidence: float | None = Query(None, ge=0.0, le=1.0),
     dynamic_truncation: bool = Query(True),
-    about: str | None = Query(None),
-    depth: int = Query(0, ge=0, le=4),
+    about: str | None = Query(
+        None,
+        description="Entity-centric retrieval (B4): a mention canonical form "
+        "or mention id — returns the entity's memories mentioning it "
+        "across all surface forms. Skips RAG and fast-lane paths.",
+    ),
+    depth: int = Query(
+        0,
+        ge=0,
+        le=4,  # must match MAX_DEPTH (emerald/core/multihop.py)
+        description="Graph traversal hops (B4): >=1 walks shared-subject "
+        "mention bridges and relationship edges (UPDATES / EXTENDS / "
+        "DERIVES_FROM, both directions). 0 = status quo. Historical nodes "
+        "surface only along UPDATES chains and are marked is_latest=false.",
+    ),
     request: Request = None,  # type: ignore
 ) -> dict:
     """GET variant of search."""

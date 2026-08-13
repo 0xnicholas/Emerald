@@ -25,8 +25,11 @@ class SearchRequest(BaseModel):
         default=0,
         ge=0,
         le=4,  # must match MAX_DEPTH (emerald/core/multihop.py)
-        description="Graph traversal hops over shared-subject mention bridges "
-        "(B4). 0 = status quo; >=1 walks Memory-MENTIONS->Mention<-MENTIONS-Memory.",
+        description="Graph traversal hops (B4): >=1 walks shared-subject "
+        "mention bridges (Memory-MENTIONS->Mention<-MENTIONS-Memory) and "
+        "relationship edges (UPDATES / EXTENDS / DERIVES_FROM, both "
+        "directions). 0 = status quo. Historical nodes surface only along "
+        "UPDATES chains and are marked is_latest=false.",
     )
 
 

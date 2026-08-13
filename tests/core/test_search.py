@@ -857,3 +857,116 @@ async def test_search_depth_bridges_from_vector_seed(populated, graph, vector, e
         depth=1,
     )
     assert {r.id for r in results.results} == {m_google, m_guge}
+
+
+# ---- Relationship chains (B4, ticket #32) ----
+
+
+async def _seed_chain_world(populated, graph):
+    """A fact chain: A <- D1 <- D2 (DERIVES), A2 -UPDATES-> A (history)."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("用户住在北京", entity_id="alice")
+    mid_a2 = await graph.create_memory("用户搬到了上海", entity_id="alice")
+    mid_d1 = await graph.create_memory("用户在中国", entity_id="alice")
+    mid_d2 = await graph.create_memory("用户在亚洲", entity_id="alice")
+    # Both the current fact and its historical predecessor mention Foo.
+    await graph.attach_mentions(
+        mid_a, "alice", [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_a2, "alice", [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+    await graph.create_relationship(mid_d1, mid_a2, "DERIVES_FROM")
+    await graph.create_relationship(mid_d2, mid_d1, "DERIVES_FROM")
+    await graph.create_update_relation(mid_a2, mid_a)
+    return mid_a, mid_a2, mid_d1, mid_d2
+
+
+@pytest.mark.asyncio
+async def test_search_depth1_surfaces_derived_from_source(populated, graph):
+    """Querying a source fact surfaces the derived fact (reverse DF, 1 hop)."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=1,
+    )
+    ids = {r.id for r in results.results}
+    # Seeds: A2 (latest, mentions Foo). Historical A surfaces via UPDATES;
+    # D1 derives from A2. D2 is two hops away.
+    assert ids == {mid_a2, mid_a, mid_d1}
+    assert mid_d2 not in ids
+    by_id = {r.id: r for r in results.results}
+    assert by_id[mid_a].is_latest is False  # marked historical
+    assert by_id[mid_d1].is_latest is True
+
+
+@pytest.mark.asyncio
+async def test_search_derives_chain_depth2_exact(populated, graph):
+    """D2 derives from D1 derives from A2: depth=2 reaches exactly D2."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    depth1 = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=1,
+    )
+    depth2 = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=2,
+    )
+    ids1 = {r.id for r in depth1.results}
+    ids2 = {r.id for r in depth2.results}
+    assert mid_d2 not in ids1
+    assert mid_d2 in ids2
+    assert ids2 == {mid_a2, mid_a, mid_d1, mid_d2}
+
+
+@pytest.mark.asyncio
+async def test_search_depth0_never_walks_relationships(populated, graph):
+    """depth=0 (default): no DERIVES/UPDATES traversal — about seeds only."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=0,
+    )
+    # A2 mentions Foo and is latest; A is historical so it is not an
+    # about seed — without traversal, nothing else surfaces.
+    assert {r.id for r in results.results} == {mid_a2}
+
+
+@pytest.mark.asyncio
+async def test_search_vector_seed_historical_survives_truncation(
+    populated, graph, vector,
+):
+    """Historical nodes survive dynamic truncation on the vector path.
+
+    A historical node scores 0 (superseded → trust 0); the score-gap
+    truncation must not silently drop it — once an UPDATES chain is
+    walked, the history is surfaced and marked (spec #29 story 7).
+    """
+    from emerald.core.mentions import Mention
+
+    keyword_embedder = _KeywordEmbeddingProvider("Alice 住在北京")
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=keyword_embedder,
+    )
+
+    mid_old = await graph.create_memory("Alice 住在北京", entity_id="alice")
+    mid_new = await graph.create_memory("Alice 搬到了上海", entity_id="alice")
+    emb = (await keyword_embedder.embed(["Alice 住在北京"]))[0]
+    await vector.store(mid_old, "Alice 住在北京", emb, entity_id="alice")
+    await vector.store(mid_new, "Alice 搬到了上海", emb, entity_id="alice")
+    await graph.create_update_relation(mid_new, mid_old)
+    await graph.attach_mentions(
+        mid_new, "alice", [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+
+    results = await orchestrator.search(
+        "Alice 住在北京", entity_id="alice", search_mode=SearchMode.MEMORY,
+        depth=1,
+    )
+    by_id = {r.id: r for r in results.results}
+    assert mid_old in by_id
+    assert by_id[mid_old].is_latest is False  # surfaced + marked historical

@@ -99,10 +99,13 @@ class SearchOrchestrator:
         (no relationship expansion in this ticket; traversal lands in
         #31/#32).
 
-        ``depth`` (B4, #31): graph-traversal hops over shared-subject
-        bridges applied to the memory seed set. 0 (default) is the status
-        quo; >=1 walks Memory-MENTIONS->Mention<-MENTIONS-Memory within
-        the entity. Clamped to [0, 4] (spec #29).
+        ``depth`` (B4, #31/#32): graph-traversal hops over shared-subject
+        bridges and relationship edges applied to the memory seed set.
+        0 (default) is the status quo; >=1 walks
+        Memory-MENTIONS->Mention<-MENTIONS-Memory and
+        UPDATES/EXTENDS/DERIVES_FROM (both directions) within the
+        entity. Historical nodes surface only along UPDATES chains and
+        are marked is_latest=false. Clamped to [0, 4] (spec #29).
         """
         depth = max(0, min(depth, MAX_DEPTH))
         settings = get_settings()
@@ -329,11 +332,13 @@ class SearchOrchestrator:
         entity_id: str,
         depth: int,
     ) -> list[SearchResult]:
-        """Bridge shared-subject memories from the seed set (B4, #31).
+        """Walk the graph from the seed set (B4, #31/#32).
 
-        Each bridged memory is added once at its shallowest depth, scored
-        by trust discounted per hop so seeds rank first. Path provenance
-        and depth fields on results land in #33.
+        Each reached memory is added once at its shallowest depth, scored
+        by trust discounted per hop so seeds rank first. Historical nodes
+        (is_latest=false, reached along an UPDATES edge) are surfaced
+        with is_latest=false — the superseded marker (spec #29 story 7).
+        Path provenance and depth fields on results land in #33.
         """
         engine = MultihopEngine(graph=self.graph)
         hops = await engine.expand(
@@ -348,7 +353,12 @@ class SearchOrchestrator:
             if bridged_id in seen_ids:
                 continue
             memory = await self.graph.get_memory(bridged_id)
-            if not memory or not memory.get("is_latest", True):
+            if not memory:
+                continue
+            is_latest = memory.get("is_latest", True)
+            if not is_latest and not hop.historical:
+                # Never reach into history proactively — only UPDATES
+                # chains surface it (engine contract, #32).
                 continue
             seen_ids.add(bridged_id)
             expanded.append(
@@ -720,12 +730,17 @@ class SearchOrchestrator:
             # result exceeds the configured gap threshold. This avoids
             # including low-relevance tail results when there is a clear
             # separation, while still respecting top_k as a hard cap.
+            # Historical nodes (is_latest=false, surfaced along an UPDATES
+            # chain — B4 #32) score 0 by design (superseded → trust 0) and
+            # must not be dropped by the gap cut: once walked, history is
+            # surfaced and marked (spec #29 story 7).
             if (
                 dynamic_truncation
                 and len(merged) >= min_before_truncate
                 and prev_score is not None
                 and settings.search_dynamic_truncation_enabled
                 and (prev_score - r.score) > settings.search_score_gap_threshold
+                and r.is_latest
             ):
                 break
 

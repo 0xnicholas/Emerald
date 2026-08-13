@@ -1,17 +1,20 @@
-"""Multihop scenarios on real storage (Neo4j) — B4, tickets #30/#31.
+"""Multihop scenarios on real storage (Neo4j) — B4, tickets #30-#32.
 
 The in-memory multihop suites run everywhere. This module re-runs the
-entity-centric retrieval and shared-subject bridging scenarios against a
-real Neo4j backend, covering the Cypher branches:
+entity-centric retrieval, shared-subject bridging and relationship-chain
+scenarios against a real Neo4j backend, covering the Cypher branches:
 
 - surface-form resolution and historical/entity isolation in
   get_memories_mentioning (#30)
 - shared-subject bridging Memory-MENTIONS->Mention<-MENTIONS-Memory,
   depth bounding and cycle safety on the Cypher branch (#31)
+- relationship chains over UPDATES / EXTENDS / DERIVES_FROM via
+  get_relationship_neighbors: reverse DERIVES_FROM, chained depth ≥ 2,
+  UPDATES-surfaced history marked and terminal (#32)
 
 Skipped when no test Neo4j is reachable; the CI `quality-temporal` job
-runs it with the compose services up. Later B4 tickets (#32-#34) extend
-this file with relationship-chain and path scenarios.
+runs it with the compose services up. Later B4 tickets (#33-#34) extend
+this file with unified-path and ranking scenarios.
 """
 
 from __future__ import annotations
@@ -153,8 +156,77 @@ async def _run_shared_subject_on_neo4j(driver) -> None:
     assert len(ids) == len(set(ids))
 
 
+async def _run_relationship_chains_on_neo4j(driver) -> None:
+    """Relationship chains hold on the Cypher branch (#32)."""
+    from emerald.core.graph import GraphStore
+    from emerald.core.mentions import Mention
+    from emerald.core.multihop import MultihopEngine
+
+    store = GraphStore(use_db=True)
+    entity_a = "user_quality_multihop_rel_a"
+    entity_b = "user_quality_multihop_rel_b"
+    await _clean_entity(driver, entity_a)
+    await _clean_entity(driver, entity_b)
+
+    async def seed(entity, content):
+        return await store.create_memory(content, entity_id=entity)
+
+    mid_a = await seed(entity_a, "猫在房顶上睡觉")
+    mid_a2 = await seed(entity_a, "冰箱里有牛奶")
+    mid_d1 = await seed(entity_a, "窗外下着大雨")
+    mid_d2 = await seed(entity_a, "桌上放着铅笔")
+    mid_x = await seed(entity_a, "河里游着金鱼")
+    await store.attach_mentions(
+        mid_a2, entity_a, [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+    # A2 supersedes A → A historical; D chain off A2; X extends A2.
+    await store.create_update_relation(mid_a2, mid_a)
+    await store.create_relationship(mid_d1, mid_a2, "DERIVES_FROM")
+    await store.create_relationship(mid_d2, mid_d1, "DERIVES_FROM")
+    await store.create_relationship(mid_x, mid_a2, "EXTENDS")
+    # Cross-entity edge: another entity's fact derives from D1 — the
+    # Cypher branch must filter it out of the walk.
+    mid_b = await seed(entity_b, "天上飘着白云")
+    await store.create_relationship(mid_b, mid_d1, "DERIVES_FROM")
+
+    engine = MultihopEngine(graph=store)
+
+    # Reverse DERIVES_FROM + UPDATES history at depth 1.
+    hops = await engine.expand([mid_a2], entity_a, depth=1)
+    assert set(hops) == {mid_a, mid_d1, mid_x}
+    assert hops[mid_a].historical is True
+    assert hops[mid_a].path == [("memory", mid_a2), ("UPDATES", mid_a)]
+    assert hops[mid_d1].historical is False
+
+    # Chained derivation at depth 2, exactly.
+    hops = await engine.expand([mid_a2], entity_a, depth=2)
+    assert set(hops) == {mid_a, mid_d1, mid_d2, mid_x}
+    assert hops[mid_d2].depth == 2
+    assert hops[mid_d2].path == [
+        ("memory", mid_a2),
+        ("DERIVES_FROM", mid_d1),
+        ("DERIVES_FROM", mid_d2),
+    ]
+
+    # Historical nodes are terminals and cross-entity edges never surface.
+    mid_ext = await seed(entity_a, "北京冬天很冷")
+    await store.create_relationship(mid_ext, mid_a, "EXTENDS")
+    hops = await engine.expand([mid_a2], entity_a, depth=3)
+    assert mid_ext not in hops
+    assert mid_b not in hops
+
+    # Depth cap: the walk never exceeds MAX_DEPTH=4.
+    chain = [await seed(entity_a, f"链上事实 {i}") for i in range(6)]
+    for derived, source in zip(chain[1:], chain, strict=False):
+        await store.create_relationship(derived, source, "DERIVES_FROM")
+    hops = await engine.expand([chain[0]], entity_a, depth=99)
+    assert chain[4] in hops and chain[5] not in hops
+    assert hops[chain[4]].depth == 4
+
+
 @pytest.mark.asyncio
 async def test_entity_centric_on_neo4j(neo4j_driver):
     """Entity-centric retrieval holds on a real Neo4j backend."""
     await _run_entity_centric_on_neo4j(neo4j_driver)
     await _run_shared_subject_on_neo4j(neo4j_driver)
+    await _run_relationship_chains_on_neo4j(neo4j_driver)
