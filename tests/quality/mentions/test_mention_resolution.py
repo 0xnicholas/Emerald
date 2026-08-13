@@ -24,6 +24,7 @@ from __future__ import annotations
 import pytest
 
 from emerald.core.mentions import Mention
+from tests.quality.mentions.conftest import add_content
 from tests.quality.mentions.corpus import HAPPY_PATH_CORPUS
 
 pytestmark = [pytest.mark.quality]
@@ -34,17 +35,12 @@ GUGE_ENTRY = HAPPY_PATH_CORPUS[8]  # "用户在谷歌工作"
 UPPER_GOOGLE_ENTRY = HAPPY_PATH_CORPUS[9]  # "用户在 GOOGLE 工作"
 
 
-async def _add(engine, entity_id: str, content: str) -> str:
-    """Ingest one piece of content and return the single memory id."""
-    result = await engine.add(content, entity_id=entity_id)
-    assert len(result.memory_ids) == 1
-    return result.memory_ids[0]
 
 
 async def test_different_surface_forms_resolve_to_one_node(engine, entity_id):
     """'Google' and '谷歌' in two memories → one shared Mention node."""
-    google_mid = await _add(engine, entity_id, GOOGLE_ENTRY[0])
-    guge_mid = await _add(engine, entity_id, GUGE_ENTRY[0])
+    google_mid = await add_content(engine, entity_id, GOOGLE_ENTRY[0])
+    guge_mid = await add_content(engine, entity_id, GUGE_ENTRY[0])
 
     google_mentions = await engine.graph.get_memory_mentions(google_mid)
     guge_mentions = await engine.graph.get_memory_mentions(guge_mid)
@@ -65,8 +61,8 @@ async def test_node_accumulates_all_seen_surface_forms_as_aliases(
     entity_id,
 ):
     """The resolved node aliases accumulate every surface form seen."""
-    await _add(engine, entity_id, GOOGLE_ENTRY[0])
-    await _add(engine, entity_id, GUGE_ENTRY[0])
+    await add_content(engine, entity_id, GOOGLE_ENTRY[0])
+    await add_content(engine, entity_id, GUGE_ENTRY[0])
 
     pool = engine.graph._mentions.get(entity_id, [])
     assert len(pool) == 1
@@ -82,8 +78,8 @@ async def test_each_memory_keeps_its_own_edge_to_the_shared_node(
     entity_id,
 ):
     """Both memories carry a MENTIONS edge to the same node, one each."""
-    google_mid = await _add(engine, entity_id, GOOGLE_ENTRY[0])
-    guge_mid = await _add(engine, entity_id, GUGE_ENTRY[0])
+    google_mid = await add_content(engine, entity_id, GOOGLE_ENTRY[0])
+    guge_mid = await add_content(engine, entity_id, GUGE_ENTRY[0])
 
     google_memory = await engine.graph.get_memory(google_mid)
     guge_memory = await engine.graph.get_memory(guge_mid)
@@ -101,7 +97,7 @@ async def test_repeated_mentions_one_node_n_edges(engine, entity_id):
     # Three distinct contents (engine dedupes identical content) that all
     # mention the same real-world thing with different surface forms.
     memory_ids = [
-        await _add(engine, entity_id, entry[0])
+        await add_content(engine, entity_id, entry[0])
         for entry in (GOOGLE_ENTRY, GUGE_ENTRY, UPPER_GOOGLE_ENTRY)
     ]
 
@@ -120,7 +116,7 @@ async def test_repeated_mentions_one_node_n_edges(engine, entity_id):
 
 async def test_attach_same_memory_again_is_idempotent(engine, entity_id):
     """Re-attaching the same memory's mentions changes nothing."""
-    mid = await _add(engine, entity_id, GOOGLE_ENTRY[0])
+    mid = await add_content(engine, entity_id, GOOGLE_ENTRY[0])
     mentions = await engine.graph.get_memory_mentions(mid)
     assert len(mentions) == 1
 
@@ -142,8 +138,8 @@ async def test_same_canonical_in_two_entities_stays_two_nodes(
 ):
     """The dedup key is entity-scoped — no cross-entity node sharing."""
     other_entity = f"{entity_id}_other"
-    mid_a = await _add(engine, entity_id, GOOGLE_ENTRY[0])
-    mid_b = await _add(engine, other_entity, GOOGLE_ENTRY[0])
+    mid_a = await add_content(engine, entity_id, GOOGLE_ENTRY[0])
+    mid_b = await add_content(engine, other_entity, GOOGLE_ENTRY[0])
 
     node_a = (await engine.graph.get_memory_mentions(mid_a))[0]
     node_b = (await engine.graph.get_memory_mentions(mid_b))[0]
@@ -163,7 +159,7 @@ async def test_same_canonical_different_type_stays_two_nodes(
     "Apple" the organization and "Apple" the technology are distinct
     mentions (spec #21: no cross-type merging in B3).
     """
-    mid = await _add(engine, entity_id, HAPPY_PATH_CORPUS[0][0])
+    mid = await add_content(engine, entity_id, HAPPY_PATH_CORPUS[0][0])
     await engine.graph.attach_mentions(
         mid,
         entity_id,

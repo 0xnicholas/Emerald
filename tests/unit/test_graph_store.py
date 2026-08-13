@@ -495,3 +495,61 @@ async def test_attach_mentions_mixed_batch_gates_only_low_confidence(graph):
     pool = graph._mentions["e1"]
     assert len(pool) == 1
     assert pool[0]["canonical_form"] == "Python"
+
+
+# ---------------------------------------------------------------------------
+# Entity-scoped mention read (B3 NER, ticket #25)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_entity_mentions_returns_resolved_nodes(graph):
+    """get_entity_mentions reads back an entity's resolved mention nodes."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("a", entity_id="e1")
+    await graph.attach_mentions(
+        mid,
+        "e1",
+        [
+            Mention("Google", "Google", "organization", 0.9),
+            Mention("谷歌", "Google", "organization", 0.9),
+        ],
+    )
+    nodes = await graph.get_entity_mentions("e1")
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node["canonical_form"] == "Google"
+    assert node["type"] == "organization"
+    assert node["entity_id"] == "e1"
+    assert node["aliases"] == ["Google", "谷歌"]
+    assert node["mention_count"] == 2
+    assert node["created_at"] is not None
+    assert node["last_seen_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_entity_mentions_scoped_per_entity(graph):
+    """An entity's read returns only its own pool's nodes."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("a", entity_id="e1")
+    mid_b = await graph.create_memory("b", entity_id="e2")
+    await graph.attach_mentions(
+        mid_a, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_b, "e2", [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    nodes_a = await graph.get_entity_mentions("e1")
+    nodes_b = await graph.get_entity_mentions("e2")
+    assert len(nodes_a) == 1 and len(nodes_b) == 1
+    assert nodes_a[0]["id"] != nodes_b[0]["id"]
+    assert all(n["entity_id"] == "e1" for n in nodes_a)
+    assert all(n["entity_id"] == "e2" for n in nodes_b)
+
+
+@pytest.mark.asyncio
+async def test_get_entity_mentions_unknown_entity_returns_empty(graph):
+    assert await graph.get_entity_mentions("nonexistent") == []

@@ -18,8 +18,9 @@ B3 T1 asserts, on the deterministic rule-only path:
 Later B3 tickets extend this section: canonical resolution / alias
 accumulation (#23, in test_mention_resolution.py), closed-taxonomy
 validation + confidence gating (#24, in test_mention_taxonomy.py),
-cross-entity isolation + Neo4j variants (#25), UPDATES integration (#26),
-forgetting integration (#27).
+cross-entity isolation + Neo4j variants (#25, in test_mention_isolation.py
+and test_neo4j_mention_variants.py), UPDATES integration (#26), forgetting
+integration (#27).
 
 Deterministic labelled corpus + mock embeddings + rule-only path.
 """

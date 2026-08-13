@@ -1198,6 +1198,64 @@ class GraphStore:
                 return mentions
         return []
 
+    async def get_entity_mentions(self, entity_id: str) -> list[dict[str, Any]]:
+        """Read back an entity's resolved Mention nodes (B3 NER, #25).
+
+        Internal quality-suite method (spec #21: no public API in B3).
+        Returns one dict per Mention node in the entity's context pool:
+
+        {id, entity_id, canonical_form, type, aliases, mention_count,
+         created_at, last_seen_at}
+
+        Empty list when the entity has no mentions or does not exist.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (e:Entity {id: $id})-[:HAS_MENTION]->(mn:Mention)
+                    RETURN mn.id AS id,
+                           mn.entity_id AS entity_id,
+                           mn.canonical_form AS canonical_form,
+                           mn.type AS type,
+                           mn.aliases AS aliases,
+                           mn.mention_count AS mention_count,
+                           mn.created_at AS created_at,
+                           mn.last_seen_at AS last_seen_at
+                    ORDER BY mn.created_at
+                    """,
+                    id=entity_id,
+                )
+                mentions = []
+                async for record in result:
+                    mentions.append({
+                        "id": record["id"],
+                        "entity_id": record["entity_id"],
+                        "canonical_form": record["canonical_form"],
+                        "type": record["type"],
+                        "aliases": list(record["aliases"]),
+                        "mention_count": record["mention_count"],
+                        "created_at": record["created_at"],
+                        "last_seen_at": record["last_seen_at"],
+                    })
+                return mentions
+
+        pool: list[dict[str, Any]] = self._mentions.get(entity_id, [])
+        return [
+            {
+                "id": node["id"],
+                "entity_id": node["entity_id"],
+                "canonical_form": node["canonical_form"],
+                "type": node["type"],
+                "aliases": list(node["aliases"]),
+                "mention_count": node["mention_count"],
+                "created_at": node["created_at"],
+                "last_seen_at": node["last_seen_at"],
+            }
+            for node in pool
+        ]
+
     # ------------------------------------------------------------------
     # Space CRUD
     # ------------------------------------------------------------------

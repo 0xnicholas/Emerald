@@ -64,3 +64,15 @@ def make_engine(
 def engine():
     """MemoryEngine on the rule-only path with the corpus gazetteer."""
     return make_engine()
+
+
+async def add_content(engine: MemoryEngine, entity_id: str, content: str) -> str:
+    """Ingest one piece of content and return the single memory id.
+
+    Shared helper for the mention quality sections: every corpus entry is
+    a single-memory content piece, and a multi-memory result would mean
+    the deterministic rule path misbehaved.
+    """
+    result = await engine.add(content, entity_id=entity_id)
+    assert len(result.memory_ids) == 1
+    return result.memory_ids[0]

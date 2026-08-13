@@ -163,7 +163,12 @@ async def neo4j_driver(neo4j_available):
             prefix=QUALITY_ENTITY_PREFIX,
         )
         await session.run(
-            "MATCH (e:Entity) WHERE e.id STARTS WITH $prefix DELETE e",
+            "MATCH (mn:Mention) WHERE mn.entity_id STARTS WITH $prefix "
+            "DETACH DELETE mn",
+            prefix=QUALITY_ENTITY_PREFIX,
+        )
+        await session.run(
+            "MATCH (e:Entity) WHERE e.id STARTS WITH $prefix DETACH DELETE e",
             prefix=QUALITY_ENTITY_PREFIX,
         )
 

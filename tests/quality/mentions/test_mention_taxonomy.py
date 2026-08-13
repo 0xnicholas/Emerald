@@ -24,7 +24,7 @@ from emerald.core.mentions import (
     MENTION_CONFIDENCE_THRESHOLD,
     VALID_MENTION_TYPES,
 )
-from tests.quality.mentions.conftest import make_engine
+from tests.quality.mentions.conftest import add_content, make_engine
 from tests.quality.mentions.corpus import HAPPY_PATH_CORPUS
 
 pytestmark = [pytest.mark.quality]
@@ -34,11 +34,6 @@ pytestmark = [pytest.mark.quality]
 INVALID_TYPE_GAZETTEER = {"unicorn": ("Unicorn", "fictional_beast")}
 
 
-async def _add(engine, entity_id: str, content: str) -> str:
-    """Ingest one piece of content and return the single memory id."""
-    result = await engine.add(content, entity_id=entity_id)
-    assert len(result.memory_ids) == 1
-    return result.memory_ids[0]
 
 
 async def test_extracted_types_stay_inside_closed_taxonomy(engine, entity_id):
@@ -57,7 +52,7 @@ async def test_extracted_types_stay_inside_closed_taxonomy(engine, entity_id):
 async def test_invalid_type_falls_back_to_concept(engine, entity_id):
     """A type outside the taxonomy becomes concept — no malformed nodes."""
     engine = make_engine(gazetteer=INVALID_TYPE_GAZETTEER)
-    mid = await _add(engine, entity_id, "用户见到了 unicorn")
+    mid = await add_content(engine, entity_id, "用户见到了 unicorn")
 
     mentions = await engine.graph.get_memory_mentions(mid)
     assert len(mentions) == 1
@@ -82,7 +77,7 @@ async def test_datetime_role_concept_types_pass_through(engine, entity_id):
             "哲学": ("哲学", "concept"),
         },
     )
-    mid = await _add(engine, entity_id, "明天 CTO 讨论哲学")
+    mid = await add_content(engine, entity_id, "明天 CTO 讨论哲学")
 
     mentions = await engine.graph.get_memory_mentions(mid)
     assert [(m["canonical_form"], m["type"]) for m in mentions] == [
@@ -97,7 +92,7 @@ async def test_low_confidence_mentions_are_dropped(engine, entity_id):
     engine = make_engine(confidence=MENTION_CONFIDENCE_THRESHOLD - 0.1)
     content, expected = HAPPY_PATH_CORPUS[4]  # two mentions, both gated
     assert expected, "corpus entry must carry mentions for this test"
-    mid = await _add(engine, entity_id, content)
+    mid = await add_content(engine, entity_id, content)
 
     memory = await engine.graph.get_memory(mid)
     assert memory["is_latest"] is True  # gating never fails ingestion
@@ -109,7 +104,7 @@ async def test_low_confidence_mentions_are_dropped(engine, entity_id):
 async def test_at_threshold_mentions_are_kept(engine, entity_id):
     """The confidence boundary is inclusive: threshold == keep."""
     engine = make_engine(confidence=MENTION_CONFIDENCE_THRESHOLD)
-    mid = await _add(engine, entity_id, HAPPY_PATH_CORPUS[1][0])
+    mid = await add_content(engine, entity_id, HAPPY_PATH_CORPUS[1][0])
 
     mentions = await engine.graph.get_memory_mentions(mid)
     assert len(mentions) == 1

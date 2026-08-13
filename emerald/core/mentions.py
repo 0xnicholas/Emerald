@@ -17,8 +17,9 @@ canonical Mention node per entity, with surface forms accumulating as
 aliases (dedup key (entity_id, canonical_form, type)) — plus the closed
 mention-type taxonomy and confidence gating: types outside the taxonomy
 fall back to ``concept`` and below-threshold mentions are dropped at
-attach time. Cross-entity isolation tests (#25), UPDATES integration (#26)
-and forgetting (#27) build on this module.
+attach time. Entity-scoped reads and cross-entity isolation landed in
+#25 (get_entity_mentions); UPDATES integration (#26) and forgetting (#27)
+build on this module.
 """
 
 from __future__ import annotations
