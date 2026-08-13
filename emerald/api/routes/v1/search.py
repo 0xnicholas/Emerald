@@ -94,6 +94,8 @@ async def search(
                     "is_latest": r.is_latest,
                     "document_id": r.document_id,
                     "document_title": r.document_title,
+                    "depth": r.depth,
+                    "path": [{"kind": s.kind, "id": s.id} for s in r.path],
                 }
                 for r in result_items
             ],
@@ -156,7 +158,16 @@ async def search_get(
     return {
         "data": {
             "results": [
-                {"id": r.id, "content": r.content, "score": r.score, "source": r.source, "container_tag": r.container_tag}
+                {
+                    "id": r.id,
+                    "content": r.content,
+                    "score": r.score,
+                    "source": r.source,
+                    "container_tag": r.container_tag,
+                    "is_latest": r.is_latest,
+                    "depth": r.depth,
+                    "path": [{"kind": s.kind, "id": s.id} for s in r.path],
+                }
                 for r in results.results
             ],
             "search_mode": results.search_mode.value,

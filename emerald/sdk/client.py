@@ -30,6 +30,7 @@ from emerald.sdk.models import (
     PipelineStatus,
     Profile,
     ProfileFact,
+    SearchPathStep,
     SearchResult,
     SearchResults,
 )
@@ -338,9 +339,11 @@ class EmeraldClient:
             about: Entity-centric retrieval (B4): a mention canonical form
                 or mention id — returns the entity's memories mentioning it
                 across all surface forms. Skips RAG and fast-lane paths.
-            depth: Graph traversal hops over shared-subject mention bridges
-                (B4). 0 = status quo; >=1 walks
-                Memory-MENTIONS->Mention<-MENTIONS-Memory.
+            depth: Graph traversal hops (B4): 0 = status quo; >=1 walks
+                shared-subject mention bridges and relationship edges
+                (UPDATES / EXTENDS / DERIVES_FROM, both directions).
+                Multihop results carry ``depth`` and ``path`` provenance;
+                historical nodes surface only along UPDATES chains.
 
         Returns:
             SearchResults with scored, deduplicated hits.
@@ -375,9 +378,16 @@ class EmeraldClient:
                     score=r.get("score", 0.0),
                     source=r.get("source", "memory"),
                     memory_type=r.get("memory_type", ""),
+                    container_tag=r.get("container_tag"),
+                    tags=r.get("tags", []),
                     is_latest=r.get("is_latest", True),
                     document_id=r.get("document_id"),
                     document_title=r.get("document_title"),
+                    depth=r.get("depth", 0),
+                    path=[
+                        SearchPathStep(kind=s["kind"], id=s["id"])
+                        for s in r.get("path", [])
+                    ],
                 )
                 for r in data.get("results", [])
             ],

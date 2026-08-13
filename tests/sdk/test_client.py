@@ -475,3 +475,63 @@ async def test_search_about_param_sent_in_body(client, engine):
     )
     assert len(results.results) == 1
     assert results.results[0].content == "在 Google 工作"
+
+
+@pytest.mark.asyncio
+async def test_search_depth_param_returns_path_and_depth(client, engine):
+    """SDK search(depth=...) returns multihop provenance (B4, #33).
+
+    about/depth params are forwarded to the REST body; multihop results
+    carry ``depth`` and ``path`` through the REST JSON into the SDK
+    model — seeds stay depth 0 with an empty path.
+    """
+    from emerald.core.mentions import Mention
+
+    mid_google = await engine.graph.create_memory(
+        "在 Google 工作", entity_id="user_1",
+    )
+    mid_guge = await engine.graph.create_memory(
+        "在谷歌工作", entity_id="user_1",
+    )
+    mid_both = await engine.graph.create_memory(
+        "用 Python 写后端，同时在 Google 工作", entity_id="user_1",
+    )
+    mid_python = await engine.graph.create_memory(
+        "用 Python 写数据管线", entity_id="user_1",
+    )
+    for mid, surface in (
+        (mid_google, "Google"),
+        (mid_guge, "谷歌"),
+        (mid_python, "Python"),
+    ):
+        await engine.graph.attach_mentions(
+            mid,
+            "user_1",
+            [Mention(surface, "Google" if surface != "Python" else "Python",
+                     "organization" if surface != "Python" else "technology", 0.9)],
+        )
+    await engine.graph.attach_mentions(
+        mid_both,
+        "user_1",
+        [
+            Mention("Python", "Python", "technology", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+
+    results = await client.search(
+        "Google", entity_id="user_1", about="Google", depth=1,
+    )
+    by_id = {r.id: r for r in results.results}
+    assert {mid_google, mid_guge, mid_both, mid_python} <= set(by_id)
+    # Seeds carry zero depth and an empty path.
+    for seed_id in (mid_google, mid_guge, mid_both):
+        assert by_id[seed_id].depth == 0
+        assert by_id[seed_id].path == []
+    # The bridged Python-only memory carries hop depth and provenance.
+    bridged = by_id[mid_python]
+    assert bridged.depth == 1
+    kinds = [s.kind for s in bridged.path]
+    assert kinds == ["memory", "mention", "memory"]
+    assert bridged.path[0].id == mid_both
+    assert bridged.path[-1].id == mid_python

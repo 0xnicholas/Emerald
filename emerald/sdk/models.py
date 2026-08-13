@@ -20,6 +20,19 @@ class AddResult:
 
 
 @dataclass
+class SearchPathStep:
+    """One node/edge in a multihop result's provenance path (B4, #33).
+
+    ``kind`` is "memory", "mention", or a relationship type (UPDATES /
+    EXTENDS / DERIVES_FROM); ``id`` is the node id or the far-end memory
+    id of an edge step.
+    """
+
+    kind: str
+    id: str
+
+
+@dataclass
 class SearchResult:
     """A single search hit — either memory or RAG source."""
 
@@ -29,9 +42,15 @@ class SearchResult:
     score: float = 0.0
     source: str = "memory"  # "memory" | "rag"
     memory_type: str = ""
+    container_tag: str | None = None
+    tags: list[str] = field(default_factory=list)
     is_latest: bool = True
     document_id: str | None = None
     document_title: str | None = None
+    # Multihop provenance (B4, #33): seeds are depth 0 with an empty
+    # path; graph-reached results carry hop depth and the full walk.
+    depth: int = 0
+    path: list[SearchPathStep] = field(default_factory=list)
 
 
 @dataclass

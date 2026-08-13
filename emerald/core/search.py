@@ -34,6 +34,21 @@ class SearchMode(str, Enum):
 
 
 @dataclass
+class PathStep:
+    """One node/edge in a multihop result's provenance path (B4, #33).
+
+    ``kind`` is "memory" for a memory node, "mention" for a shared
+    Mention node, or a relationship type (UPDATES / EXTENDS /
+    DERIVES_FROM) for an edge; ``id`` is the node id or, for an edge
+    step, the id of the memory at the edge's far end. Paths contain only
+    in-entity nodes (spec #29: 路径仅含实体内节点).
+    """
+
+    kind: str
+    id: str
+
+
+@dataclass
 class SearchResult:
     id: str
     content: str
@@ -46,6 +61,11 @@ class SearchResult:
     is_latest: bool = True
     document_id: str | None = None
     document_title: str | None = None
+    # Multihop provenance (B4, #33): seeds are depth 0 with an empty
+    # path; graph-reached results carry their hop depth and the full
+    # walk from the seed.
+    depth: int = 0
+    path: list[PathStep] = field(default_factory=list)
 
 
 @dataclass
@@ -266,12 +286,19 @@ class SearchOrchestrator:
 
     @staticmethod
     def _memory_to_result(
-        memory: dict[str, Any], score: float, source: str = "memory",
+        memory: dict[str, Any],
+        score: float,
+        source: str = "memory",
+        *,
+        depth: int = 0,
+        path: list[PathStep] | None = None,
     ) -> SearchResult:
         """Build a memory SearchResult from a graph memory dict.
 
         Shared by every graph-seeded memory path (vector, about, graph
         expansion) so the result shape cannot drift between them.
+        ``depth``/``path`` carry multihop provenance (B4, #33): seeds
+        are depth 0 with an empty path.
         """
         return SearchResult(
             id=memory["id"],
@@ -281,7 +308,10 @@ class SearchOrchestrator:
             source=source,
             memory_type=memory.get("memory_type", "fact"),
             container_tag=memory.get("container_tag"),
+            tags=memory.get("tags") or [],
             is_latest=memory.get("is_latest", True),
+            depth=depth,
+            path=list(path) if path else [],
         )
 
     async def _search_memories_about(
@@ -332,13 +362,15 @@ class SearchOrchestrator:
         entity_id: str,
         depth: int,
     ) -> list[SearchResult]:
-        """Walk the graph from the seed set (B4, #31/#32).
+        """Walk the graph from the seed set (B4, #31/#32/#33).
 
         Each reached memory is added once at its shallowest depth, scored
-        by trust discounted per hop so seeds rank first. Historical nodes
-        (is_latest=false, reached along an UPDATES edge) are surfaced
-        with is_latest=false — the superseded marker (spec #29 story 7).
-        Path provenance and depth fields on results land in #33.
+        by trust discounted per hop so seeds rank first. Every reached
+        result carries ``depth`` (its hop count) and ``path`` (the full
+        walk from the seed: memory nodes, shared Mention nodes and
+        relationship edges) — provenance an agent can explain. Historical
+        nodes (is_latest=false, reached along an UPDATES edge) are
+        surfaced with is_latest=false (spec #29 story 7).
         """
         engine = MultihopEngine(graph=self.graph)
         hops = await engine.expand(
@@ -366,6 +398,11 @@ class SearchOrchestrator:
                     memory,
                     compute_trust_score(memory) * (0.85**hop.depth),
                     source="memory_expanded",
+                    depth=hop.depth,
+                    path=[
+                        PathStep(kind=kind, id=step_id)
+                        for kind, step_id in hop.path
+                    ],
                 )
             )
         return expanded
@@ -534,7 +571,10 @@ class SearchOrchestrator:
 
         For each result, navigates EXTENDS and DERIVES_FROM relationships
         (both directions, depth=1) and adds related memories as expansion
-        candidates with slightly discounted scores (default 0.85×).
+        candidates with slightly discounted scores (default 0.85×). Each
+        expanded result carries ``depth=1`` and an honest one-edge path
+        (B4, #33) so it is never mistaken for a seed. The expansion is
+        entity-scoped: neighbors in another entity's pool are skipped.
 
         This turns a flat vector search into a graph-aware retrieval:
         - EXTENDS: includes complementary facts that enrich context
@@ -545,18 +585,18 @@ class SearchOrchestrator:
             return results
 
         result_ids = [r.id for r in results]
-        related = await self.graph.get_related_memories(
-            result_ids, rel_types=["EXTENDS", "DERIVES_FROM"]
+        neighbors = await self.graph.get_relationship_neighbors(
+            result_ids, rel_types=["EXTENDS", "DERIVES_FROM"],
         )
 
-        if not related:
+        if not neighbors:
             return results
 
         expanded: list[SearchResult] = list(results)
         seen_ids = {r.id for r in results}
         added = 0
 
-        for src_id, related_ids in related.items():
+        for src_id, adjacent in neighbors.items():
             # Find the original score for this source result
             src_score = 0.5
             for r in results:
@@ -564,27 +604,32 @@ class SearchOrchestrator:
                     src_score = r.score
                     break
 
-            for rid in related_ids:
+            for neighbor in adjacent:
+                rid = neighbor["id"]
                 if rid in seen_ids:
+                    continue
+                # Entity isolation at the seam; history is never reached
+                # proactively (spec #29 story 7).
+                if neighbor.get("entity_id") != entity_id:
+                    continue
+                if not neighbor.get("is_latest", True):
                     continue
                 memory = await self.graph.get_memory(rid)
                 if not memory:
-                    continue
-                if not memory.get("is_latest", True):
                     continue
 
                 trust = compute_trust_score(memory)
                 seen_ids.add(rid)
                 expanded.append(
-                    SearchResult(
-                        id=rid,
-                        content=memory["content"],
-                        summary=memory.get("summary", "")[:200],
-                        score=src_score * expansion_factor * trust,
+                    self._memory_to_result(
+                        memory,
+                        src_score * expansion_factor * trust,
                         source="memory_expanded",
-                        memory_type=memory.get("memory_type", "fact"),
-                        container_tag=memory.get("container_tag"),
-                        tags=memory.get("tags") or [],
+                        depth=1,
+                        path=[
+                            PathStep(kind="memory", id=src_id),
+                            PathStep(kind=neighbor["rel_type"], id=rid),
+                        ],
                     )
                 )
                 added += 1
@@ -709,8 +754,13 @@ class SearchOrchestrator:
         seen_contents: dict[str, str] = {}  # content key → source
         merged: list[SearchResult] = []
 
-        # Sort by score desc
-        results.sort(key=lambda r: r.score, reverse=True)
+        # Sort by score desc; depth asc breaks ties. Ranking is
+        # score-dominant: multihop results are discounted by 0.85^hop
+        # depth (so a same-trust seed always outranks them), and on an
+        # exact score tie a shallower (seed) result wins — graph-reached
+        # results never rank above a same-scoring seed (B4, #33: 种子
+        # 向量命中在前).
+        results.sort(key=lambda r: (-r.score, r.depth))
 
         # Avoid over-truncating tiny result sets (common with mock/deterministic
         # embedders in tests). Require a small floor of results before a score-gap

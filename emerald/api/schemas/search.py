@@ -33,6 +33,18 @@ class SearchRequest(BaseModel):
     )
 
 
+class SearchPathStep(BaseModel):
+    """One node/edge in a multihop result's provenance path (B4, #33)."""
+
+    kind: str = Field(
+        examples=["memory", "mention", "DERIVES_FROM"],
+        description="'memory' = memory node, 'mention' = shared Mention "
+        "node, or a relationship type (UPDATES / EXTENDS / DERIVES_FROM) "
+        "for an edge step.",
+    )
+    id: str = Field(description="Node id, or the far-end memory id of an edge step.")
+
+
 class SearchResultItem(BaseModel):
     id: str
     content: str
@@ -46,6 +58,18 @@ class SearchResultItem(BaseModel):
     document_id: str | None = None
     document_title: str | None = None
     created_at: str | None = None
+    depth: int = Field(
+        default=0,
+        ge=0,
+        description="Graph traversal hop count (B4): 0 for seeds, >=1 for "
+        "multihop results reached by the walk.",
+    )
+    path: list[SearchPathStep] = Field(
+        default_factory=list,
+        description="Provenance walk from the seed (B4, #33): memory nodes, "
+        "shared Mention nodes and relationship edges. Empty for seeds; "
+        "contains only in-entity nodes.",
+    )
 
 
 class SearchResponse(BaseModel):

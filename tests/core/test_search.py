@@ -4,7 +4,12 @@ import pytest
 
 from emerald.core.embedder import MockEmbeddingProvider
 from emerald.core.graph import GraphStore
-from emerald.core.search import SearchMode, SearchOrchestrator, SearchResult
+from emerald.core.search import (
+    PathStep,
+    SearchMode,
+    SearchOrchestrator,
+    SearchResult,
+)
 from emerald.core.vector import VectorStore
 
 
@@ -578,6 +583,33 @@ async def test_expand_deduplicates_and_scores():
 
 
 @pytest.mark.asyncio
+async def test_legacy_relationship_expansion_carries_provenance(graph, vector, embedder):
+    """The depth-1 EXTENDS/DERIVES expansion is annotated, never a seed (B4, #33)."""
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "legacy_prov_test"
+    mid_base = await graph.create_memory("基础事实", entity_id=entity)
+    mid_ext = await graph.create_memory("扩展详情", entity_id=entity)
+    await graph.create_relationship(mid_ext, mid_base, "EXTENDS")
+    # A cross-entity edge must not leak into the expansion (spec #29 story 6).
+    mid_other = await graph.create_memory("别人家的事实", entity_id="other")
+    await graph.create_relationship(mid_other, mid_base, "EXTENDS")
+
+    results = [
+        SearchResult(id=mid_base, content="基础事实", score=0.9, source="memory"),
+    ]
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+    by_id = {r.id: r for r in expanded}
+
+    assert by_id[mid_base].depth == 0 and by_id[mid_base].path == []
+    assert by_id[mid_ext].depth == 1
+    assert by_id[mid_ext].path == [
+        PathStep(kind="memory", id=mid_base),
+        PathStep(kind="EXTENDS", id=mid_ext),
+    ]
+    assert mid_other not in by_id
+
+
+@pytest.mark.asyncio
 async def test_expand_no_relationships_no_change():
     """When no relationships exist, results are unchanged."""
     graph = GraphStore(use_db=False)
@@ -970,3 +1002,102 @@ async def test_search_vector_seed_historical_survives_truncation(
     by_id = {r.id: r for r in results.results}
     assert mid_old in by_id
     assert by_id[mid_old].is_latest is False  # surfaced + marked historical
+
+
+# ---- Path transparency + ranking (B4, ticket #33) ----
+
+
+@pytest.mark.asyncio
+async def test_seeds_carry_zero_depth_and_empty_path(populated, graph):
+    """Vector/about seeds are depth 0 with an empty path (status quo)."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="alice")
+    await graph.attach_mentions(
+        mid, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=0,
+    )
+    assert len(results.results) == 1
+    assert results.results[0].depth == 0
+    assert results.results[0].path == []
+
+
+@pytest.mark.asyncio
+async def test_bridged_result_carries_path_and_depth(populated, graph):
+    """A mention-bridged result carries its full path and hop depth."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=1,
+    )
+    by_id = {r.id: r for r in results.results}
+    # Seeds: depth 0, no path.
+    for seed_id in (m_google, m_guge, m_both):
+        assert by_id[seed_id].depth == 0
+        assert by_id[seed_id].path == []
+    # Bridged via the shared Python mention: one hop, full provenance.
+    python = by_id[m_python]
+    assert python.depth == 1
+    assert [s.kind for s in python.path] == ["memory", "mention", "memory"]
+    assert python.path[0].id == m_both
+    assert python.path[-1].id == m_python
+
+
+@pytest.mark.asyncio
+async def test_derived_chain_result_carries_relationship_path(populated, graph):
+    """A depth-2 derived fact carries its DERIVES_FROM chain provenance."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=2,
+    )
+    by_id = {r.id: r for r in results.results}
+    assert by_id[mid_d1].depth == 1
+    assert by_id[mid_d1].path == [
+        PathStep(kind="memory", id=mid_a2),
+        PathStep(kind="DERIVES_FROM", id=mid_d1),
+    ]
+    assert by_id[mid_d2].depth == 2
+    assert by_id[mid_d2].path == [
+        PathStep(kind="memory", id=mid_a2),
+        PathStep(kind="DERIVES_FROM", id=mid_d1),
+        PathStep(kind="DERIVES_FROM", id=mid_d2),
+    ]
+    # The historical node: surfaced along UPDATES with provenance.
+    assert by_id[mid_a].depth == 1
+    assert by_id[mid_a].path == [
+        PathStep(kind="memory", id=mid_a2),
+        PathStep(kind="UPDATES", id=mid_a),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ranking_seeds_first_then_by_depth(populated, graph):
+    """Seeds rank strictly before multihop results; depth 1 before depth 2."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=2,
+    )
+    by_id = {r.id: r for r in results.results}
+    # about="Foo" seeds exactly A2 (A is historical, not an about seed).
+    assert by_id[mid_a2].depth == 0
+    depths = [r.depth for r in results.results]
+    # The seed ranks first; every multihop result is annotated with its
+    # hop depth (spec #33: 种子向量命中在前，多跳结果标注来源跳数).
+    assert depths[0] == 0
+    assert all(d >= 1 for d in depths[1:])
+    assert depths.count(1) == 2  # D1 and A (historical)
+    assert depths.count(2) == 1  # D2
+    # The historical node scores 0 (superseded → trust 0) and ranks last
+    # even though its hop depth is lower than D2's.
+    assert results.results[-1].id == mid_a
+    assert results.results[-1].is_latest is False
+
