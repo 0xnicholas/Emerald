@@ -93,6 +93,8 @@ export interface SearchOptions {
   dynamic_truncation?: boolean;
   /** Entity-centric retrieval (B4): mention canonical form or id. */
   about?: string;
+  /** Graph traversal hops over shared-subject mention bridges (B4, 0-4). */
+  depth?: number;
 }
 
 /** Options for client.upload() */

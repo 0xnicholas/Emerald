@@ -321,6 +321,7 @@ class EmeraldClient:
         min_confidence: float | None = None,
         dynamic_truncation: bool = True,
         about: str | None = None,
+        depth: int = 0,
     ) -> SearchResults:
         """Hybrid search across memory (graph) and RAG (vector).
 
@@ -337,6 +338,9 @@ class EmeraldClient:
             about: Entity-centric retrieval (B4): a mention canonical form
                 or mention id — returns the entity's memories mentioning it
                 across all surface forms. Skips RAG and fast-lane paths.
+            depth: Graph traversal hops over shared-subject mention bridges
+                (B4). 0 = status quo; >=1 walks
+                Memory-MENTIONS->Mention<-MENTIONS-Memory.
 
         Returns:
             SearchResults with scored, deduplicated hits.
@@ -356,6 +360,8 @@ class EmeraldClient:
             body["min_confidence"] = min_confidence
         if about is not None:
             body["about"] = about
+        if depth:
+            body["depth"] = depth
 
         response = await self._request("POST", f"/{self.api_version}/search", json=body)
         data = response.json()["data"]

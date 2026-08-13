@@ -716,3 +716,144 @@ async def test_search_about_returns_memory_source_only(populated, graph):
     )
     assert all(r.source == "memory" for r in results.results)
     assert {r.id for r in results.results} == {mid}
+
+
+# ---- Shared-subject bridging (B4, ticket #31) ----
+
+
+async def _seed_bridge_world(populated, graph):
+    """Four memories: three mention Google (one also Python), one Python-only."""
+    from emerald.core.mentions import Mention
+
+    m_google = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m_guge = await graph.create_memory("在谷歌工作", entity_id="alice")
+    m_both = await graph.create_memory("用 Python 写后端，同时在 Google 工作", entity_id="alice")
+    m_python = await graph.create_memory("用 Python 写数据管线", entity_id="alice")
+    await graph.attach_mentions(
+        m_google, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_guge, "alice", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_both, "alice",
+        [
+            Mention("Python", "Python", "technology", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+    await graph.attach_mentions(
+        m_python, "alice", [Mention("Python", "Python", "technology", 0.9)],
+    )
+    return m_google, m_guge, m_both, m_python
+
+
+@pytest.mark.asyncio
+async def test_search_depth1_bridges_shared_subject(populated, graph):
+    """depth=1 adds memories sharing a mention with a seed (via the bridge)."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=1,
+    )
+    ids = {r.id for r in results.results}
+    assert ids == {m_google, m_guge, m_both, m_python}
+
+
+@pytest.mark.asyncio
+async def test_search_depth0_is_status_quo(populated, graph):
+    """depth=0 (and the default) never bridges: exact mentioning set only."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=0,
+    )
+    assert {r.id for r in results.results} == {m_google, m_guge, m_both}
+    assert m_python not in {r.id for r in results.results}
+
+
+@pytest.mark.asyncio
+async def test_search_default_depth_is_zero(populated, graph):
+    """The default depth preserves today's search semantics."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google",
+    )
+    assert m_python not in {r.id for r in results.results}
+
+
+@pytest.mark.asyncio
+async def test_search_bridging_is_entity_scoped(populated, graph):
+    """Bridged results never cross the entity's context pool."""
+    from emerald.core.mentions import Mention
+
+    m_google = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m_both = await graph.create_memory("用 Python 写后端，同时在 Google 工作", entity_id="alice")
+    m_bob_python = await graph.create_memory("用 Python 写代码", entity_id="bob")
+    await graph.attach_mentions(
+        m_google, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_both, "alice",
+        [
+            Mention("Python", "Python", "technology", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+    await graph.attach_mentions(
+        m_bob_python, "bob", [Mention("Python", "Python", "technology", 0.9)],
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=2,
+    )
+    ids = {r.id for r in results.results}
+    assert m_bob_python not in ids
+
+
+@pytest.mark.asyncio
+async def test_search_depth_bridges_from_vector_seed(populated, graph, vector, embedder):
+    """depth>0 bridges also when the seed comes from vector search (not about).
+
+    The bridged sibling is deliberately NOT stored in the vector store, so
+    the bridge is its only way into the result set (the hash-based mock
+    gives arbitrary near-zero scores otherwise).
+    """
+    from emerald.core.mentions import Mention
+
+    keyword_embedder = _KeywordEmbeddingProvider("Google")
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=keyword_embedder,
+    )
+
+    m_google = await graph.create_memory("Alice 在 Google 工作", entity_id="alice")
+    m_guge = await graph.create_memory("Alice 在谷歌工作", entity_id="alice")
+    emb = (await keyword_embedder.embed(["Alice 在 Google 工作"]))[0]
+    await vector.store(m_google, "Alice 在 Google 工作", emb, entity_id="alice")
+    await graph.attach_mentions(
+        m_google, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_guge, "alice", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+
+    # Baseline (depth=0): only the vector-hit memory — the sibling is not
+    # in the vector store at all.
+    baseline = await orchestrator.search(
+        "Alice 在 Google 工作", entity_id="alice", search_mode=SearchMode.MEMORY,
+    )
+    baseline_ids = {r.id for r in baseline.results}
+    assert m_google in baseline_ids
+    assert m_guge not in baseline_ids
+
+    # depth=1: the different-surface sibling arrives via the mention bridge.
+    results = await orchestrator.search(
+        "Alice 在 Google 工作", entity_id="alice", search_mode=SearchMode.MEMORY,
+        depth=1,
+    )
+    assert {r.id for r in results.results} == {m_google, m_guge}

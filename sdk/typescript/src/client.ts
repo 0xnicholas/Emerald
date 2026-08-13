@@ -234,6 +234,7 @@ export class EmeraldClient {
     if (opts.filters) body.filters = opts.filters;
     if (opts.min_confidence !== undefined) body.min_confidence = opts.min_confidence;
     if (opts.about !== undefined) body.about = opts.about;
+    if (opts.depth !== undefined) body.depth = opts.depth;
 
     const resp = (await this._request("POST", `/${this.apiVersion}/search`, { body })) as {
       data: Record<string, unknown>;

@@ -21,6 +21,13 @@ class SearchRequest(BaseModel):
         "or mention id — returns the entity's memories mentioning it "
         "across all surface forms. Skips RAG and fast-lane paths.",
     )
+    depth: int = Field(
+        default=0,
+        ge=0,
+        le=4,  # must match MAX_DEPTH (emerald/core/multihop.py)
+        description="Graph traversal hops over shared-subject mention bridges "
+        "(B4). 0 = status quo; >=1 walks Memory-MENTIONS->Mention<-MENTIONS-Memory.",
+    )
 
 
 class SearchResultItem(BaseModel):

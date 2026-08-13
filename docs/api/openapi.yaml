@@ -292,6 +292,15 @@ paths:
           - type: string
           - type: 'null'
           title: About
+      - name: depth
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 4
+          minimum: 0
+          default: 0
+          title: Depth
       responses:
         '200':
           description: Successful Response
@@ -1680,6 +1689,14 @@ components:
           title: About
           description: 'Entity-centric retrieval (B4): a mention canonical form or mention id — returns
             the entity''s memories mentioning it across all surface forms. Skips RAG and fast-lane paths.'
+        depth:
+          type: integer
+          maximum: 4.0
+          minimum: 0.0
+          title: Depth
+          description: Graph traversal hops over shared-subject mention bridges (B4). 0 = status quo;
+            >=1 walks Memory-MENTIONS->Mention<-MENTIONS-Memory.
+          default: 0
       type: object
       required:
       - entity_id

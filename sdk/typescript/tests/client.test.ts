@@ -95,10 +95,11 @@ describe("search()", () => {
       ),
     );
     const client = new EmeraldClient({ apiKey: "em_test", baseUrl: "http://test", fetch: mockFetch as unknown as typeof fetch });
-    await client.search("", "user_1", { about: "Google" });
+    await client.search("", "user_1", { about: "Google", depth: 2 });
     const call = mockFetch.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(call[1].body as string);
     expect(body.about).toBe("Google");
+    expect(body.depth).toBe(2);
   });
 });
 

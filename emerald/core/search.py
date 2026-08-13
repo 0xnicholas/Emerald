@@ -19,6 +19,7 @@ from emerald.core.embedder import EmbeddingProvider
 from emerald.core.fast_lane import FastLaneStore
 from emerald.core.graph import GraphStore
 from emerald.core.metrics import search_latency_seconds, timed
+from emerald.core.multihop import MAX_DEPTH, MultihopEngine
 from emerald.core.tracing import get_tracer
 from emerald.core.trust import compute_trust_score
 from emerald.core.vector import VectorStore
@@ -84,6 +85,7 @@ class SearchOrchestrator:
         min_confidence: float | None = None,
         dynamic_truncation: bool = True,
         about: str | None = None,
+        depth: int = 0,
     ) -> SearchResponse:
         """Execute a hybrid search query.
 
@@ -96,7 +98,13 @@ class SearchOrchestrator:
         returned), and the result set is exactly the mentioning memories
         (no relationship expansion in this ticket; traversal lands in
         #31/#32).
+
+        ``depth`` (B4, #31): graph-traversal hops over shared-subject
+        bridges applied to the memory seed set. 0 (default) is the status
+        quo; >=1 walks Memory-MENTIONS->Mention<-MENTIONS-Memory within
+        the entity. Clamped to [0, 4] (spec #29).
         """
+        depth = max(0, min(depth, MAX_DEPTH))
         settings = get_settings()
         resolved_top_k = min(
             top_k if top_k is not None else settings.search_default_top_k,
@@ -129,6 +137,7 @@ class SearchOrchestrator:
             results: list[SearchResult] = []
 
             # Memory search
+            memory_results: list[SearchResult] = []
             if about is not None:
                 # Entity-centric retrieval (B4, #30): the mention seed set
                 # replaces vector/keyword seeding. RAG and fast-lane are
@@ -136,7 +145,6 @@ class SearchOrchestrator:
                 memory_results = await self._search_memories_about(
                     about, entity_id, resolved_top_k, filters, min_confidence
                 )
-                results.extend(memory_results)
             elif search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
                 memory_results = await self._search_memory(
                     rewritten_q, entity_id, resolved_top_k, filters, min_confidence
@@ -147,7 +155,14 @@ class SearchOrchestrator:
                     memory_results, entity_id, resolved_top_k
                 )
 
-                results.extend(memory_results)
+            # Shared-subject bridging (B4, #31): explicit depth opt-in
+            # walks the mention graph from the memory seed set.
+            if depth > 0 and memory_results:
+                memory_results = await self._expand_multihop(
+                    memory_results, entity_id, depth
+                )
+
+            results.extend(memory_results)
 
             # RAG search
             if about is None and search_mode in (SearchMode.HYBRID, SearchMode.RAG):
@@ -247,18 +262,20 @@ class SearchOrchestrator:
         return results[:top_k]
 
     @staticmethod
-    def _memory_to_result(memory: dict[str, Any], score: float) -> SearchResult:
+    def _memory_to_result(
+        memory: dict[str, Any], score: float, source: str = "memory",
+    ) -> SearchResult:
         """Build a memory SearchResult from a graph memory dict.
 
-        Shared by every graph-seeded memory path (vector, about) so the
-        result shape cannot drift between them.
+        Shared by every graph-seeded memory path (vector, about, graph
+        expansion) so the result shape cannot drift between them.
         """
         return SearchResult(
             id=memory["id"],
             content=memory["content"],
             summary=memory.get("summary", "")[:200],
             score=score,
-            source="memory",
+            source=source,
             memory_type=memory.get("memory_type", "fact"),
             container_tag=memory.get("container_tag"),
             is_latest=memory.get("is_latest", True),
@@ -305,6 +322,43 @@ class SearchOrchestrator:
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:top_k]
+
+    async def _expand_multihop(
+        self,
+        results: list[SearchResult],
+        entity_id: str,
+        depth: int,
+    ) -> list[SearchResult]:
+        """Bridge shared-subject memories from the seed set (B4, #31).
+
+        Each bridged memory is added once at its shallowest depth, scored
+        by trust discounted per hop so seeds rank first. Path provenance
+        and depth fields on results land in #33.
+        """
+        engine = MultihopEngine(graph=self.graph)
+        hops = await engine.expand(
+            [r.id for r in results], entity_id, depth,
+        )
+        if not hops:
+            return results
+
+        seen_ids = {r.id for r in results}
+        expanded: list[SearchResult] = list(results)
+        for bridged_id, hop in hops.items():
+            if bridged_id in seen_ids:
+                continue
+            memory = await self.graph.get_memory(bridged_id)
+            if not memory or not memory.get("is_latest", True):
+                continue
+            seen_ids.add(bridged_id)
+            expanded.append(
+                self._memory_to_result(
+                    memory,
+                    compute_trust_score(memory) * (0.85**hop.depth),
+                    source="memory_expanded",
+                )
+            )
+        return expanded
 
     async def _search_memory_keyword(
         self,

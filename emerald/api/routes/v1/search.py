@@ -71,6 +71,7 @@ async def search(
         min_confidence=body.min_confidence,
         dynamic_truncation=body.dynamic_truncation,
         about=body.about,
+        depth=body.depth,
     )
 
     result_items = results.results
@@ -117,6 +118,7 @@ async def search_get(
     min_confidence: float | None = Query(None, ge=0.0, le=1.0),
     dynamic_truncation: bool = Query(True),
     about: str | None = Query(None),
+    depth: int = Query(0, ge=0, le=4),
     request: Request = None,  # type: ignore
 ) -> dict:
     """GET variant of search."""
@@ -135,6 +137,7 @@ async def search_get(
         min_confidence=min_confidence,
         dynamic_truncation=dynamic_truncation,
         about=about,
+        depth=depth,
     )
 
     return {
