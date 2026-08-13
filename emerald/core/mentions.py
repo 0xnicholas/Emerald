@@ -6,10 +6,10 @@ are extracted during ingestion — by the LLM fact-extraction path (per-fact)
 or by the deterministic rule path (gazetteer) — and stored in the knowledge
 graph as Mention nodes linked to memories via MENTIONS edges.
 
-Terminology (spec #21, pending /domain-modeling in CONTEXT.md):
+Terminology (spec #21, landed in CONTEXT.md and ADR-0005):
 - **Entity** = the namespace a memory belongs to (e.g. a user).
 - **Mention** = a named thing a memory talks about, resolved within exactly
-  one Entity's context pool. Never shared across entities.
+  one Entity's context pool. Never shared across entities (ADR-0002).
 
 Ticket scope (#22/#23/#24, B3 T1-T3): the happy path, cross-memory
 resolution — different surface forms of the same thing resolve to one
