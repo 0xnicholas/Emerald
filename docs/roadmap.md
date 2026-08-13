@@ -13,6 +13,8 @@
 > **⚠️ 2026-08-10 M2 范围决策落地**：经 Wayfinder Map（issue #8）全票决议，M2 范围细化为「测试卫生 → 质量套件 → 绝对分报告 → 安全审计」并逐项锁定通过标准（§四 M2）；SLA 性能验证整体延后，不再属于 v0.5.0。
 >
 > **⚠️ 2026-08-11 v0.6.0 发布（连接器退役维护版本）**：自研连接器退役（ADR-0004 契约阶段，issue #7）为破坏性变更（移除 `/v1/connectors/*` 路由、`Connector` 模型、`cryptography` 依赖），按 SemVer 不作 patch，以 **v0.6.0** 作为独立维护版本发布（M2 完成后、M3 启动前）。后续里程碑顺延一位：**M3 生态爆发 → v0.7.0、M4 智能深度 → v0.8.0、M5 生产就绪 Beta → v0.9.0**；§10.1 版本语义表的阶段锚点相应后移（能力构建期延至 v0.8、Beta → v0.9、RC → v0.10）。
+>
+> **⚠️ 2026-08-13 M3 精简（生态链缩减到一个集成）**：经评估，M3 生态广度链从 C2+C3+C4 三个 JS 框架**缩减到只做 C2 LangChain.js**（最大用户基数 + 成熟 memory store 抽象，最契合「AI Agent 记忆基础设施」定位；作为唯一集成最直接缓解 R6——零用户时的生态投资赌注）。C3 Vercel AI SDK、C4 Mastra 延后至有用户信号再启动；C6 教程/示例收窄为围绕 LangChain.js 的 1-2 个 demo。B3 NER + B4 多跳推理保留（图谱深度核心差异化）。M3 工作量 ~14 → ~9-10 人周。
 
 ---
 
@@ -81,7 +83,7 @@
 | ✅ | Dockerfile production stage 独立 `pip install` | M1 已完成 | comparison-supermemory §10 P0 |
 | ⚪ | v2 API 实质改进 | **方向调整**：v2 路由已下线并合并回 v1，错误码 / 分页 / 限流头 / OpenAPI 自动化在 v1 上落地 | comparison-supermemory §10 P1 |
 | ✅ | TypeScript SDK v1 | M2 已完成（`sdk/typescript/`，对齐 Python SDK） | comparison-supermemory §10 P1 |
-| 🟡 | 框架集成生态空白（仅 Pandaria） | LangChain.js / Vercel AI / Mastra 仍在 M3 计划中 | comparison-supermemory §10 P1 |
+| 🟡 | 框架集成生态空白（仅 Pandaria） | 精简后仅 LangChain.js 进 M3（v0.7.0）；Vercel AI / Mastra 延后至有用户信号 | comparison-supermemory §10 P1 |
 | ⚪ | 真实基准策略 | **方向调整**：不追字面 LongMemEval/LoCoMo/ConvoMem 跑分（agent+memory 端到端基准，无法归因 memory 层）；改为合成对抗场景 + 真实嵌入绝对分 + 独立侧套件（ADR-0001） | comparison-supermemory §10 P0 |
 | ✅ | Cross-encoder 重排序 | M2 已完成：三级降级链 | production-readiness §5 |
 | 🟡 | NER 实体抽取层未实现 | M3 计划中 | comparison-supermemory §10 P2 |
@@ -136,12 +138,12 @@
 |---|---|---|---|
 | **C1.** TypeScript SDK v1（对齐 Python SDK 方法集） | 2-3 周 | A3 | C2, C3 |
 | **C2.** LangChain.js 集成（`EmeraldMemoryStore` 类） | 2 周 | C1 | — |
-| **C3.** Vercel AI SDK 集成 | 1 周 | C1 | — |
-| **C4.** Mastra 集成（AI Agent 框架） | 1-2 周 | C1 | — |
+| ~~**C3.** Vercel AI SDK 集成~~（精简 M3 延后，待用户信号） | 1 周 | C1 | — |
+| ~~**C4.** Mastra 集成（AI Agent 框架）~~（精简 M3 延后，待用户信号） | 1-2 周 | C1 | — |
 | **C5.** Java SDK v1（**按需启动**：见"开放决策"） | 2-3 周 | A3 | — |
-| **C6.** 教程与示例库（5 个端到端 demo：个人助理、客服、研究助手等） | 2 周 | C2, C3 | A5 |
+| **C6.** 教程与示例库（围绕 LangChain.js 的 1-2 个 demo） | ~1 周 | C2 | A5 |
 
-**主题 C 总计**：~10-13 人周（C5 按需）
+**主题 C 总计**：~3-4 人周进 M3（C1 ✅ 已完成；精简后仅 C2 + C6 收窄；C3/C4/C5 延后）
 
 ### 主题 D：质量验证（Quality Verification）
 
@@ -163,9 +165,9 @@
 |---|---|---|
 | A 生产加固 | ~7-8 人周 | 必须（GA 前置） |
 | B 竞争壁垒 | ~13 人周 | 核心差异化 |
-| C 生态扩展 | ~10-13 人周 | 增长引擎 |
+| C 生态扩展 | ~3-4 人周（C1 ✅；精简后仅 C2+C6 进 M3） | 增长引擎 |
 | D 质量验证 | ~6 人周 | 可信度建立 |
-| **总计** | **~36-40 人周** | — |
+| **总计** | **~29-31 人周** | — |
 
 按团队规模估算：
 - 1 名工程师（顺序执行）：~9-10 个月
@@ -200,7 +202,7 @@ M2 ─┤              ├─→ M3 ─────────────┘
                                        │
                           ┌─ B3 NER ───┐
               M3 ─────────┼─ B4 多跳 ──┼─→ M4
-                          ├─ C2-C4 集成 ┤
+                          ├─ C2 集成 ───┤
                           ├─ C5 Java SDK ┤ (按需)
                           └─ A5 文档 ───┘
                                        │
@@ -272,24 +274,22 @@ M2 ─┤              ├─→ M3 ─────────────┘
 
 **前置依赖**：M2 完成
 
-**包含工作项**：B3 + B4 + C2 + C3 + C4 + C5（如启动）+ A5 + C6
+**包含工作项**：B3 + B4 + C2 + A5 + C6（收窄）。_精简决策（2026-08-13）：C3 Vercel AI SDK、C4 Mastra、C5 Java SDK 延后至有用户信号（R6）。_
 
 **可发布物**：
 - NER 实体抽取层
 - 多跳图谱推理（depth ≥ 2）
-- LangChain.js、Vercel AI SDK、Mastra 集成
-- Java SDK v1（如启动）
-- API 文档 overhaul + 教程与示例库
+- LangChain.js 集成（`@emerald/langchain`，`EmeraldMemoryStore`）
+- API 文档 overhaul + 围绕 LangChain.js 的 1-2 个端到端 demo
 
 **版本号**：v0.7.0
 
-**工作量**：~14 人周
+**工作量**：~9-10 人周（精简自 ~14，砍掉 C3/C4/C5）
 
 **成功标准**：
 - ✅ LangChain.js 集成可用（`npm install @emerald/langchain`）
-- ✅ Vercel AI SDK 示例 demo 可运行
 - ✅ 多跳推理在基准中可观测的提升
-- ✅ 至少 5 个端到端 demo 可复现
+- ✅ 围绕 LangChain.js 的 1-2 个端到端 demo 可复现
 
 ---
 
@@ -342,7 +342,7 @@ M2 ─┤              ├─→ M3 ─────────────┘
 **关于 v0.9.0 而不是 v1.0.0 的理由**：
 v1.0.0 在语义化版本中代表**强 API 稳定性承诺**（承诺 12 个月向后兼容）。在 Emerald 当前阶段做出此承诺为时过早：
 1. 尚无外部生产用户验证 API 设计的合理性
-2. 生态集成（LangChain.js、Vercel AI SDK、Mastra）尚在 M3 才完成，未经过真实使用
+2. 生态集成（精简后仅 LangChain.js）尚在 M3 才完成，未经过真实使用
 3. 多跳推理、NER 等深度能力首次大规模暴露，可能发现需要重构的接口
 v0.9.0 表达"建议生产部署，但 API 仍可能演进"的语义，更准确反映项目实际成熟度。
 
@@ -364,7 +364,7 @@ B2 (LLM-first rel) → B3 (NER) → B4 (多跳推理)
 
 ```
 A4 (分布式追踪) ↔ B0 (真实基准)   # 都无前置依赖
-C2 (LangChain.js) ↔ C3 (Vercel AI) ↔ C4 (Mastra)   # 都只依赖 C1
+C2 (LangChain.js)   # 只依赖 C1；C3/C4 精简 M3 延后（见 2026-08-13 决策）
 D2 (负载测试) ↔ D4 (soak test)    # 可在不同环境并行
 ```
 
@@ -383,10 +383,10 @@ B6 (实时整合) ← 技术验证：图谱压缩算法是否对真实工作负�
 |---|---|---|---|---|
 | **R1** | DeepSeek/OpenAI API 政策变化（限流、价格、模型下线） | 中 | 高 | fastembed 本地嵌入作为长期降级路径；多 LLM 提供商支持 |
 | **R2** | Supermemory 发布 v5 新能力，重新拉开差距 | 中 | 中 | 保持核心引擎简洁；快速跟进但不盲目复制 |
-| **R3** | LangChain.js/Vercel AI SDK 重大重构，集成失效 | 中 | 中 | 集成层抽象接口，与上游版本解耦 |
+| **R3** | LangChain.js 重大重构，集成失效 | 中 | 中 | 集成层抽象接口，与上游版本解耦（精简后仅 LangChain.js 在范围） |
 | **R4** | Neo4j 大规模图谱性能瓶颈 | 中 | 高 | M4 提前做负载测试验证；准备 PostgreSQL+pgvector 单库降级方案 |
 | **R5** | 关键工程师离职 | 低 | 高 | 文档优先；specs/ 目录完整；核心决策有 ADR 记录 |
-| **R6** | 用户增长慢于预期 → 生态扩展投资回报不足 | 中 | 中 | M3 中段评估里程碑，根据真实采用数据决定是否继续 C2-C4 |
+| **R6** | 用户增长慢于预期 → 生态扩展投资回报不足 | 中 | 中 | 2026-08-13 已将 C3/C4 延后、M3 仅做 C2；按真实采用数据决定是否重启 C3/C4 |
 | **R7** | 安全审计发现 P0 漏洞需紧急修复 | 中 | 高 | 早期启动 A6；建立漏洞响应流程 |
 | **R8** | 跨语言 SDK 维护成本超预期 | 中 | 中 | TS SDK 优先，Java/Go 按需；保持 API 抽象一致 |
 
