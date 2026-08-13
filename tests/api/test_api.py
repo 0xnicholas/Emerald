@@ -1,5 +1,7 @@
 """Tests for Emerald REST API."""
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,6 +11,7 @@ from emerald.core.embedder import MockEmbeddingProvider
 from emerald.core.engine import MemoryEngine
 from emerald.core.extractor import ExtractorRegistry
 from emerald.core.graph import GraphStore
+from emerald.core.mentions import Mention
 from emerald.core.vector import VectorStore
 from emerald.pipeline.chunking.text import TextChunker
 from emerald.pipeline.extraction.text import TextExtractor
@@ -274,3 +277,46 @@ def test_delete_memory(client):
 def test_delete_unknown_memory_returns_404(client):
     response = client.delete("/v1/memories/nonexistent")
     assert response.status_code == 404
+
+
+# ---- Entity-centric retrieval (B4, ticket #30) ----
+
+def test_search_about_returns_mentioning_memories(client):
+    """POST /v1/search with about returns the memories mentioning the thing."""
+    async def _seed():
+        mid = await client.app.state.engine.graph.create_memory(
+            "用户用 Python 写代码", entity_id="user_123",
+        )
+        await client.app.state.engine.graph.attach_mentions(
+            mid, "user_123", [Mention("Python", "Python", "technology", 0.9)],
+        )
+
+    asyncio.run(_seed())
+
+    response = client.post(
+        "/v1/search",
+        json={
+            "q": "关于 Python 的一切",
+            "entity_id": "user_123",
+            "search_mode": "memory",
+            "about": "Python",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["data"]["results"]) == 1
+    assert data["data"]["results"][0]["content"] == "用户用 Python 写代码"
+
+
+def test_search_about_unknown_returns_empty(client):
+    response = client.post(
+        "/v1/search",
+        json={
+            "q": "关于不存在的东西",
+            "entity_id": "user_123",
+            "search_mode": "memory",
+            "about": "NoSuchThing",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["results"] == []

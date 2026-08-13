@@ -733,3 +733,102 @@ async def test_create_update_relation_keeps_old_and_new_mentions(graph):
 
     # The UPDATES edge itself is recorded on the in-memory fallback.
     assert await graph.get_relationships_to([mid_old]) == {mid_old: [mid_new]}
+
+
+# ---------------------------------------------------------------------------
+# Entity-centric retrieval (B4, ticket #30) — get_memories_mentioning
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_memories_mentioning_resolves_surface_forms(graph):
+    """about=canonical returns every surface form's memory (谷歌/Google/GOOGLE)."""
+    from emerald.core.mentions import Mention
+
+    mids = []
+    for content, surface, canonical in [
+        ("在 Google 工作", "Google", "Google"),
+        ("在谷歌工作", "谷歌", "Google"),
+        ("在 GOOGLE 工作", "GOOGLE", "Google"),
+        ("用 Python 写代码", "Python", "Python"),
+    ]:
+        mid = await graph.create_memory(content, entity_id="e1")
+        await graph.attach_mentions(
+            mid, "e1", [Mention(surface, canonical, "organization", 0.9)],
+        )
+        mids.append(mid)
+
+    memories = await graph.get_memories_mentioning("e1", "Google")
+    assert {m["id"] for m in memories} == set(mids[:3])
+
+
+@pytest.mark.asyncio
+async def test_get_memories_mentioning_excludes_historical(graph):
+    """is_latest=False memories do not surface in plain about retrieval."""
+    from emerald.core.mentions import Mention
+
+    mid_old = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_new = await graph.create_memory("在 Stripe 工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid_old, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_new, "e1", [Mention("Stripe", "Stripe", "organization", 0.9)],
+    )
+    await graph.update_is_latest(mid_old, False, replaced_by=mid_new)
+
+    memories = await graph.get_memories_mentioning("e1", "Google")
+    assert memories == []
+
+
+@pytest.mark.asyncio
+async def test_get_memories_mentioning_entity_scoped(graph):
+    """about retrieval never crosses entity boundaries."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_b = await graph.create_memory("在 Google 工作", entity_id="e2")
+    await graph.attach_mentions(
+        mid_a, "e1", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_b, "e2", [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    memories_a = await graph.get_memories_mentioning("e1", "Google")
+    memories_b = await graph.get_memories_mentioning("e2", "Google")
+    assert [m["id"] for m in memories_a] == [mid_a]
+    assert [m["id"] for m in memories_b] == [mid_b]
+
+
+@pytest.mark.asyncio
+async def test_get_memories_mentioning_unknown_returns_empty(graph):
+    """An unknown canonical form returns an empty list, not an error."""
+    mid = await graph.create_memory("无提及", entity_id="e1")
+    assert await graph.get_memories_mentioning("e1", "Nope") == []
+    assert await graph.get_memories_mentioning("ghost", "Google") == []
+    assert mid
+
+
+@pytest.mark.asyncio
+async def test_get_memories_mentioning_by_node_id_is_type_scoped(graph):
+    """about=node id matches exactly that node (type participates)."""
+    from emerald.core.mentions import Mention
+
+    mid_org = await graph.create_memory("在 Apple 工作", entity_id="e1")
+    mid_tech = await graph.create_memory("用 Apple 设备", entity_id="e1")
+    await graph.attach_mentions(
+        mid_org, "e1", [Mention("Apple", "Apple", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_tech, "e1", [Mention("Apple", "Apple", "technology", 0.9)],
+    )
+    org_node = graph._mentions["e1"][0]
+    assert org_node["type"] == "organization"
+
+    # By canonical form: both types surface (broad "about Apple").
+    by_canonical = await graph.get_memories_mentioning("e1", "Apple")
+    assert {m["id"] for m in by_canonical} == {mid_org, mid_tech}
+    # By node id: exactly that node's memory.
+    by_id = await graph.get_memories_mentioning("e1", org_node["id"])
+    assert [m["id"] for m in by_id] == [mid_org]

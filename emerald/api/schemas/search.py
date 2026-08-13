@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class SearchRequest(BaseModel):
-    q: str = Field(examples=["用户偏好什么编程语言？"])
+    q: str = Field(default="", examples=["用户偏好什么编程语言？"])
     entity_id: str = Field(examples=["user_123"])
     search_mode: str = Field(default="hybrid", examples=["hybrid"])  # hybrid | memory | rag
     top_k: int = Field(default=30, ge=1, le=100)
@@ -15,6 +15,12 @@ class SearchRequest(BaseModel):
     filters: dict | None = None
     min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     dynamic_truncation: bool = Field(default=True)
+    about: str | None = Field(
+        default=None,
+        description="Entity-centric retrieval (B4): a mention canonical form "
+        "or mention id — returns the entity's memories mentioning it "
+        "across all surface forms. Skips RAG and fast-lane paths.",
+    )
 
 
 class SearchResultItem(BaseModel):

@@ -233,9 +233,10 @@ paths:
       parameters:
       - name: q
         in: query
-        required: true
+        required: false
         schema:
           type: string
+          default: ''
           title: Q
       - name: entity_id
         in: query
@@ -283,6 +284,14 @@ paths:
           type: boolean
           default: true
           title: Dynamic Truncation
+      - name: about
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: About
       responses:
         '200':
           description: Successful Response
@@ -1619,6 +1628,7 @@ components:
         q:
           type: string
           title: Q
+          default: ''
           examples:
           - 用户偏好什么编程语言？
         entity_id:
@@ -1663,9 +1673,15 @@ components:
           type: boolean
           title: Dynamic Truncation
           default: true
+        about:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: About
+          description: 'Entity-centric retrieval (B4): a mention canonical form or mention id — returns
+            the entity''s memories mentioning it across all surface forms. Skips RAG and fast-lane paths.'
       type: object
       required:
-      - q
       - entity_id
       title: SearchRequest
     SpaceCreateRequest:

@@ -70,6 +70,7 @@ async def search(
         filters=body.filters,
         min_confidence=body.min_confidence,
         dynamic_truncation=body.dynamic_truncation,
+        about=body.about,
     )
 
     result_items = results.results
@@ -108,13 +109,14 @@ async def search(
 
 @router.get("/search", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def search_get(
-    q: str = Query(...),
+    q: str = Query(""),
     entity_id: str = Query(...),
     search_mode: str = Query("hybrid"),
     top_k: int = Query(30, ge=1, le=100),
     rewrite_query: bool = Query(False),
     min_confidence: float | None = Query(None, ge=0.0, le=1.0),
     dynamic_truncation: bool = Query(True),
+    about: str | None = Query(None),
     request: Request = None,  # type: ignore
 ) -> dict:
     """GET variant of search."""
@@ -132,6 +134,7 @@ async def search_get(
         rewrite_query=rewrite_query,
         min_confidence=min_confidence,
         dynamic_truncation=dynamic_truncation,
+        about=about,
     )
 
     return {

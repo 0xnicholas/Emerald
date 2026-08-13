@@ -1254,6 +1254,73 @@ class GraphStore:
                 return mentions
         return []
 
+    async def get_memories_mentioning(
+        self,
+        entity_id: str,
+        about: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List an entity's latest memories mentioning a named thing (B4, #30).
+
+        ``about`` is a mention canonical form or a Mention node id. The
+        match is entity-scoped and type-independent for canonical forms:
+        every Mention node in the entity whose canonical_form equals
+        ``about`` contributes its referencing memories — surface forms are
+        irrelevant (resolution is the B3 dedup semantics). A node-id match
+        is exact (type participates).
+
+        Historical memories (is_latest=false) are excluded: plain
+        entity-centric retrieval does not reach into history (spec #29:
+        不主动搜历史 — UPDATES chains come in #32). Returns one dict per
+        memory, newest first, empty list when nothing matches.
+        """
+        self._init_driver()
+        if self._use_db and self._driver:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (mn:Mention {entity_id: $entity_id})
+                    WHERE mn.canonical_form = $about OR mn.id = $about
+                    MATCH (mn)<-[:MENTIONS]-(m:Memory)
+                    WHERE m.is_latest = true
+                      AND m.entity_id = $entity_id
+                    RETURN DISTINCT m
+                    ORDER BY m.created_at DESC
+                    LIMIT $limit
+                    """,
+                    entity_id=entity_id,
+                    about=about,
+                    limit=limit,
+                )
+                memories = []
+                async for record in result:
+                    memories.append(dict(record["m"]))
+                return memories
+
+        pool: list[dict[str, Any]] = self._mentions.get(entity_id, [])
+        matching_nodes = {
+            n["id"]
+            for n in pool
+            if n["canonical_form"] == about or n["id"] == about
+        }
+        if not matching_nodes:
+            return []
+        memories = []
+        for m in self._memories.get(entity_id, []):
+            if not m["is_latest"]:
+                continue
+            if any(
+                edge["mention_id"] in matching_nodes
+                for edge in m.get("mentions", [])
+            ):
+                memories.append(m)
+        memories.sort(
+            key=lambda m: m.get("created_at", datetime.min.replace(tzinfo=UTC)),
+            reverse=True,
+        )
+        return memories[:limit]
+
     async def get_entity_mentions(self, entity_id: str) -> list[dict[str, Any]]:
         """Read back an entity's resolved Mention nodes (B3 NER, #25).
 

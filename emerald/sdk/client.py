@@ -310,7 +310,7 @@ class EmeraldClient:
 
     async def search(
         self,
-        q: str,
+        q: str = "",
         *,
         entity_id: str,
         search_mode: str = "hybrid",
@@ -320,6 +320,7 @@ class EmeraldClient:
         filters: dict[str, Any] | None = None,
         min_confidence: float | None = None,
         dynamic_truncation: bool = True,
+        about: str | None = None,
     ) -> SearchResults:
         """Hybrid search across memory (graph) and RAG (vector).
 
@@ -333,6 +334,9 @@ class EmeraldClient:
             filters: Metadata filters (e.g., {"memory_type": "preference"}).
             min_confidence: Minimum memory confidence (0-1).
             dynamic_truncation: Stop returning results when score gap exceeds threshold.
+            about: Entity-centric retrieval (B4): a mention canonical form
+                or mention id — returns the entity's memories mentioning it
+                across all surface forms. Skips RAG and fast-lane paths.
 
         Returns:
             SearchResults with scored, deduplicated hits.
@@ -350,6 +354,8 @@ class EmeraldClient:
             body["filters"] = filters
         if min_confidence is not None:
             body["min_confidence"] = min_confidence
+        if about is not None:
+            body["about"] = about
 
         response = await self._request("POST", f"/{self.api_version}/search", json=body)
         data = response.json()["data"]

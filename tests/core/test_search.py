@@ -629,3 +629,90 @@ async def test_expand_excludes_updates():
     ids = {r.id for r in expanded}
     assert mid_new in ids
     assert mid_old not in ids, "UPDATES relationships should not trigger expansion"
+
+
+# ---- Entity-centric retrieval (B4, ticket #30) ----
+
+
+@pytest.mark.asyncio
+async def test_search_about_returns_mentioning_memories(populated, graph):
+    """search(about=...) returns every memory mentioning the canonical form."""
+    from emerald.core.mentions import Mention
+
+    m1 = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m2 = await graph.create_memory("在谷歌工作", entity_id="alice")
+    m3 = await graph.create_memory("在 Stripe 工作", entity_id="alice")
+    await graph.attach_mentions(
+        m1, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m2, "alice", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m3, "alice", [Mention("Stripe", "Stripe", "organization", 0.9)],
+    )
+
+    results = await populated.search(
+        "关于 Google 的一切",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+        about="Google",
+    )
+    ids = {r.id for r in results.results}
+    assert ids == {m1, m2}
+    assert m3 not in ids
+
+
+@pytest.mark.asyncio
+async def test_search_about_empty_results(populated, graph):
+    """An unmatched about returns an empty result set, not an error."""
+    results = await populated.search(
+        "关于 NoSuchThing 的一切",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+        about="NoSuchThing",
+    )
+    assert results.results == []
+
+
+@pytest.mark.asyncio
+async def test_search_about_entity_isolation(populated, graph):
+    """about retrieval never returns another entity's memories."""
+    from emerald.core.mentions import Mention
+
+    m_a = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m_b = await graph.create_memory("在 Google 工作", entity_id="bob")
+    await graph.attach_mentions(
+        m_a, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_b, "bob", [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY, about="Google",
+    )
+    ids = {r.id for r in results.results}
+    assert ids == {m_a}
+    assert m_b not in ids
+
+
+@pytest.mark.asyncio
+async def test_search_about_returns_memory_source_only(populated, graph):
+    """about is a memory-graph operation: no RAG / fast-lane results."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="alice")
+    await graph.attach_mentions(
+        mid, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await populated.vector.store(
+        "rag-doc-1", "在 Google 工作的文档", [0.1] * 128,
+        entity_id="alice", document_id="doc-1",
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.HYBRID, about="Google",
+    )
+    assert all(r.source == "memory" for r in results.results)
+    assert {r.id for r in results.results} == {mid}

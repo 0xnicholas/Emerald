@@ -91,6 +91,8 @@ export interface SearchOptions {
   filters?: Record<string, unknown>;
   min_confidence?: number;
   dynamic_truncation?: boolean;
+  /** Entity-centric retrieval (B4): mention canonical form or id. */
+  about?: string;
 }
 
 /** Options for client.upload() */

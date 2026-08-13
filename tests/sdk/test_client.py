@@ -451,3 +451,27 @@ def test_client_reads_env(monkeypatch):
     c = EmeraldClient()
     assert c.api_key == "em_env_key"
     assert c.base_url == "http://env.test"
+
+
+# ---- Entity-centric retrieval (B4, ticket #30) ----
+
+@pytest.mark.asyncio
+async def test_search_about_param_sent_in_body(client, engine):
+    """SDK search(about=...) forwards the param to the REST body."""
+    import asyncio as _asyncio
+
+    from emerald.core.mentions import Mention
+
+    async def _seed():
+        mid = await engine.graph.create_memory("在 Google 工作", entity_id="user_1")
+        await engine.graph.attach_mentions(
+            mid, "user_1", [Mention("Google", "Google", "organization", 0.9)],
+        )
+
+    await _seed()
+
+    results = await client.search(
+        "关于 Google 的一切", entity_id="user_1", about="Google",
+    )
+    assert len(results.results) == 1
+    assert results.results[0].content == "在 Google 工作"

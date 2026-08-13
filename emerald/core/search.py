@@ -8,8 +8,9 @@ and sorted by relevance score.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from enum import Enum
+from typing import Any
 
 import structlog
 
@@ -72,7 +73,7 @@ class SearchOrchestrator:
 
     async def search(
         self,
-        q: str,
+        q: str = "",
         *,
         entity_id: str,
         search_mode: SearchMode = SearchMode.HYBRID,
@@ -82,8 +83,20 @@ class SearchOrchestrator:
         filters: dict | None = None,
         min_confidence: float | None = None,
         dynamic_truncation: bool = True,
+        about: str | None = None,
     ) -> SearchResponse:
-        """Execute a hybrid search query."""
+        """Execute a hybrid search query.
+
+        ``about`` (B4, #30): entity-centric retrieval — instead of seeding
+        with vector similarity, return the entity's latest memories that
+        mention the given canonical form (or mention id), across all
+        surface forms. It is a memory-graph operation: RAG and fast-lane
+        paths are skipped regardless of ``search_mode``, ``q`` may be
+        empty, dynamic truncation is disabled (the full mentioning set is
+        returned), and the result set is exactly the mentioning memories
+        (no relationship expansion in this ticket; traversal lands in
+        #31/#32).
+        """
         settings = get_settings()
         resolved_top_k = min(
             top_k if top_k is not None else settings.search_default_top_k,
@@ -116,7 +129,15 @@ class SearchOrchestrator:
             results: list[SearchResult] = []
 
             # Memory search
-            if search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
+            if about is not None:
+                # Entity-centric retrieval (B4, #30): the mention seed set
+                # replaces vector/keyword seeding. RAG and fast-lane are
+                # skipped — about is a memory-graph operation.
+                memory_results = await self._search_memories_about(
+                    about, entity_id, resolved_top_k, filters, min_confidence
+                )
+                results.extend(memory_results)
+            elif search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
                 memory_results = await self._search_memory(
                     rewritten_q, entity_id, resolved_top_k, filters, min_confidence
                 )
@@ -129,7 +150,7 @@ class SearchOrchestrator:
                 results.extend(memory_results)
 
             # RAG search
-            if search_mode in (SearchMode.HYBRID, SearchMode.RAG):
+            if about is None and search_mode in (SearchMode.HYBRID, SearchMode.RAG):
                 rag_results = await self._search_rag(
                     rewritten_q, entity_id, resolved_top_k, filters
                 )
@@ -137,7 +158,7 @@ class SearchOrchestrator:
 
             # Fast-lane search: raw, coarse chunks that are searchable before the
             # full pipeline has finished. Included in memory/hybrid modes.
-            if search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
+            if about is None and search_mode in (SearchMode.HYBRID, SearchMode.MEMORY):
                 fast_lane_results = await self._search_fast_lane(
                     rewritten_q, entity_id, resolved_top_k
                 )
@@ -145,9 +166,10 @@ class SearchOrchestrator:
 
             # Dynamic truncation is designed for dense semantic scores. Keyword
             # fallback scores are sparse (often 0 vs 1), so large gaps are normal
-            # and should not truncate useful partial matches.
+            # and should not truncate useful partial matches. The about path
+            # scores by trust and must return the full mentioning set (#30).
             apply_dynamic_truncation = (
-                dynamic_truncation and self.embedder is not None
+                dynamic_truncation and self.embedder is not None and about is None
             )
 
             # Merge, deduplicate, sort, and optionally truncate on score gap
@@ -219,17 +241,66 @@ class SearchOrchestrator:
 
             trust = compute_trust_score(memory)
             score = vec_score * trust
+            results.append(self._memory_to_result(memory, score))
+
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
+
+    @staticmethod
+    def _memory_to_result(memory: dict[str, Any], score: float) -> SearchResult:
+        """Build a memory SearchResult from a graph memory dict.
+
+        Shared by every graph-seeded memory path (vector, about) so the
+        result shape cannot drift between them.
+        """
+        return SearchResult(
+            id=memory["id"],
+            content=memory["content"],
+            summary=memory.get("summary", "")[:200],
+            score=score,
+            source="memory",
+            memory_type=memory.get("memory_type", "fact"),
+            container_tag=memory.get("container_tag"),
+            is_latest=memory.get("is_latest", True),
+        )
+
+    async def _search_memories_about(
+        self,
+        about: str,
+        entity_id: str,
+        top_k: int,
+        filters: dict[str, Any] | None,
+        min_confidence: float | None = None,
+    ) -> list[SearchResult]:
+        """Entity-centric retrieval (B4, #30): memories mentioning ``about``.
+
+        The seed set is the entity's latest memories whose mention node
+        matches ``about`` (canonical form or id, any surface form). No
+        vector search, no RAG — ranking is by trust score (recency as
+        tie-breaker via graph order), so the result set is deterministic
+        and exactly the mentioning memories.
+        """
+        memories = await self.graph.get_memories_mentioning(
+            entity_id, about, limit=max(top_k * 5, 100),
+        )
+        now = datetime.now(UTC)
+
+        results = []
+        for memory in memories:
+            valid_until = memory.get("valid_until")
+            if valid_until is not None:
+                # Neo4j returns neo4j.time.DateTime; convert to Python datetime
+                if hasattr(valid_until, "to_native"):
+                    valid_until = valid_until.to_native()
+                if valid_until < now:
+                    continue
+            if filters and not self._passes_filters(memory, filters):
+                continue
+            if min_confidence is not None and memory.get("confidence", 0.0) < min_confidence:
+                continue
+
             results.append(
-                SearchResult(
-                    id=memory["id"],
-                    content=memory["content"],
-                    summary=memory.get("summary", "")[:200],
-                    score=score,
-                    source="memory",
-                    memory_type=memory.get("memory_type", "fact"),
-                    container_tag=memory.get("container_tag"),
-                    is_latest=memory.get("is_latest", True),
-                )
+                self._memory_to_result(memory, compute_trust_score(memory))
             )
 
         results.sort(key=lambda r: r.score, reverse=True)
@@ -558,13 +629,21 @@ class SearchOrchestrator:
         *,
         dynamic_truncation: bool = True,
     ) -> list[SearchResult]:
-        """Deduplicate by content, sort by score descending, and optionally truncate.
+        """Deduplicate, sort by score descending, and optionally truncate.
+
+        Dedup semantics (B4 #30): the same result id is deduplicated
+        everywhere (one memory hit from several paths); identical content
+        is additionally deduplicated across *different* sources (a fast-
+        lane chunk mirroring an indexed memory, a RAG chunk mirroring a
+        memory). Distinct memories of the same source stay distinct —
+        "在 Google 工作" and "在 GOOGLE 工作" are two facts, not one.
 
         Truncation happens on a score gap when enabled.
         """
         settings = get_settings()
-        seen_contents: set[str] = set()
-        merged = []
+        seen_ids: set[str] = set()
+        seen_contents: dict[str, str] = {}  # content key → source
+        merged: list[SearchResult] = []
 
         # Sort by score desc
         results.sort(key=lambda r: r.score, reverse=True)
@@ -578,26 +657,30 @@ class SearchOrchestrator:
         prev_score: float | None = None
         for r in results:
             # Normalize for dedup
-            key = r.content.strip().lower()
-            if key not in seen_contents:
-                # Dynamic truncation: stop when the score drop from the previous
-                # result exceeds the configured gap threshold. This avoids
-                # including low-relevance tail results when there is a clear
-                # separation, while still respecting top_k as a hard cap.
-                if (
-                    dynamic_truncation
-                    and len(merged) >= min_before_truncate
-                    and prev_score is not None
-                    and settings.search_dynamic_truncation_enabled
-                    and (prev_score - r.score) > settings.search_score_gap_threshold
-                ):
-                    break
+            content_key = r.content.strip().lower()
+            if r.id in seen_ids:
+                continue
+            if content_key in seen_contents and seen_contents[content_key] != r.source:
+                continue
+            # Dynamic truncation: stop when the score drop from the previous
+            # result exceeds the configured gap threshold. This avoids
+            # including low-relevance tail results when there is a clear
+            # separation, while still respecting top_k as a hard cap.
+            if (
+                dynamic_truncation
+                and len(merged) >= min_before_truncate
+                and prev_score is not None
+                and settings.search_dynamic_truncation_enabled
+                and (prev_score - r.score) > settings.search_score_gap_threshold
+            ):
+                break
 
-                seen_contents.add(key)
-                merged.append(r)
-                prev_score = r.score
-                if len(merged) >= top_k:
-                    break
+            seen_ids.add(r.id)
+            seen_contents[content_key] = r.source
+            merged.append(r)
+            prev_score = r.score
+            if len(merged) >= top_k:
+                break
 
         return merged
 
