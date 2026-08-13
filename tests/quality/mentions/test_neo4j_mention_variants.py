@@ -2,10 +2,11 @@
 
 The in-memory mention suites (test_mention_precision.py /
 test_mention_resolution.py / test_mention_taxonomy.py /
-test_mention_isolation.py / test_mention_forgetting.py) run everywhere.
-This module re-runs the core mention scenarios against a real Neo4j
-backend, covering the Cypher branches of attach_mentions /
-get_entity_mentions / get_memory_mentions / mark_expired:
+test_mention_isolation.py / test_mention_forgetting.py /
+test_mention_updates.py) run everywhere. This module re-runs the core
+mention scenarios against a real Neo4j backend, covering the Cypher
+branches of attach_mentions / get_entity_mentions / get_memory_mentions /
+mark_expired / create_update_relation:
 
 - cross-memory resolution + alias accumulation on the MERGE branch (#23)
 - idempotent re-attach and confidence gating on the Cypher branch (#24)
@@ -13,6 +14,8 @@ get_entity_mentions / get_memory_mentions / mark_expired:
   entity A's Mention nodes) and read direction (#25)
 - forgetting prunes MENTIONS edges and orphaned Mention nodes on the
   Cypher branch, while shared nodes survive with a decremented count (#27)
+- UPDATES replacement keeps the old memory's MENTIONS edges on the
+  Cypher branch and never touches mention bookkeeping (#26)
 
 Skipped when no test Neo4j is reachable; the CI `quality-temporal` job
 runs it with the compose services up, so the aggregate gate covers both
@@ -171,6 +174,72 @@ async def _run_forgetting_on_neo4j(driver) -> None:
         assert record["n"] == 0
 
 
+async def _run_updates_on_neo4j(driver) -> None:
+    """UPDATES keeps both memories' MENTIONS edges on the Cypher branch (#26)."""
+    from emerald.core.graph import GraphStore
+    from emerald.core.mentions import Mention
+
+    store = GraphStore(use_db=True)
+    entity = "user_quality_neo4j_mention_updates"
+    await _clean_entity(driver, entity)
+
+    mid_old = await store.create_memory("在 Google 工作", entity_id=entity)
+    mid_new = await store.create_memory("在 Stripe 工作", entity_id=entity)
+    await store.attach_mentions(
+        mid_old,
+        entity,
+        [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await store.attach_mentions(
+        mid_new,
+        entity,
+        [Mention("Stripe", "Stripe", "organization", 0.9)],
+    )
+
+    await store.create_update_relation(
+        mid_new,
+        mid_old,
+        properties={"reason": "contradiction", "confidence": 0.8},
+    )
+
+    # The replaced memory is history but keeps its MENTIONS edge...
+    old_mentions = await store.get_memory_mentions(mid_old)
+    assert [(m["canonical_form"], m["surface_form"]) for m in old_mentions] == [
+        ("Google", "Google")
+    ]
+    # ...and the replacer keeps its own extraction's edge.
+    new_mentions = await store.get_memory_mentions(mid_new)
+    assert [(m["canonical_form"], m["surface_form"]) for m in new_mentions] == [
+        ("Stripe", "Stripe")
+    ]
+
+    # Both Mention nodes alive, one edge each — no pruning by the update.
+    nodes = await store.get_entity_mentions(entity)
+    assert sorted(n["canonical_form"] for n in nodes) == ["Google", "Stripe"]
+    assert all(n["mention_count"] == 1 for n in nodes)
+
+    # The UPDATES edge exists on the Cypher branch.
+    assert await store.get_relationships_to([mid_old]) == {mid_old: [mid_new]}
+
+    # is_latest / replaced_by bookkeeping never touches mention edges.
+    await store.update_is_latest(mid_new, False, replaced_by="chain_tail")
+    assert [
+        (m["canonical_form"], m["surface_form"]) for m in await store.get_memory_mentions(mid_new)
+    ] == [("Stripe", "Stripe")]
+    nodes = await store.get_entity_mentions(entity)
+    assert sorted(n["canonical_form"] for n in nodes) == ["Google", "Stripe"]
+
+    # Graph direction: the replaced memory still has a MENTIONS edge.
+    async with driver.session() as session:
+        result = await session.run(
+            "MATCH (m:Memory {id: $id})-[r:MENTIONS]->(mn:Mention) RETURN count(r) AS n",
+            id=mid_old,
+        )
+        record = await result.single()
+        assert record is not None
+        assert record["n"] == 1
+
+
 async def _run_isolation_on_neo4j(driver) -> None:
     """Cross-entity isolation holds on the Cypher branch, both directions."""
     from emerald.core.graph import GraphStore
@@ -230,3 +299,4 @@ async def test_mention_scenarios_on_neo4j(neo4j_driver):
     await _run_resolution_and_gating_on_neo4j(neo4j_driver)
     await _run_isolation_on_neo4j(neo4j_driver)
     await _run_forgetting_on_neo4j(neo4j_driver)
+    await _run_updates_on_neo4j(neo4j_driver)

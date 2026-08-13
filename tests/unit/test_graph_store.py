@@ -687,3 +687,49 @@ async def test_update_is_latest_keeps_mentions(graph):
     nodes = await graph.get_entity_mentions("e1")
     assert len(nodes) == 1
     assert nodes[0]["mention_count"] == 2
+
+# ---------------------------------------------------------------------------
+# UPDATES integration (B3 NER, ticket #26) — replacement keeps mention edges
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_update_relation_keeps_old_and_new_mentions(graph):
+    """UPDATES flips is_latest but never touches MENTIONS edges (#26)."""
+    from emerald.core.mentions import Mention
+
+    mid_old = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_new = await graph.create_memory("在 Stripe 工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid_old,
+        "e1",
+        [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_new,
+        "e1",
+        [Mention("Stripe", "Stripe", "organization", 0.9)],
+    )
+
+    await graph.create_update_relation(
+        mid_new,
+        mid_old,
+        properties={"reason": "contradiction", "confidence": 0.8},
+    )
+
+    # The replaced memory is history but keeps its edge; the replacer
+    # keeps its own edge; both Mention nodes stay alive with count 1.
+    old_mentions = await graph.get_memory_mentions(mid_old)
+    assert [(m["canonical_form"], m["surface_form"]) for m in old_mentions] == [
+        ("Google", "Google")
+    ]
+    new_mentions = await graph.get_memory_mentions(mid_new)
+    assert [(m["canonical_form"], m["surface_form"]) for m in new_mentions] == [
+        ("Stripe", "Stripe")
+    ]
+    nodes = await graph.get_entity_mentions("e1")
+    assert sorted(n["canonical_form"] for n in nodes) == ["Google", "Stripe"]
+    assert all(n["mention_count"] == 1 for n in nodes)
+
+    # The UPDATES edge itself is recorded on the in-memory fallback.
+    assert await graph.get_relationships_to([mid_old]) == {mid_old: [mid_new]}
