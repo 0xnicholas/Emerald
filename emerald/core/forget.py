@@ -7,6 +7,12 @@ Four strategies, triggered by Celery Beat scheduled tasks:
 3. Noise filtering: confidence < 0.3, no references, > 7 days old → archive
 4. Episodic decay: episodic memories > 90 days → archive
 
+Forgetting integration (B3 NER, #27): every strategy funnels through
+GraphStore.mark_expired, which also removes the memory's MENTIONS edges
+and prunes Mention nodes left with zero MENTIONS edges — the graph never
+accumulates dead mention nodes. The UPDATES replacement path is separate
+(update_is_latest) and keeps the replaced memory's historical edges (#26).
+
 AGENTS.md: "没有遗忘，每句随意的话都会变成永久记忆。图谱膨胀，噪音累积，检索质量下降。遗忘不是 bug——它是一项特性。"
 """
 
@@ -33,7 +39,9 @@ class ForgetEngine:
     """Manages automatic forgetting of memories.
 
     Each strategy queries the graph via GraphStore public APIs and marks
-    memories as is_latest=False with appropriate metadata.
+    memories as is_latest=False with appropriate metadata. Mention pruning
+    (#27) rides along inside mark_expired: forgotten memories lose their
+    MENTIONS edges and orphaned Mention nodes are pruned.
     """
 
     # Thresholds

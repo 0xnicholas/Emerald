@@ -557,12 +557,23 @@ class GraphStore:
     async def mark_expired(self, memory_id: str, reason: str = "expired") -> None:
         """Mark a memory as expired: is_latest=False + expired_at=now.
 
-        This is a convenience wrapper used by ForgetEngine.
+        Forgetting integration (B3 NER, #27): forgetting also removes the
+        memory's MENTIONS edges and prunes Mention nodes left with zero
+        remaining MENTIONS edges, so the graph never accumulates dead
+        mention nodes. Every ForgetEngine strategy funnels through this
+        seam (spec #21: 扩展现有遗忘路径).
+
+        The UPDATES replacement path goes through ``update_is_latest``
+        instead — a replaced memory is a historical node and keeps its
+        MENTIONS edges (#26).
         """
         self._init_driver()
         now = datetime.now(UTC)
         if self._use_db and self._driver:
             async with self._driver.session() as session:
+                # One statement = one transaction (AGENTS.md: 图谱操作
+                # 必须是原子的): expiry, edge removal, count decrement
+                # and orphan pruning commit or roll back together.
                 await session.run(
                     """
                     MATCH (m:Memory {id: $id})
@@ -570,20 +581,65 @@ class GraphStore:
                         m.expired_at = datetime(),
                         m.replaced_by = $reason,
                         m.updated_at = datetime()
+                    WITH m
+                    OPTIONAL MATCH (m)-[r:MENTIONS]->(mn:Mention)
+                    WITH mn, count(r) AS removed
+                    SET mn.mention_count = CASE
+                        WHEN coalesce(mn.mention_count, 0) <= removed THEN 0
+                        ELSE coalesce(mn.mention_count, 0) - removed
+                    END
+                    WITH mn
+                    MATCH (m:Memory {id: $id})-[r:MENTIONS]->(mn)
+                    DELETE r
+                    WITH DISTINCT mn
+                    WHERE NOT ()-[:MENTIONS]->(mn)
+                    DETACH DELETE mn
                     """,
                     id=memory_id,
                     reason=reason,
                 )
             return
 
-        for memories in self._memories.values():
+        for entity_id, memories in self._memories.items():
             for m in memories:
                 if m["id"] == memory_id:
                     m["is_latest"] = False
                     m["expired_at"] = now
                     m["replaced_by"] = reason
                     m["updated_at"] = now
+                    if m.pop("mentions", []):
+                        self._prune_orphaned_mentions(entity_id, memories)
                     return
+
+    def _prune_orphaned_mentions(
+        self,
+        entity_id: str,
+        memories: list[dict[str, Any]],
+    ) -> None:
+        """Prune Mention nodes left with zero live MENTIONS edges (#27).
+
+        In-memory mirror of the Cypher prune in ``mark_expired``. Called
+        after a forgotten memory's edges are removed: surviving nodes keep
+        their aliases and last_seen_at (surface forms ever seen, including
+        the forgotten memory's), while mention_count is recomputed as the
+        number of remaining live edges into the node.
+        """
+        pool = self._mentions.get(entity_id, [])
+        if not pool:
+            return
+        live_counts: dict[str, int] = {}
+        for memory in memories:
+            for edge in memory.get("mentions", []):
+                mention_id = edge["mention_id"]
+                live_counts[mention_id] = live_counts.get(mention_id, 0) + 1
+        surviving = []
+        for node in pool:
+            count = live_counts.get(node["id"], 0)
+            if count == 0:
+                continue  # orphan — prune the dead node
+            node["mention_count"] = count
+            surviving.append(node)
+        self._mentions[entity_id] = surviving
 
     async def create_update_relation(
         self,

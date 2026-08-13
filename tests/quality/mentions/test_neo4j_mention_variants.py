@@ -2,14 +2,17 @@
 
 The in-memory mention suites (test_mention_precision.py /
 test_mention_resolution.py / test_mention_taxonomy.py /
-test_mention_isolation.py) run everywhere. This module re-runs the core
-mention scenarios against a real Neo4j backend, covering the Cypher
-branches of attach_mentions / get_entity_mentions / get_memory_mentions:
+test_mention_isolation.py / test_mention_forgetting.py) run everywhere.
+This module re-runs the core mention scenarios against a real Neo4j
+backend, covering the Cypher branches of attach_mentions /
+get_entity_mentions / get_memory_mentions / mark_expired:
 
 - cross-memory resolution + alias accumulation on the MERGE branch (#23)
 - idempotent re-attach and confidence gating on the Cypher branch (#24)
 - cross-entity isolation — graph direction (entity B has no path to
   entity A's Mention nodes) and read direction (#25)
+- forgetting prunes MENTIONS edges and orphaned Mention nodes on the
+  Cypher branch, while shared nodes survive with a decremented count (#27)
 
 Skipped when no test Neo4j is reachable; the CI `quality-temporal` job
 runs it with the compose services up, so the aggregate gate covers both
@@ -91,6 +94,83 @@ async def _run_resolution_and_gating_on_neo4j(driver) -> None:
     assert await store.get_memory_mentions(mid_c) == []
 
 
+async def _run_forgetting_on_neo4j(driver) -> None:
+    """Forgetting prunes edges + orphan nodes on the Cypher branch (#27)."""
+    from datetime import UTC, datetime, timedelta
+
+    from emerald.core.forget import ForgetEngine
+    from emerald.core.graph import GraphStore
+    from emerald.core.mentions import Mention
+
+    store = GraphStore(use_db=True)
+    entity = "user_quality_neo4j_mention_forget"
+    await _clean_entity(driver, entity)
+
+    past = datetime.now(UTC) - timedelta(hours=1)
+    mid_a = await store.create_memory(
+        "在 Google 用 Python 工作",
+        entity_id=entity,
+        valid_until=past,
+    )
+    mid_b = await store.create_memory("在谷歌工作", entity_id=entity)
+    await store.attach_mentions(
+        mid_a,
+        entity,
+        [
+            Mention("Google", "Google", "organization", 0.9),
+            Mention("Python", "Python", "technology", 0.9),
+        ],
+    )
+    await store.attach_mentions(
+        mid_b,
+        entity,
+        [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+    nodes = await store.get_entity_mentions(entity)
+    assert len(nodes) == 2
+    assert {n["canonical_form"] for n in nodes} == {"Google", "Python"}
+    google = next(n for n in nodes if n["canonical_form"] == "Google")
+    assert google["mention_count"] == 2
+
+    # Time-based expiry forgets mid_a end-to-end on the Cypher branch.
+    count = await ForgetEngine(graph=store).forget_expired(entity)
+    assert count == 1
+    assert await store.get_memory_mentions(mid_a) == []
+
+    # The orphaned Python node is pruned; the shared Google node survives
+    # with the one remaining edge counted and historical aliases kept.
+    nodes = await store.get_entity_mentions(entity)
+    assert [n["canonical_form"] for n in nodes] == ["Google"]
+    node = nodes[0]
+    assert node["id"] == google["id"]
+    assert node["mention_count"] == 1
+    assert sorted(node["aliases"]) == ["Google", "谷歌"]
+    survivor = await store.get_memory_mentions(mid_b)
+    assert [m["id"] for m in survivor] == [node["id"]]
+    assert survivor[0]["surface_form"] == "谷歌"
+
+    # Forgetting the last referencing memory prunes the node itself.
+    await store.mark_expired(mid_b, reason="noise_filtered")
+    assert await store.get_entity_mentions(entity) == []
+
+    # Forgetting a memory with no MENTIONS edges is a no-op on Cypher —
+    # the OPTIONAL MATCH branch touches no Mention nodes.
+    mid_c = await store.create_memory("无提及的事实", entity_id=entity)
+    await store.mark_expired(mid_c, reason="noise_filtered")
+    assert await store.get_memory_mentions(mid_c) == []
+    assert await store.get_entity_mentions(entity) == []
+
+    # Graph direction: no Mention nodes remain for this entity at all.
+    async with driver.session() as session:
+        result = await session.run(
+            "MATCH (mn:Mention) WHERE mn.entity_id = $e RETURN count(mn) AS n",
+            e=entity,
+        )
+        record = await result.single()
+        assert record is not None
+        assert record["n"] == 0
+
+
 async def _run_isolation_on_neo4j(driver) -> None:
     """Cross-entity isolation holds on the Cypher branch, both directions."""
     from emerald.core.graph import GraphStore
@@ -149,3 +229,4 @@ async def test_mention_scenarios_on_neo4j(neo4j_driver):
     """Core mention scenarios hold on a real Neo4j backend."""
     await _run_resolution_and_gating_on_neo4j(neo4j_driver)
     await _run_isolation_on_neo4j(neo4j_driver)
+    await _run_forgetting_on_neo4j(neo4j_driver)

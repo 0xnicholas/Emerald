@@ -553,3 +553,137 @@ async def test_get_entity_mentions_scoped_per_entity(graph):
 @pytest.mark.asyncio
 async def test_get_entity_mentions_unknown_entity_returns_empty(graph):
     assert await graph.get_entity_mentions("nonexistent") == []
+
+# ---------------------------------------------------------------------------
+# Forgetting integration (B3 NER, ticket #27) — mark_expired prunes mentions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_expired_removes_mentions_edges_and_prunes_orphans(graph):
+    """Forgetting removes MENTIONS edges; zero-edge Mention nodes are pruned."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_b = await graph.create_memory("用 Python 写代码", entity_id="e1")
+    await graph.attach_mentions(
+        mid_a,
+        "e1",
+        [
+            Mention("Google", "Google", "organization", 0.9),
+            Mention("Python", "Python", "technology", 0.9),
+        ],
+    )
+    await graph.attach_mentions(
+        mid_b,
+        "e1",
+        [Mention("Python", "Python", "technology", 0.9)],
+    )
+    assert len(graph._mentions["e1"]) == 2
+
+    await graph.mark_expired(mid_a, reason="expired")
+
+    # The forgotten memory reads back no mentions; the shared Python node
+    # survives with the one remaining edge counted; the Google node is gone.
+    assert await graph.get_memory_mentions(mid_a) == []
+    remaining = await graph.get_entity_mentions("e1")
+    assert [n["canonical_form"] for n in remaining] == ["Python"]
+    assert remaining[0]["mention_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mark_expired_keeps_shared_mention_with_decremented_count(graph):
+    """A mention still referenced by another memory survives forgetting."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_b = await graph.create_memory("在谷歌工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid_a,
+        "e1",
+        [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_b,
+        "e1",
+        [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+    assert graph._mentions["e1"][0]["mention_count"] == 2
+
+    await graph.mark_expired(mid_a, reason="noise_filtered")
+
+    nodes = await graph.get_entity_mentions("e1")
+    assert len(nodes) == 1
+    assert nodes[0]["mention_count"] == 1
+    # Historical aliases are kept (surface forms ever seen).
+    assert sorted(nodes[0]["aliases"]) == ["Google", "谷歌"]
+    # The surviving memory still holds its own edge.
+    survivor = await graph.get_memory_mentions(mid_b)
+    assert [m["id"] for m in survivor] == [nodes[0]["id"]]
+    assert survivor[0]["surface_form"] == "谷歌"
+
+
+@pytest.mark.asyncio
+async def test_mark_expired_twice_is_idempotent_for_mentions(graph):
+    """Re-forgetting an already-forgotten memory changes nothing."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid,
+        "e1",
+        [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    await graph.mark_expired(mid, reason="expired")
+    assert await graph.get_entity_mentions("e1") == []
+    await graph.mark_expired(mid, reason="expired")
+    assert await graph.get_entity_mentions("e1") == []
+
+
+@pytest.mark.asyncio
+async def test_mark_expired_without_mentions_is_noop_on_pool(graph):
+    """A mention-free memory's forgetting leaves the entity pool untouched."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("无提及的事实", entity_id="e1")
+    mid_b = await graph.create_memory("在 Google 工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid_b,
+        "e1",
+        [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    await graph.mark_expired(mid_a, reason="expired")
+
+    nodes = await graph.get_entity_mentions("e1")
+    assert [n["canonical_form"] for n in nodes] == ["Google"]
+    assert nodes[0]["mention_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_is_latest_keeps_mentions(graph):
+    """The UPDATES path keeps the replaced memory's MENTIONS edges (#26)."""
+    from emerald.core.mentions import Mention
+
+    mid_old = await graph.create_memory("在 Google 工作", entity_id="e1")
+    mid_new = await graph.create_memory("在谷歌工作", entity_id="e1")
+    await graph.attach_mentions(
+        mid_old,
+        "e1",
+        [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_new,
+        "e1",
+        [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+
+    await graph.update_is_latest(mid_old, False, replaced_by=mid_new)
+
+    # Historical edges stay; the shared node counts both live edges.
+    old_mentions = await graph.get_memory_mentions(mid_old)
+    assert [m["canonical_form"] for m in old_mentions] == ["Google"]
+    nodes = await graph.get_entity_mentions("e1")
+    assert len(nodes) == 1
+    assert nodes[0]["mention_count"] == 2
