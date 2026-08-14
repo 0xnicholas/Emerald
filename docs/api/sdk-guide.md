@@ -143,9 +143,9 @@ result = await client.add(
 
 ---
 
-### `search(q, *, entity_id, search_mode="hybrid", top_k=10, rerank=False, rewrite_query=False, filters=None)`
+### `search(q, *, entity_id, search_mode="hybrid", top_k=10, rerank=False, rewrite_query=False, filters=None, min_confidence=None, dynamic_truncation=True, about=None, depth=0)`
 
-混合搜索——单次查询同时返回记忆结果和 RAG 文档结果。
+混合搜索——单次查询同时返回记忆结果和 RAG 文档结果；`about`/`depth` 开启图谱多跳检索（B4）。
 
 **参数：**
 
@@ -158,6 +158,10 @@ result = await client.add(
 | `rerank` | `bool` | — | 启用重排序 |
 | `rewrite_query` | `bool` | — | 启用查询改写 |
 | `filters` | `dict` | — | 元数据过滤 |
+| `min_confidence` | `float` | — | 最小置信度（0-1） |
+| `dynamic_truncation` | `bool` | — | 分数断崖截断（默认开启） |
+| `about` | `str \| None` | — | 实体中心检索（B4）：提及规范形式或 Mention id；非空时跳过 RAG/fast-lane，返回该实体提及该事物的全部最新记忆（跨表层形式） |
+| `depth` | `int` | — | 图谱遍历跳数（B4）：默认 0 = 现状；≥1 沿共享提及桥 + UPDATES/EXTENDS/DERIVES_FROM 双向链式行走，上限 4 |
 
 **返回：** `SearchResults`
 
@@ -175,11 +179,15 @@ result = await client.add(
 | `content` | `str` | 内容 |
 | `summary` | `str` | 摘要 |
 | `score` | `float` | 相关性分数 |
-| `source` | `str` | `memory` 或 `rag` |
+| `source` | `str` | `memory` / `memory_expanded` / `rag` |
 | `memory_type` | `str` | 记忆类型（仅 memory） |
-| `is_latest` | `bool` | 是否为最新版本（仅 memory） |
+| `container_tag` | `str \| None` | 空间标签 |
+| `tags` | `list[str]` | 标签 |
+| `is_latest` | `bool` | 是否为最新版本（仅 memory；多跳沿 UPDATES 踩到的历史节点为 `False`） |
 | `document_id` | `str \| None` | 文档 ID（仅 rag） |
 | `document_title` | `str \| None` | 文档标题（仅 rag） |
+| `depth` | `int` | 多跳跳数（B4）：种子 0，图谱到达结果 ≥1 |
+| `path` | `list[SearchPathStep]` | 多跳路径（B4）：从种子到该结果的节点/边序列（`memory` / `mention` 节点 + 关系边），种子为空列表 |
 
 **示例：**
 
@@ -209,6 +217,21 @@ results = await client.search(
     entity_id="user_123",
     filters={"memory_type": "preference", "min_confidence": 0.8},
 )
+
+# 实体中心检索（B4）：该实体关于 Google 的全部最新记忆，跨表层形式
+results = await client.search(
+    "", entity_id="user_123", search_mode="memory", about="Google",
+)
+
+# 多跳图谱遍历（B4）：深度 2 链式推导 + 路径透明
+results = await client.search(
+    "Google", entity_id="user_123", search_mode="memory",
+    about="Google", depth=2,
+)
+for r in results.results:
+    if r.depth > 0:
+        # 路径解释：从种子到该结果经过的节点/边（memory/mention/关系边）
+        print(r.depth, [(s.kind, s.id[:8]) for s in r.path])
 ```
 
 ---

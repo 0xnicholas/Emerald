@@ -252,9 +252,18 @@ Content-Type: application/json
   "filters": {
     "memory_type": "preference",
     "min_confidence": 0.5
-  }
+  },
+  "about": null,
+  "depth": 0
 }
 ```
+
+**请求参数（B4 多跳检索相关）：**
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `about` | `string \| null` | `null` | 实体中心检索：提及的规范形式或 Mention 节点 id。非空时跳过向量/RAG/fast-lane，返回该实体上下文池内提及该事物的全部最新记忆（跨所有表层形式——「谷歌」「GOOGLE」都解析到 Google） |
+| `depth` | `int` | `0` | 图谱遍历跳数：`0` = 现状（不遍历）；`≥1` 显式 opt-in 多跳（共享主体桥 + UPDATES/EXTENDS/DERIVES_FROM 双向链式），上限 4。多跳结果携带 `depth` 与 `path` |
 
 **响应：**
 
@@ -272,7 +281,26 @@ Content-Type: application/json
         "is_latest": true,
         "document_id": null,
         "document_title": null,
-        "created_at": "2026-05-22T10:30:00Z"
+        "created_at": "2026-05-22T10:30:00Z",
+        "depth": 0,
+        "path": []
+      },
+      {
+        "id": "mem_def456",
+        "content": "用户在用 Vim 写代码",
+        "summary": "用户在用 Vim 写代码",
+        "score": 0.62,
+        "source": "memory_expanded",
+        "memory_type": "fact",
+        "is_latest": true,
+        "document_id": null,
+        "document_title": null,
+        "created_at": "2026-05-21T09:00:00Z",
+        "depth": 1,
+        "path": [
+          {"kind": "memory", "id": "mem_abc123"},
+          {"kind": "EXTENDS", "id": "mem_def456"}
+        ]
       },
       {
         "id": "chunk_xyz789",
@@ -313,6 +341,32 @@ Content-Type: application/json
 4. **合并**：按归一化内容去重，按分数排序
 5. **重排序**（可选）：关键词重叠度提升（最高 +15%）
 6. **查询改写**（可选）：简单中文启发式扩展（如 "如何" → "方法 步骤"）
+
+**多跳图谱推理（`depth ≥ 1`，B4）：**
+
+从种子集（向量/关键词命中 + `about` 指定）出发沿图谱边行走：
+
+- 一跳 = 共享提及桥（记忆→提及→记忆）或一条关系边（UPDATES/EXTENDS/DERIVES_FROM，双向）
+- 链式：推导事实作为来源参与下一跳（D2 推导自 D1 推导自 A → 查 A 时 D2 以 depth 2 浮现）
+- 每跳实体隔离；环路安全（每记忆只出现在最浅深度一次）
+- 历史节点（`is_latest=false`）仅在沿 UPDATES 被踩到时返回（标记 `is_latest=false`），从不主动搜历史、从不穿越历史
+- 每个多跳结果携带 `depth`（跳数）与 `path`（经过的节点/边：`memory` / `mention` 节点 + 关系边）；种子 depth 0、空路径
+- 排名：多跳结果按信任分 × 0.85^depth 折扣，同分种子在前
+
+**实体中心检索（`about` 非空，B4）：**
+
+```http
+POST /v1/search
+{
+  "q": "",
+  "entity_id": "user_123",
+  "search_mode": "memory",
+  "about": "Google",
+  "depth": 1
+}
+```
+
+按提及查「该实体关于 Google 说过的全部记忆」——「在 Google 工作」「在谷歌工作」「在 GOOGLE 工作」经 B3 提及解析（同规范形式节点）全部命中；`depth=1` 顺带桥接提及 Python 的兄弟记忆。纯图谱操作：无向量、无 RAG、结果集恰为提及集。
 
 ---
 
