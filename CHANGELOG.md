@@ -57,6 +57,12 @@ All notable changes to this project will be documented in this file.
   - 可观测性：每 pair 决策结构化日志（entity_id/memory_a/memory_b/similarity/action/reason/representative_id）+ 每次落地合并日志 + `emerald_consolidate_duplicates_total` 指标（action：consolidated / keep / exempt_profile / exempt_type / exempt_contradiction / exempt_updates，与 `DuplicateAction` 词汇一致）
   - Celery Beat 日级调度 `consolidate_duplicates_task`（排在遗忘批次条目之后）；`ForgetEngine` 新增 `vector_store`/`duplicate_config` 注入（D2 参数校准接缝）；`ForgetStrategy` 新增 CONSOLIDATE
   - 引擎级单元测试 `tests/unit/test_consolidate_duplicates.py` 14 例（收敛/组内否决分裂/双组独立收敛/画像与 UPDATES 豁免保留/实体隔离/空图/指标按 action/失败隔离×2/幂等/确定性）；beat 回归测试新增条目指向与顺序断言
+- **B6 确定性质量套件 + Neo4j 变体 + 聚合门（issue #45，spec #41 T4）**——整合有效性的独立侧质量门（ADR-0001）：
+  - `tests/quality/consolidation/`：确定性语料（3 个重复组 × 相同内容不同年龄——mock 嵌入只有相同字符串才相似，重复组用相同内容作确定性替身，真实 paraphrase 召回为 D2 校准项；+ 4 组否决护栏反例：画像保护/矛盾/跨类型/UPDATES 边 + 2 条无关信号记忆，共 19 条）+ 规则路径（无 LLM）+ 时间回拨
+  - 三项门槛全过：整合召回率 1.000 ≥ 0.95（3 组各收敛为单代表，6 条被并、3 代表存活）、**误并率 = 0 硬门**（10 条豁免/信号记忆原样保留，rate 必须 1.0）、检索保留率 1.000 ≥ 95%
+  - 整合前后检索结果集按**记忆 id** 精确断言（重复组内容相同，成员只能按 id 区分）：基线 19 条全可检索；整合后代表与全部幸存者仍可检索、被并者从检索消失；被并者 replaced_by 指向组代表（可审计）
+  - 同一场景定义（corpus + Metric + runner 共享模块）在真实 Neo4j 上实跑同场景：Cypher 分支（候选读取、UPDATES 边否决、画像豁免、mark_consolidated 单语句事务、get_memory 检索过滤）；Neo4j 不可达时 skip 不红门，CI `quality-temporal` 任务 compose 实跑
+  - 聚合门（`.github/workflows/quality.yml`）登记新 section（第 7 节）；quality marker 描述同步更新；质量门 67 项全绿（含 Neo4j 变体实跑）
 
 ### Changed
 
@@ -65,7 +71,7 @@ All notable changes to this project will be documented in this file.
 
 ### Test baseline
 
-- 全量：`1148 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1；LLM 重写 flake 偶发——`test_rewrite_query_noop_for_long_query` 依赖真实 LLM 行为非确定，与 v0.6.0 基线同源）；质量门 65 项全绿（含 Neo4j 变体实跑）
+- 全量：`1148 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1；LLM 重写 flake 偶发——`test_rewrite_query_noop_for_long_query` 依赖真实 LLM 行为非确定，与 v0.6.0 基线同源）；质量门 67 项全绿（含 Neo4j 变体实跑）
 
 ## [0.6.0] — 2026-08-11
 

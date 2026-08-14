@@ -106,5 +106,5 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests that require Docker (testcontainers)",
     "docker: integration tests requiring Docker daemon",
-    "quality: independent quality suites (ADR-0001): temporal correctness, forgetting effectiveness, graph relationship precision, mention precision, multihop retrieval (B4), community forgetting (B5)",
+    "quality: independent quality suites (ADR-0001): temporal correctness, forgetting effectiveness, graph relationship precision, mention precision, multihop retrieval (B4), community forgetting (B5), consolidation (B6)",
 ]

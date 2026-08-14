@@ -7,6 +7,7 @@ Suites:
 - mention precision / resolution / taxonomy / isolation (B3)
 - multihop retrieval (B4)
 - community forgetting effectiveness (B5, ticket #40)
+- consolidation effectiveness (B6, ticket #45)
 
 Principles (roadmap M2 / Wayfinder map #8):
 - deterministic corpus + fixed semantics (no wall-clock dependence)

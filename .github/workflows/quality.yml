@@ -12,10 +12,14 @@ name: Quality Suites (temporal)
 # - community forgetting (B5): community elimination, signal survival and
 #   retrieval retention across deterministic stale/active/bridge/profile
 #   corpora (tests/quality/communities/)
+# - consolidation (B6): duplicate-group convergence recall, zero mis-merge
+#   hard gate and retrieval retention across deterministic duplicate /
+#   veto-counter-example corpora (tests/quality/consolidation/)
 # - real-storage variants on Neo4j (tests/quality/temporal/test_neo4j_quality_variants.py,
 #   tests/quality/mentions/test_neo4j_mention_variants.py,
 #   tests/quality/multihop/test_neo4j_multihop_variants.py,
-#   tests/quality/communities/test_neo4j_community_variants.py)
+#   tests/quality/communities/test_neo4j_community_variants.py,
+#   tests/quality/consolidation/test_neo4j_consolidation_variants.py)
 #
 # The suite is green only when every section's metrics meet their thresholds;
 # sections cannot offset each other.
