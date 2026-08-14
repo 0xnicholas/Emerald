@@ -14,6 +14,16 @@ export interface AddResult {
 }
 
 /** A single search hit — either memory or RAG source */
+/** One node/edge in a multihop result's provenance path (B4, #33).
+ * ``kind`` is "memory", "mention", or a relationship type
+ * (UPDATES / EXTENDS / DERIVES_FROM); ``id`` is the node id, or the
+ * far-end memory id of an edge step.
+ */
+export interface SearchPathStep {
+  kind: string;
+  id: string;
+}
+
 export interface SearchResult {
   id: string;
   content: string;
@@ -22,6 +32,11 @@ export interface SearchResult {
   source: "memory" | "rag" | string;
   memory_type: string;
   is_latest: boolean;
+  container_tag?: string;
+  tags?: string[];
+  /** Multihop provenance (B4): 0 for seeds, >=1 for graph-reached results. */
+  depth: number;
+  path: SearchPathStep[];
   document_id?: string;
   document_title?: string;
 }

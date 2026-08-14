@@ -250,6 +250,13 @@ export class EmeraldClient {
         source: (r.source as string) ?? "memory",
         memory_type: (r.memory_type as string) ?? "",
         is_latest: (r.is_latest as boolean) ?? true,
+        container_tag: r.container_tag as string | undefined,
+        tags: (r.tags as string[]) ?? [],
+        depth: (r.depth as number) ?? 0,
+        path: ((r.path as Record<string, unknown>[]) ?? []).map((s) => ({
+          kind: (s.kind as string) ?? "",
+          id: (s.id as string) ?? "",
+        })),
         document_id: r.document_id as string | undefined,
         document_title: r.document_title as string | undefined,
       })),

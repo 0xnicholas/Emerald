@@ -101,6 +101,37 @@ describe("search()", () => {
     expect(body.about).toBe("Google");
     expect(body.depth).toBe(2);
   });
+
+  it("should surface multihop provenance (depth/path) on results", async () => {
+    const client = createClient([
+      mockResponse({
+        data: {
+          results: [
+            {
+              id: "mem_1",
+              content: "在谷歌工作",
+              score: 0.68,
+              source: "memory_expanded",
+              memory_type: "fact",
+              is_latest: true,
+              depth: 2,
+              path: [
+                { kind: "memory", id: "mem_0" },
+                { kind: "DERIVES_FROM", id: "mem_1" },
+              ],
+            },
+          ],
+          search_mode: "memory",
+        },
+      }),
+    ]);
+    const results = await client.search("test", "user_1", { depth: 2 });
+    expect(results.results[0].depth).toBe(2);
+    expect(results.results[0].path).toEqual([
+      { kind: "memory", id: "mem_0" },
+      { kind: "DERIVES_FROM", id: "mem_1" },
+    ]);
+  });
 });
 
 describe("profile()", () => {
