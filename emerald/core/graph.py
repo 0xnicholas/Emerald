@@ -648,6 +648,234 @@ class GraphStore:
             surviving.append(node)
         self._mentions[entity_id] = surviving
 
+    async def mark_consolidated(
+        self,
+        memory_id: str,
+        representative_id: str,
+        reason: str = "consolidated",
+    ) -> None:
+        """Consolidate a duplicate memory into its representative (B6 T2, #43).
+
+        The atomic disposal+rewiring seam of the consolidation strategy
+        (spec #41 / ADR-0006): the merged memory becomes historical
+        (is_latest=false, replaced_by=representative, expired_at=now) and
+        its MENTIONS / EXTENDS / DERIVES_FROM edges are rewired onto the
+        representative — mention_count recomputed — while its UPDATES
+        edges are left untouched (timeline chains into history survive).
+        No representative→merged UPDATES edge is created (spec #41:
+        otherwise multi-hop retrieval would float the just-consolidated
+        duplicates back up).
+
+        AGENTS.md: 图谱操作必须是原子的 — on Neo4j the disposal and
+        every rewire commit or roll back together in one statement; the
+        in-memory backend mutates within the same call. The merged
+        memory's ``metadata`` gains ``reason`` (preserving any existing
+        metadata; read before the statement, merged in Python).
+
+        Guards, mirroring ``create_update_relation``'s ``WHERE old.is_latest
+        = true``: a missing memory, a missing representative, a merged
+        memory that is already historical, or a representative outside the
+        merged memory's entity are all silent no-ops (defense-in-depth —
+        the T1 detector never produces such pairs). Self-consolidation is
+        a programming error and raises ``ValueError``.
+        """
+        self._init_driver()
+        if memory_id == representative_id:
+            raise ValueError("mark_consolidated: memory and representative must differ")
+        now = datetime.now(UTC)
+
+        if self._use_db and self._driver:
+            metadata = await self._consolidation_metadata(memory_id, reason)
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (merged:Memory {id: $id})
+                    MATCH (rep:Memory {id: $rep_id})
+                    WHERE merged.is_latest = true
+                      AND merged.entity_id = rep.entity_id
+                    SET merged.is_latest = false,
+                        merged.expired_at = datetime(),
+                        merged.replaced_by = $rep_id,
+                        merged.updated_at = datetime(),
+                        merged.metadata = $metadata
+                    WITH DISTINCT merged, rep
+                    // MENTIONS: move every merged→Mention edge onto the
+                    // representative; an identical (node, surface_form)
+                    // edge already on the representative dedupes into it.
+                    OPTIONAL MATCH (merged)-[rm:MENTIONS]->(mn:Mention)
+                    OPTIONAL MATCH (rep)-[rp:MENTIONS
+                        {surface_form: rm.surface_form}]->(mn)
+                    FOREACH (_ IN CASE
+                        WHEN rm IS NOT NULL AND rp IS NULL THEN [1] ELSE [] END |
+                        CREATE (rep)-[:MENTIONS {
+                            surface_form: rm.surface_form,
+                            confidence: rm.confidence,
+                            created_at: rm.created_at
+                        }]->(mn)
+                    )
+                    FOREACH (_ IN CASE
+                        WHEN rm IS NOT NULL AND rp IS NOT NULL THEN [1] ELSE [] END |
+                        SET mn.mention_count = CASE
+                            WHEN coalesce(mn.mention_count, 0) > 0
+                            THEN mn.mention_count - 1
+                            ELSE 0
+                        END
+                    )
+                    DELETE rm
+                    WITH DISTINCT merged, rep
+                    // EXTENDS outbound: merged→other becomes rep→other;
+                    // an edge onto the representative itself is left
+                    // as-is (a rep→rep self-loop is never created).
+                    OPTIONAL MATCH (merged)-[re:EXTENDS]->(other:Memory)
+                    FOREACH (_ IN CASE
+                        WHEN re IS NOT NULL AND other.id <> $rep_id THEN [1] ELSE [] END |
+                        CREATE (rep)-[re2:EXTENDS]->(other)
+                        SET re2 = properties(re)
+                        DELETE re
+                    )
+                    WITH DISTINCT merged, rep
+                    // EXTENDS inbound: other→merged becomes other→rep.
+                    OPTIONAL MATCH (other:Memory)-[re:EXTENDS]->(merged)
+                    FOREACH (_ IN CASE
+                        WHEN re IS NOT NULL AND other.id <> $rep_id THEN [1] ELSE [] END |
+                        CREATE (other)-[re2:EXTENDS]->(rep)
+                        SET re2 = properties(re)
+                        DELETE re
+                    )
+                    WITH DISTINCT merged, rep
+                    // DERIVES_FROM outbound + inbound: same rewiring.
+                    OPTIONAL MATCH (merged)-[rd:DERIVES_FROM]->(other:Memory)
+                    FOREACH (_ IN CASE
+                        WHEN rd IS NOT NULL AND other.id <> $rep_id THEN [1] ELSE [] END |
+                        CREATE (rep)-[rd2:DERIVES_FROM]->(other)
+                        SET rd2 = properties(rd)
+                        DELETE rd
+                    )
+                    WITH DISTINCT merged, rep
+                    OPTIONAL MATCH (other:Memory)-[rd:DERIVES_FROM]->(merged)
+                    FOREACH (_ IN CASE
+                        WHEN rd IS NOT NULL AND other.id <> $rep_id THEN [1] ELSE [] END |
+                        CREATE (other)-[rd2:DERIVES_FROM]->(rep)
+                        SET rd2 = properties(rd)
+                        DELETE rd
+                    )
+                    """,
+                    id=memory_id,
+                    rep_id=representative_id,
+                    metadata=metadata,
+                )
+            logger.info(
+                "graph.memory.consolidated",
+                memory_id=memory_id,
+                representative_id=representative_id,
+                reason=reason,
+            )
+            return
+
+        # ---- in-memory backend: same-call atomicity ----
+        for entity_id, memories in self._memories.items():
+            merged = next((m for m in memories if m["id"] == memory_id), None)
+            if merged is None:
+                continue
+            representative = next(
+                (m for m in memories if m["id"] == representative_id), None
+            )
+            # Cross-entity representative or missing nodes: silent no-op.
+            if representative is None or not merged.get("is_latest", True):
+                return
+
+            merged["is_latest"] = False
+            merged["expired_at"] = now
+            merged["replaced_by"] = representative_id
+            merged["updated_at"] = now
+            existing = merged.get("metadata")
+            merged["metadata"] = (
+                {**existing, "reason": reason}
+                if isinstance(existing, dict)
+                else {"reason": reason}
+            )
+
+            # MENTIONS: move the merged memory's edges onto the
+            # representative, deduping identical (mention_id, surface)
+            # pairs; then recompute every node's mention_count from the
+            # live edges (the prune seam's recount half).
+            rep_edges = representative.setdefault("mentions", [])
+            rep_keys = {(e["mention_id"], e["surface_form"]) for e in rep_edges}
+            for edge in merged.pop("mentions", []):
+                key = (edge["mention_id"], edge["surface_form"])
+                if key in rep_keys:
+                    continue
+                rep_keys.add(key)
+                rep_edges.append(edge)
+            self._prune_orphaned_mentions(entity_id, memories)
+
+            # Relationships are stored on their target memory (see
+            # create_relationship): outbound merged→other records live on
+            # other's list (re-point from_id), inbound other→merged
+            # records live on merged's list (move to the representative).
+            # UPDATES records are never touched; an edge onto the
+            # representative itself is left as-is (no self-loop).
+            for m in memories:
+                for rel in m.get("relationships", []):
+                    if (
+                        rel.get("from_id") == memory_id
+                        and rel.get("type") in ("EXTENDS", "DERIVES_FROM")
+                        and rel.get("to_id") != representative_id
+                    ):
+                        rel["from_id"] = representative_id
+            moved: list[dict[str, Any]] = []
+            for rel in merged.get("relationships", []):
+                if rel.get("type") not in ("EXTENDS", "DERIVES_FROM"):
+                    continue
+                if rel.get("from_id") == representative_id:
+                    continue  # self-loop guard: stays as-is
+                rel["to_id"] = representative_id
+                moved.append(rel)
+            if moved:
+                representative.setdefault("relationships", []).extend(moved)
+            merged["relationships"] = [
+                rel
+                for rel in merged.get("relationships", [])
+                if rel.get("type") not in ("EXTENDS", "DERIVES_FROM")
+                or rel.get("from_id") == representative_id
+            ]
+
+            logger.info(
+                "graph.memory.consolidated",
+                memory_id=memory_id,
+                representative_id=representative_id,
+                reason=reason,
+            )
+            return
+
+    async def _consolidation_metadata(self, memory_id: str, reason: str) -> str:
+        """Merge ``reason`` into a memory's metadata as a JSON string.
+
+        Neo4j stores ``metadata`` as a JSON string (create_memory), so the
+        merged value is computed here — reading the current metadata from
+        the store, preserving it, and defaulting to
+        ``{"reason": reason}`` when absent or unparseable. The read
+        happens before the single-statement transaction; the
+        disposal+rewiring atomicity is unaffected.
+        """
+        import json
+
+        memory = await self.get_memory(memory_id)
+        base: dict[str, Any] = {}
+        if memory is not None:
+            current = memory.get("metadata")
+            if isinstance(current, str):
+                try:
+                    parsed = json.loads(current)
+                    if isinstance(parsed, dict):
+                        base = parsed
+                except ValueError:
+                    pass
+            elif isinstance(current, dict):
+                base = current
+        base["reason"] = reason
+        return json.dumps(base)
+
     async def create_update_relation(
         self,
         new_memory_id: str,

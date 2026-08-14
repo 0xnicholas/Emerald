@@ -63,10 +63,20 @@ async def neo4j_driver(neo4j_available):
 
     yield driver
 
-    # Cleanup: delete test data
+    # Cleanup: delete test data. Memory ids are random hex (not prefixed),
+    # so memories are matched through their entity; Mention nodes through
+    # their entity_id property (they carry no id prefix either).
     async with driver.session() as session:
-        await session.run("MATCH (m:Memory) WHERE m.id STARTS WITH 'user_int_test' DETACH DELETE m")
-        await session.run("MATCH (e:Entity) WHERE e.id STARTS WITH 'user_int_test' DELETE e")
+        await session.run(
+            "MATCH (mn:Mention) WHERE mn.entity_id STARTS WITH 'user_int_test' DETACH DELETE mn"
+        )
+        await session.run(
+            "MATCH (e:Entity)-[:HAS_MEMORY]->(m:Memory) "
+            "WHERE e.id STARTS WITH 'user_int_test' DETACH DELETE m"
+        )
+        await session.run(
+            "MATCH (e:Entity) WHERE e.id STARTS WITH 'user_int_test' DETACH DELETE e"
+        )
 
     await driver.close()
     neo4j_mod.get_neo4j_driver = original
@@ -139,3 +149,123 @@ async def test_graph_store_update_is_latest(neo4j_driver):
     old = await store.get_memory(old_id)
     assert old["is_latest"] is False
     assert old["replaced_by"] == new_id
+
+
+# ---------------------------------------------------------------------------
+# B6 T2 (#43): mark_consolidated on the Neo4j backend — the single-statement
+# disposal + rewiring must match the in-memory behavior (dual-backend
+# consistency, ticket criterion 2). The Cypher branch cannot be exercised
+# by the in-memory unit suite, so the key invariants are asserted here:
+# disposal fields + metadata reason, MENTIONS rewire/dedup with
+# mention_count, EXTENDS/DERIVES_FROM rewiring exactly once (no row
+# multiplication), UPDATES edges untouched, no self-loops, no
+# representative→merged UPDATES edge, and the cross-entity no-op guard.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_consolidated_disposal_and_rewiring(neo4j_driver):
+    """End-to-end consolidation on Neo4j: disposal, metadata, mention
+    rewiring with dedup, EXTENDS/DERIVES_FROM rewiring, no UPDATES edge."""
+    import json
+
+    from emerald.core.graph import GraphStore
+    from emerald.core.mentions import Mention
+
+    store = GraphStore(use_db=True)
+    entity_id = "user_int_test_consolidation"
+
+    rep = await store.create_memory("用户住在北京", entity_id=entity_id)
+    merged = await store.create_memory(
+        "用户住在北京", entity_id=entity_id, metadata={"src": "conv"}
+    )
+    other = await store.create_memory("北京有地铁", entity_id=entity_id)
+    await store.attach_mentions(rep, entity_id, [Mention("北京", "北京", "concept", 0.9)])
+    await store.attach_mentions(merged, entity_id, [Mention("北京", "北京", "concept", 0.9)])
+    await store.attach_mentions(merged, entity_id, [Mention("地铁", "地铁", "concept", 0.9)])
+    await store.attach_mentions(other, entity_id, [Mention("北京", "北京", "concept", 0.9)])
+    await store.create_relationship(merged, other, "EXTENDS", {"aspect": "detail"})
+    await store.create_relationship(other, merged, "DERIVES_FROM", {"reasoning": "combined"})
+    await store.create_relationship(rep, merged, "EXTENDS")  # self-loop guard case
+
+    await store.mark_consolidated(merged, rep)
+
+    # Disposal + metadata (Neo4j stores metadata as a JSON string).
+    memory = await store.get_memory(merged)
+    assert memory["is_latest"] is False
+    assert memory["replaced_by"] == rep
+    assert memory["expired_at"] is not None
+    meta = json.loads(memory["metadata"])
+    assert meta["reason"] == "consolidated"
+    assert meta["src"] == "conv"
+
+    # Representative untouched; no rep→merged UPDATES edge. (Neo4j
+    # nodes omit null-valued properties, so unset keys read as absent.)
+    rep_memory = await store.get_memory(rep)
+    assert rep_memory["is_latest"] is True
+    assert rep_memory.get("replaced_by") is None
+    assert rep_memory.get("expired_at") is None
+    updates = await store.get_relationship_neighbors([rep, merged], ["UPDATES"])
+    assert updates == {}
+
+    # MENTIONS: dedup 北京 into rep's existing edge (count 3→2), move 地铁.
+    rep_mentions = await store.get_memory_mentions(rep)
+    by_form = {m["surface_form"]: m for m in rep_mentions}
+    assert set(by_form) == {"北京", "地铁"}
+    assert by_form["北京"]["mention_count"] == 2  # rep + other
+    assert by_form["地铁"]["mention_count"] == 1
+    assert await store.get_memory_mentions(merged) == []
+    referencing = await store.get_memories_mentioning(entity_id, "北京")
+    assert sorted(m["id"] for m in referencing) == sorted([rep, other])
+
+    # EXTENDS/DERIVES_FROM rewired exactly once (multi-mention input must
+    # not multiply rows), self-loop case stays as rep→merged.
+    out = await store.get_relationship_neighbors([rep, merged], ["EXTENDS", "DERIVES_FROM"])
+    extends = [e for e in out.get(rep, []) if e["rel_type"] == "EXTENDS"]
+    assert {e["id"] for e in extends} == {merged, other}  # rep→merged kept, rep→other exactly once
+    derives = [e for e in out.get(rep, []) if e["rel_type"] == "DERIVES_FROM"]
+    assert [e["id"] for e in derives] == [other]
+    # merged's only remaining edge is the self-loop-guard rep→merged one.
+    merged_edges = out.get(merged, [])
+    assert [e["id"] for e in merged_edges] == [rep]
+
+    # Rewired edge properties survive.
+    rel = await store.get_relationship_by_property("EXTENDS", "aspect", "detail")
+    assert rel is not None and rel["from_id"] == rep and rel["to_id"] == other
+
+
+@pytest.mark.asyncio
+async def test_mark_consolidated_cross_entity_noop(neo4j_driver):
+    """A representative in another entity is a silent no-op on Neo4j too
+    (dual-backend parity for the entity-isolation guard)."""
+    from emerald.core.graph import GraphStore
+
+    store = GraphStore(use_db=True)
+    rep = await store.create_memory("用户住在北京", entity_id="user_int_test_consolidation_a")
+    merged = await store.create_memory(
+        "用户住在北京", entity_id="user_int_test_consolidation_b"
+    )
+
+    await store.mark_consolidated(merged, rep)
+
+    memory = await store.get_memory(merged)
+    assert memory["is_latest"] is True
+    assert memory.get("replaced_by") is None
+
+
+@pytest.mark.asyncio
+async def test_mark_consolidated_already_historical_noop(neo4j_driver):
+    """Re-consolidating an already-historical memory changes nothing."""
+    from emerald.core.graph import GraphStore
+
+    store = GraphStore(use_db=True)
+    entity_id = "user_int_test_consolidation"
+    rep = await store.create_memory("用户住在北京", entity_id=entity_id)
+    merged = await store.create_memory("用户住在北京", entity_id=entity_id)
+
+    await store.mark_consolidated(merged, rep)
+    replaced_by = (await store.get_memory(merged))["replaced_by"]
+    await store.mark_consolidated(merged, rep)
+
+    memory = await store.get_memory(merged)
+    assert memory["replaced_by"] == replaced_by == rep
