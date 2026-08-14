@@ -4,6 +4,9 @@ Suites:
 - temporal correctness (ticket #9)
 - forgetting effectiveness (ticket #10)
 - graph relationship precision (ticket #11)
+- mention precision / resolution / taxonomy / isolation (B3)
+- multihop retrieval (B4)
+- community forgetting effectiveness (B5, ticket #40)
 
 Principles (roadmap M2 / Wayfinder map #8):
 - deterministic corpus + fixed semantics (no wall-clock dependence)

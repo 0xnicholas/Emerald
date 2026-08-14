@@ -44,6 +44,12 @@ All notable changes to this project will be documented in this file.
   - Celery Beat 日级调度 `forget_communities_task`；修复既有三个遗忘策略 beat 条目指向未注册任务名的问题（`forget_expired`→`forget_expired_task` 等），并新增 beat 回归测试断言所有条目指向已注册任务
   - `build_adjacency` 从检测器提为模块级函数（T1/T3 共用接缝，零重复逻辑）
   - 引擎级单元测试 `tests/unit/test_forget_communities.py` 10 例（精确遗忘集、桥接存活不变式、画像豁免、提及剪除、实体隔离、指标、幂等/确定性）；顺带修复 T1 一条刀口边缘测试（3-clique 桥接合并依赖 UUID 顺序 → 改为路径结构）
+- **B5 确定性质量套件 + Neo4j 变体 + 聚合门（issue #40，spec #36 T4）**——社区遗忘的遗忘有效性进入独立侧质量门（ADR-0001）：
+  - `tests/quality/communities/`：确定性语料（两个过期社区 + 活跃社区 + 桥接记忆 + 画像引用信号）+ mock 嵌入 + 规则路径（无 LLM）+ 时间回拨，沿用既有遗忘套件的 Metric 类门槛模式
+  - 三项门槛全过：社区淘汰率 ≥ 0.95（过期社区作为簇整体消失，仅桥接记忆与一个边界端点按 spec 故事 7 存活）、信号存活率 ≥ 98%、检索保留率 ≥ 95%
+  - 遗忘前后检索结果集断言精确：基线 19 条全部可检索，遗忘后仅过期社区成员消失（9 条），全部信号仍可检索；全池探针（top_k 覆盖实体池 + 关闭动态截断）避开 trust×cosine 评分对低置信信号的排序干扰
+  - 同一场景定义（corpus + Metric + runner 共享模块）在真实 Neo4j 上实跑同场景：Cypher 分支（检测邻接、mark_expired reason=community_forgotten、画像豁免、get_memory 检索过滤）；Neo4j 不可达时 skip 不红门，CI `quality-temporal` 任务 compose 实跑
+  - 聚合门（`.github/workflows/quality.yml`）登记新 section（第 6 节）；quality marker 描述同步更新
 
 ### Changed
 
@@ -52,7 +58,7 @@ All notable changes to this project will be documented in this file.
 
 ### Test baseline
 
-- 全量：`1082 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
+- 全量：`1083 passed / 19 failed`（可选提取依赖 ×17 + docker 镜像 ×1 + LLM 重写 flake ×1——`test_rewrite_query_noop_for_long_query` 依赖真实 LLM 行为非确定，与 v0.6.0 基线同源）；质量门 65 项全绿（含 Neo4j 变体实跑）
 
 ## [0.6.0] — 2026-08-11
 
