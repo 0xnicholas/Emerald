@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] — M3（v0.7.0 目标）
+
+### Added
+
+- **B3 NER 提及层（issue #21–#28）**——提取后解析命名事物为图节点，为图谱深度打物理基底：
+  - **提及（Mention）节点**（ADR-0005）：`(:Memory)-[:MENTIONS]->(:Mention)` 是非事实引用类别（非第四种关系），去重键 `(entity_id, 规范形式, 类型)`，表层别名累积（「谷歌」「GOOGLE」解析到同一 Google 节点），mention_count 计数，创建/重复附加幂等
+  - **规则提取 + 封闭分类法**：`RuleMentionExtractor`（无 LLM 确定性路径）+ 封闭类型分类法（person/organization/location/technology/concept，域外回退 concept）+ 置信度门槛（低置信丢弃，无节点无边）
+  - **实体隔离**：提及节点实体作用域；跨实体同名不共节点；Neo4j Cypher 分支双实现覆盖
+  - **时序集成**：UPDATES 取代时旧记忆保留 MENTIONS 边（历史节点）；遗忘时剪除边并剪除孤立提及节点（原子事务）
+  - **跨实体隔离**：`get_memories_mentioning` 实体作用域、类型无关规范形式匹配、mention id 精确匹配
+  - 结构模板占位符空格归一化（中/拉丁公司名共享模板，issue #28）
+  - 质量套件 `tests/quality/mentions/`（4a 精度 / 4b 解析 / 4c 分类法 / 4d 隔离 / 4e 遗忘 / 4f 更新 + Neo4j 变体），确定性语料 + mock 嵌入 + 规则路径
+- **B4 多跳图谱推理（issue #29–#35）**——图谱遍历成为 `search` 的深度参数，三类边 + 提及桥：
+  - **实体中心检索**：`search(about=...)` 按提及（规范形式或 mention id）返回实体上下文池内提及该事物的全部最新记忆，跨所有表层形式；纯图谱操作，跳过 RAG/fast-lane
+  - **共享主体串联**：`Memory-MENTIONS->Mention<-MENTIONS-Memory` 一跳桥接（同实体同提及节点互为兄弟）
+  - **关系链式**：沿 UPDATES/EXTENDS/DERIVES_FROM 双向行走，链式推导（D2←D1←A 查 A 时 D2 以 depth 2 浮现）；每跳实体隔离；环路安全（visited 集合，浅层深度优先）
+  - **历史节点处理**：is_latest=False 仅在沿 UPDATES 被踩到时浮出并标记，从不主动搜历史、从不穿越历史
+  - **路径透明**：每个多跳结果携带 `path`（memory/mention 节点 + 关系边）与 `depth`（跳数）；种子 depth 0 空路径；REST（POST/GET）+ SDK 一致
+  - **排名**：信任分 × 0.85^depth 折扣，`(-score, depth)` 排序——同分种子在前；遗留一层关系扩展同样标注 depth=1 + 单边路径
+  - **深度语义**：默认 0（现状不变，显式 opt-in），上限 4（REST `le=4` + 引擎 clamp）
+  - **可观测性**：`emerald_search_hops` 直方图 + `emerald_multihop_paths_returned_total` 计数 + 每次多跳查询 `search.multihop` 日志（depth/seeds/paths_returned）；depth=0 零排放
+  - 质量套件 `tests/quality/multihop/`（5a 实体中心 / 5b 串联 / 5c 关系链 / 5d 路径透明 / 5e 环路安全 + Neo4j 变体），聚合门（quality.yml）登记新 section
+  - CONTEXT.md 新增「提及」「实体中心检索」「多跳推理」术语；ADR 评估结论：多跳作为 search 参数决策可逆，不立 ADR-0006
+
+### Changed
+
+- **统一 search 接入**：`SearchResult` 新增 `depth`/`path` 字段（`PathStep`）；`_memory_to_result` 补 tags 消除向量/about 与 keyword 路径结果漂移；GET 路由补 `is_latest`；SDK `SearchResult` 对齐 REST（path/depth/container_tag/tags）
+- 遗留关系扩展改用 `get_relationship_neighbors`（含边类型），补实体隔离过滤
+
+### Test baseline
+
+- 全量：`1027 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
+
 ## [0.6.0] — 2026-08-11
 
 ### Removed

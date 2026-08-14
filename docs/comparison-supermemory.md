@@ -2,6 +2,8 @@
 
 > **更新日期：2026-06-21（v2 重写），基于 Emerald 当前 HEAD（b301cfa）与 Supermemory 公开文档/API**
 >
+> **2026-08-14 增补（B3 NER + B4 多跳完成）**：§1.3 的 NER 差距已由 B3（issue #21–#28，提及节点 + ADR-0005）交付；§2 的深度=1 限制已由 B4（issue #29–#35，`search(..., about=, depth=)` 多跳推理）解除；§10 的 P2 NER / P3 多跳两项标记完成。差距矩阵与优先路径相应更新，其余章节保持 06-21 原状。
+>
 > **对比基线**：Supermemory 公开能力 + Emerald 源码。注：早期引用的 `reports/benchmark-20260615-*.json` 运行报告**从未纳入版本库**；2026-08-09 起按 ADR-0001，基准改为「合成对抗场景 + 真实嵌入绝对分」并承诺公开入库。
 >
 > **变更摘要**：相比 2026-06-09 的 v1 版本，Emerald 在 12 天内通过 33 个提交完成了**三项 P0 致命差距中两项的实质性修复**。本文档重写差距矩阵、优先路径与结论。
@@ -15,13 +17,14 @@
 | **版本** | v0.3.0（HEAD b301cfa，33 commits after 0.3.0 release） | v4 生产级 | 🟡 版本号差异缩小中 |
 | **事实提取** | ✅ **已实现** DeepSeek V4-Flash LLM 驱动（多事实分解、类型分类、置信度评分、summary） | ✅ LLM 驱动 | 🟢 **已对齐** |
 | **关系推断** | ✅ LLM-first + bigram 预滤 + 规则降级 | ✅ LLM 驱动语义理解 | ✅ 已对齐 |
-| **图谱搜索** | ✅ **已实现** Relationship Expansion（EXTENDS/DERIVES_FROM 双向遍历 depth=1） | ✅ Relationship Expansion | 🟢 **已对齐** |
+| **NER 实体抽取层** | ✅ **已实现**（B3，issue #21–#28）：提及（Mention）节点，实体隔离，`(entity_id, 规范形式, 类型)` 去重，表层别名累积，质量套件 4a 节 | ✅ 实体理解 | 🟢 **已对齐** |
+| **图谱搜索** | ✅ **已实现** 多跳图谱推理（B4，issue #29–#35）：`about=` 实体中心检索（跨表层形式）+ 共享主体 MENTIONS 桥 + UPDATES/EXTENDS/DERIVES_FROM 双向链式遍历（depth ≤ 4，默认 0）+ 路径/深度透明 + 历史节点标记 | ✅ Relationship Expansion | 🟢 **Emerald 深度优势** |
 | **首选项强化** | ✅ **已实现** `_strengthen_preferences()`（重复偏好 +0.05 置信度，上限 0.95） | ✅ 重复提及增强 | 🟢 **已对齐** |
 | **记忆类型自动检测** | ✅ **已实现** fact/preference/episodic 三类自动分类（LLM 提取阶段） | ✅ 类型检测 | 🟢 **已对齐** |
 | **元数据过滤** | ✅ MongoDB 风格（`$and`/`$or`/`$gte`/`$lte`/`$eq`/`$ne`） | ✅ 复杂过滤 | 🟢 已对齐 |
 | **批量写入** | ✅ `POST /v1/memories/batch`（最多 50 条） | ✅ | 🟢 已对齐 |
 | **图谱可视化** | ✅ `GET /v1/memories/graph`（节点+边） | ✅ | 🟢 已对齐 |
-| **基准测试** | ✅ 6 维度 / 1154 行 / JSON 报告（实际跑分中） | ✅ LongMemEval/LoCoMo/ConvoMem 公开分数 | 🟡 跑分存在但需真实 LLM |
+| **基准测试** | ✅ 6 维度 / 1154 行 / JSON 报告；真实嵌入绝对分已发布（bge-m3，Aggregate 0.943，7/7 通过——第二模型对照待补） | ✅ LongMemEval/LoCoMo/ConvoMem 公开分数 | 🟡 跑分存在但需真实 LLM |
 | **本地嵌入** | ✅ **新** fastembed（ONNX，无 PyTorch） | ❌ 仅云端 | 🟢 **Emerald 优势** |
 | **双写一致性** | ✅ **新** ReconciliationEngine（后台修复孤立节点） | ✅ | 🟢 已对齐 |
 | **生产级 Dockerfile** | ❌ 仍从 development 阶段拷贝 site-packages | ✅ 多阶段独立构建 | 🔴 仍存在 |
@@ -78,62 +81,43 @@ class DeepSeekFactExtractor(FactExtractor):
 
 ### 1.3 仍存在的次要差距
 
-- **未实现**：NER（命名实体识别）—— 当前依赖 LLM 自身的实体理解能力，无独立实体抽取层
-- **未实现**：细粒度实体链接（entity linking）—— 当前不显式建立 fact → entity 节点
+- ~~**未实现**：NER（命名实体识别）~~ ✅ **已交付**（2026-08，B3 issue #21–#28）：提取后解析提及（Mention）图节点（ADR-0005），`(entity_id, 规范形式, 类型)` 去重、表层别名累积、封闭类型分类法与置信度门槛，UPDATES 保留历史提及、遗忘剪除孤立节点；确定性质量套件 `tests/quality/mentions/` 回归保护。
+- **未实现**：细粒度实体链接（entity linking）—— 提及节点是实体引用（谈论对象），但不与外部知识库 ID 对齐（如 Wikidata）。B3 定界：跨实体提及合并永久 out。
 - **token 成本**：DeepSeek V4-Flash 成本低于 OpenAI，但仍是按调用计费
 
 ---
 
-## 2. 搜索 —— 从「关键缺失」到「已对齐」✅
+## 2. 搜索 —— 从「关键缺失」到「已对齐」到「图谱深度优势」✅
 
-### 2.1 现状
+### 2.1 现状（2026-08-14 增补：B4 多跳图谱推理）
 
-`emerald/core/search.py:320-393` 实现了 `_expand_relationships()`：
+`emerald/core/search.py` 的 `search(..., about=, depth=)` 在原有深度=1 的 `_expand_relationships()`（EXTENDS/DERIVES_FROM 双向、0.85 折扣，保留为 depth=0 现状语义）之上，新增了多跳遍历引擎（`emerald/core/multihop.py`）：
 
-```python
-async def _expand_relationships(
-    self,
-    results: list[SearchResult],
-    entity_id: str,
-    top_k: int,
-    expansion_factor: float = 0.85,
-) -> list[SearchResult]:
-    """Expand search results by traversing graph relationships.
+- **实体中心检索**：`about=<规范形式或提及 id>` 返回实体上下文池内提及该事物的全部最新记忆，跨所有表层形式（「谷歌」「GOOGLE」→ Google 同一提及节点，B3 解析语义）；纯图谱操作，不经向量相似度。
+- **共享主体串联**：`Memory-MENTIONS->Mention<-MENTIONS-Memory`——同一实体内提及同一事物的记忆互为兄弟节点。
+- **关系链式**：沿 UPDATES/EXTENDS/DERIVES_FROM **双向**行走，depth ≥ 2 链式（D2 推导自 D1 推导自 A → 查 A 时 D2 以 depth 2 浮现）；每跳实体隔离。
+- **历史节点**：is_latest=False 仅在沿 UPDATES 被踩到时浮出并标记，从不主动搜历史、从不穿越历史。
+- **路径透明**：每个多跳结果携带 `path`（经过的节点/边）与 `depth`（跳数）——Agent 可解释「为什么返回这条」。
+- **深度语义**：`depth` 默认 0（现状不变），显式 opt-in；上限 4（REST `le=4` + 引擎 clamp）。
+- **环路安全**：visited 集合，浅层深度优先，不重复不死亡循环（质量套件 5e 节）。
 
-    For each result, navigates EXTENDS and DERIVES_FROM relationships
-    (both directions, depth=1) and adds related memories as expansion
-    candidates with slightly discounted scores (default 0.85×).
-
-    This turns a flat vector search into a graph-aware retrieval:
-    - EXTENDS: includes complementary facts that enrich context
-    - DERIVES_FROM: includes source facts showing the reasoning chain
-    - UPDATES: already handled by is_latest filtering (superseded excluded)
-    """
-```
-
-配套的 `GraphStore.get_related_memories()`（graph.py:86+ 新增）实现双向遍历：
-
-```python
-# graph.py — bidirectionally fetch related memory IDs
-async def get_related_memories(
-    self, memory_ids: list[str], rel_types: list[str]
-) -> dict[str, list[str]]:
-    """Returns {source_id: [related_ids]} for EXTENDS/DERIVES_FROM edges."""
-```
+配套 `GraphStore` 遍历接缝：`get_memories_mentioning` / `get_memory_mentions`（提及桥，实体作用域）与 `get_relationship_neighbors`（关系邻接双向读取，含边类型/方向/实体/历史状态），Cypher + 内存双实现；质量套件 `tests/quality/multihop/`（63 项含 Neo4j 变体）回归保护。
 
 ### 2.2 与 Supermemory 对齐点
 
 | 能力 | Supermemory | Emerald |
 |---|---|---|
 | 向量搜索起点 | ✅ | ✅ |
-| EXTENDS 扩展 | ✅ | ✅（深度 1） |
-| DERIVES 扩展 | ✅ | ✅（深度 1） |
-| 分数折扣 | ✅ | ✅（`expansion_factor=0.85`） |
-| 防结果膨胀 | ✅ | ✅（截断到 `top_k * 2`） |
+| EXTENDS 扩展 | ✅ | ✅（深度 1 现状 + 多跳 depth ≤ 4） |
+| DERIVES 扩展 | ✅ | ✅（深度 1 现状 + 链式 depth ≥ 2） |
+| 分数折扣 | ✅ | ✅（`expansion_factor=0.85` + 多跳 0.85^depth） |
+| 防结果膨胀 | ✅ | ✅（截断到 `top_k * 2` + top_k 合并） |
+| 实体中心检索 | — | ✅ **Emerald 优势**（`about=`，跨表层形式） |
+| 多跳路径解释 | — | ✅ **Emerald 优势**（每结果 path + depth） |
 
-### 2.3 深度限制说明
+### 2.3 深度限制说明（已解除）
 
-当前实现仅支持**深度 = 1**。Supermemory 在某些场景支持更深的关系链（用于多跳推理）。如果需要，可通过多次调用 `_expand_relationships` 实现，但会增加延迟。
+~~当前实现仅支持深度 = 1。~~ 2026-08 B4（issue #29–#35）交付后：深度是 `search(..., depth=N)` 的参数（0 默认 = 现状，上限 4），支持 UPDATES/EXTENDS/DERIVES_FROM 双向链式遍历与共享主体桥接；每一跳实体隔离，历史节点仅在 UPDATES 链上浮出。多跳结果的路径解释与跳数标注已进 REST/SDK（issue #33）。
 
 ---
 
@@ -443,13 +427,13 @@ WEIGHT_RELATIONSHIPS = 0.20    # 关系数归一化到 [0,1]
 | 优先级 | 项目 | 理由 | 工作量 |
 |---|---|---|---|
 | **P0** | 优化 Dockerfile（production 独立 `pip install`） | 当前部署镜像 ~2GB 含 dev 依赖，生产环境启动慢、攻击面大 | 1-2 天 |
-| **P0** | 在真实 LLM/嵌入配置下重跑基准测试，发布分数 | 当前所有「LLM 质量」差距均为推测性，无真实数据支撑 | 1 周（含报告分析） |
-| **P1** | TypeScript SDK v1（对齐 Python SDK 方法集） | 拓展开发者基础，TS 生态（LangChain.js、Vercel AI SDK、Mastra）是 AI 应用主流 | 2-3 周 |
-| **P1** | 至少 2 个框架集成：LangChain.js + Vercel AI SDK | 进入主流 AI 开发生态是 Supermemory 拉开差距的主因 | 2-3 周 |
-| **P1** | v2 API 真实改进（v2 是 v1 别名问题） | 至少实现分页、限流、`customId` 幂等 3 项实质差异 | 1-2 周 |
+| **P0** | 在真实 LLM/嵌入配置下重跑基准测试，发布分数 | 当前所有「LLM 质量」差距均为推测性，无真实数据支撑 | ✅ 部分完成（08-11：bge-m3 绝对分报告已发布，7/7 通过；第二模型对照待补） |
+| **P1** | TypeScript SDK v1（对齐 Python SDK 方法集） | 拓展开发者基础，TS 生态（LangChain.js、Vercel AI SDK、Mastra）是 AI 应用主流 | ✅ 已完成（M2，`sdk/typescript/`） |
+| **P1** | 至少 2 个框架集成：LangChain.js + Vercel AI SDK | 进入主流 AI 开发生态是 Supermemory 拉开差距的主因 | 🟡 M3 精简为仅 LangChain.js（2026-08-13 决议），待启动 |
+| **P1** | v2 API 真实改进（v2 是 v1 别名问题） | 至少实现分页、限流、`customId` 幂等 3 项实质差异 | ✅ 已完成（M2：分页/限流/错误码在 v1 落地，v2 别名下线） |
 | **P2** | ~~关系推断规则路径重写为 LLM-first~~ ✅ 已完成（2026-06-22） | LLM-first + bigram 预滤 + 规则降级 | — |
-| **P2** | NER 实体抽取层（在 LLM 提取后补充结构化实体节点） | 提升图谱可分析性，支持 `GET /v1/memories/graph` 的实体可视化 | 2 周 |
-| **P3** | 真实时序扩展（depth=2+ 多跳推理） | 高价值但低频场景，先观察用户反馈 | 1 个月 |
+| **P2** | ~~NER 实体抽取层（在 LLM 提取后补充结构化实体节点）~~ ✅ 已完成（2026-08，B3 issue #21–#28） | 提及（Mention）图节点 + 实体隔离 + 跨表层解析 + 质量套件 | — |
+| **P3** | ~~真实时序扩展（depth=2+ 多跳推理）~~ ✅ 已完成（2026-08，B4 issue #29–#35） | `search(..., depth=)`：共享主体桥 + 关系链式 depth ≤ 4 + 路径透明 + 历史标记 | — |
 | **P3** | 框架生态扩张（CrewAI/n8n/Mastra 等） | 长期生态建设 | 持续 |
 
 ---

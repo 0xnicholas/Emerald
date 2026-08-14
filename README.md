@@ -383,7 +383,7 @@ docker compose up -d mcp
 
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **M3 (v0.7.0)**：NER 实体抽取、多跳图谱推理、LangChain.js 集成（Vercel AI / Mastra 延后至有用户信号）
+- **M3 (v0.7.0)**：NER 提及层 ✅ + 多跳图谱推理 ✅（2026-08 完成）；剩余 LangChain.js 集成（Vercel AI / Mastra 延后至有用户信号）
 - **M4 (v0.8.0)**：高级遗忘、负载测试验证、Staging 压测（解决性能 SLA P0）
 - **M5 (v0.9.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
 

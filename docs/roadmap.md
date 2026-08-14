@@ -15,6 +15,8 @@
 > **⚠️ 2026-08-11 v0.6.0 发布（连接器退役维护版本）**：自研连接器退役（ADR-0004 契约阶段，issue #7）为破坏性变更（移除 `/v1/connectors/*` 路由、`Connector` 模型、`cryptography` 依赖），按 SemVer 不作 patch，以 **v0.6.0** 作为独立维护版本发布（M2 完成后、M3 启动前）。后续里程碑顺延一位：**M3 生态爆发 → v0.7.0、M4 智能深度 → v0.8.0、M5 生产就绪 Beta → v0.9.0**；§10.1 版本语义表的阶段锚点相应后移（能力构建期延至 v0.8、Beta → v0.9、RC → v0.10）。
 >
 > **⚠️ 2026-08-13 M3 精简（生态链缩减到一个集成）**：经评估，M3 生态广度链从 C2+C3+C4 三个 JS 框架**缩减到只做 C2 LangChain.js**（最大用户基数 + 成熟 memory store 抽象，最契合「AI Agent 记忆基础设施」定位；作为唯一集成最直接缓解 R6——零用户时的生态投资赌注）。C3 Vercel AI SDK、C4 Mastra 延后至有用户信号再启动；C6 教程/示例收窄为围绕 LangChain.js 的 1-2 个 demo。B3 NER + B4 多跳推理保留（图谱深度核心差异化）。M3 工作量 ~14 → ~9-10 人周。
+>
+> **✅ 2026-08-14 M3 进度**：B3 NER（issue #21–#28：提及节点、跨表层解析、遗忘/更新集成）与 B4 多跳推理（issue #29–#35：实体中心检索 + 共享主体串联 + 关系链式 depth ≤ 4 + 路径透明 + 质量套件/Neo4j 变体 + 可观测性）**全部完成**。M3 剩余：C2 LangChain.js 集成 + C6 教程/示例（C1 ✅ 依赖已解除）。
 
 ---
 
@@ -86,7 +88,7 @@
 | 🟡 | 框架集成生态空白（仅 Pandaria） | 精简后仅 LangChain.js 进 M3（v0.7.0）；Vercel AI / Mastra 延后至有用户信号 | comparison-supermemory §10 P1 |
 | ⚪ | 真实基准策略 | **方向调整**：不追字面 LongMemEval/LoCoMo/ConvoMem 跑分（agent+memory 端到端基准，无法归因 memory 层）；改为合成对抗场景 + 真实嵌入绝对分 + 独立侧套件（ADR-0001） | comparison-supermemory §10 P0 |
 | ✅ | Cross-encoder 重排序 | M2 已完成：三级降级链 | production-readiness §5 |
-| 🟡 | NER 实体抽取层未实现 | M3 计划中 | comparison-supermemory §10 P2 |
+| ⚪ | NER 实体抽取层未实现 | ✅ **已完成**（2026-08，B3 issue #21–#28） | comparison-supermemory §10 P2 |
 | ✅ | 分布式追踪（OpenTelemetry） | M1 已完成（手动 + 自动 instrumentation） | production-readiness §4 |
 | 🟡 | 安全审计未做 | M2 部分完成（CORS 校验、跨实体授权、OAuth state）；正式审计在 M5 计划中 | production-readiness §7 |
 | 🟡 | 负载测试未做 | Locust 基础设施已在 M1 完成（`tests/load/`），压测验证仍待 D2/D3 | production-readiness §5 |
@@ -128,7 +130,7 @@
 | **B5.** 高级遗忘策略（基于图谱社区检测的批量遗忘） | 2 周 | B3 | — |
 | **B6.** 实时记忆整合（连续摄入下的图谱压缩） | 2 周 | B4 | — |
 
-**主题 B 总计**：~13 人周
+**主题 B 总计**：~13 人周（B0 ✅ 绝对分报告 bge-m3 已发布；B1 ✅ Cross-encoder M2 完成；B2 ✅ LLM-first 关系推断；B3 ✅ NER 提及层 2026-08 完成；B4 ✅ 多跳图谱推理 2026-08 完成；剩 B5 高级遗忘、B6 实时记忆整合——B6 依赖 B4 已解除）
 
 ### 主题 C：生态扩展（Ecosystem Expansion）
 
@@ -157,7 +159,7 @@
 | **D4.** 长期稳定性测试（72 小时 soak test，检测内存泄漏/连接泄漏） | 1 周 | D3 | v0.9.0 |
 | **D5.** 模糊测试（API 输入边界、SQL 注入、XSS 模拟） | 1 周 | A6 | v0.9.0 |
 
-**主题 D 总计**：~6 人周
+**主题 D 总计**：~6 人周（D1 依赖 A1 ✅ / B0 ✅ 已解除；D2 依赖 A2 验证状态待确认）
 
 ### 主题汇总
 
