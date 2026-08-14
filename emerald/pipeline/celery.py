@@ -53,6 +53,10 @@ celery_app.conf.beat_schedule = {
         "task": "emerald.pipeline.tasks.forget_communities_task",
         "schedule": 86400.0,  # Daily (B5 #39, low-frequency)
     },
+    "consolidate-duplicate-memories": {
+        "task": "emerald.pipeline.tasks.consolidate_duplicates_task",
+        "schedule": 86400.0,  # Daily 5 AM (B6 #44, after the forget batch)
+    },
     "reconcile-index": {
         "task": "emerald.pipeline.tasks.reconcile_index_task",
         "schedule": 1800.0,  # Every 30 minutes

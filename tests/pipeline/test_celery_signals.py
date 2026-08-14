@@ -85,3 +85,26 @@ def test_community_forgetting_is_scheduled_daily():
     # The existing three strategies keep their own entries.
     for key in ("forget-expired-memories", "forget-noise-memories", "decay-episodic-memories"):
         assert key in schedule
+
+
+def test_consolidation_is_scheduled_daily_after_the_forget_batch():
+    """The B6 strategy is wired into beat with its own entry, ordered after
+    the forget batch (5 AM — only surviving is_latest memories merge)."""
+    from emerald.pipeline.celery import celery_app
+
+    schedule = celery_app.conf.beat_schedule
+    assert "consolidate-duplicate-memories" in schedule
+    entry = schedule["consolidate-duplicate-memories"]
+    assert entry["task"] == "emerald.pipeline.tasks.consolidate_duplicates_task"
+    assert entry["schedule"] == 86400.0
+    # Runs after the forgetting strategies in beat order.
+    order = list(schedule)
+    assert order.index("consolidate-duplicate-memories") > order.index(
+        "forget-community-memories"
+    )
+    assert order.index("consolidate-duplicate-memories") > order.index(
+        "decay-episodic-memories"
+    )
+    assert order.index("consolidate-duplicate-memories") > order.index(
+        "forget-noise-memories"
+    )

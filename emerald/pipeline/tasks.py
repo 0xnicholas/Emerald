@@ -491,6 +491,36 @@ async def _run_forget_communities() -> dict:
 
 
 @shared_task
+def consolidate_duplicates_task() -> dict:
+    """Celery Beat: daily 5 AM - converge near-duplicate active facts
+    (B6, #44), after the forget batch so only surviving memories merge."""
+    return run_async(_run_consolidate_duplicates)()
+
+
+async def _run_consolidate_duplicates() -> dict:
+    from emerald.core.forget import ForgetEngine
+    from emerald.core.graph import GraphStore
+    from emerald.core.vector import VectorStore
+
+    async def _work():
+        async with _neo4j_driver_for_loop():
+            engine = ForgetEngine(
+                graph=GraphStore(use_db=True),
+                vector_store=VectorStore(use_db=True),
+            )
+            count = await engine.consolidate_duplicates()
+            logger.info("pipeline.task.consolidate_duplicates", count=count)
+            return {"strategy": "consolidated", "count": count}
+
+    result = await _locked_run(_work(), "task_consolidate_duplicates", ttl=3600)
+    return (
+        result
+        if result is not None
+        else {"strategy": "consolidated", "count": 0, "skipped": True}
+    )
+
+
+@shared_task
 def reconcile_index_task() -> dict:
     """Celery Beat: every 30 min - repair orphaned graph nodes.
 

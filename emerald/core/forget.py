@@ -11,6 +11,15 @@ Five strategies, triggered by Celery Beat scheduled tasks:
    emerald.core.community), bridge memories and profile-referenced /
    high-importance communities exempt.
 
+Plus one maintenance strategy, triggered daily at 5 AM after the
+forgetting batch (B6, ADR-0006):
+
+6. Duplicate consolidation (B6, #44): near-duplicate active facts of an
+   entity converge into a single representative — vector candidates +
+   rule guardrails (emerald.core.duplicates, #42) landed through the
+   atomic ``mark_consolidated`` seam (#43). Only memories that survived
+   the forgetting batch (is_latest=true) are eligible.
+
 Forgetting integration (B3 NER, #27): every strategy funnels through
 GraphStore.mark_expired, which also removes the memory's MENTIONS edges
 and prunes Mention nodes left with zero MENTIONS edges — the graph never
@@ -25,6 +34,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from typing import Any
 
 import structlog
 
@@ -36,9 +46,17 @@ from emerald.core.community import (
     forgotten_memories,
     score_communities,
 )
+from emerald.core.duplicates import (
+    DuplicateAction,
+    DuplicateConfig,
+    DuplicatesDetector,
+    DuplicateVerdict,
+    select_representative,
+)
 from emerald.core.graph import GraphStore
-from emerald.core.metrics import forget_communities_total
+from emerald.core.metrics import consolidate_duplicates_total, forget_communities_total
 from emerald.core.profile import ProfileManager
+from emerald.core.vector import VectorStore
 
 logger = structlog.get_logger(__name__)
 
@@ -49,6 +67,7 @@ class ForgetStrategy(str, Enum):
     NOISE_FILTER = "noise_filter"
     EPISODIC_DECAY = "episodic_decay"
     COMMUNITY = "community_forgotten"
+    CONSOLIDATE = "consolidated"
 
 
 class ForgetEngine:
@@ -70,9 +89,16 @@ class ForgetEngine:
         self,
         graph: GraphStore | None = None,
         profile_manager: ProfileManager | None = None,
+        vector_store: VectorStore | None = None,
+        duplicate_config: DuplicateConfig | None = None,
     ) -> None:
         self.graph = graph or GraphStore(use_db=False)
         self._profile_manager = profile_manager
+        # Consolidation (B6) reads embeddings and queries the vector store
+        # through DuplicatesDetector; production passes VectorStore(use_db=True).
+        self._vector_store = vector_store
+        # The D2 data-calibration seam (ADR-0006): detection thresholds.
+        self._duplicate_config = duplicate_config
 
     # ---- Time-based expiry (runs hourly) ----
 
@@ -304,6 +330,177 @@ class ForgetEngine:
                 importance=max(current.importance, float(fact.relevance)),
             )
         return features
+
+    # ---- Duplicate consolidation (B6, #44) — runs daily at 5 AM ----
+
+    async def consolidate_duplicates(self, entity_id: str | None = None) -> int:
+        """Converge near-duplicate active facts into single representatives
+        (B6, ADR-0006; spec #41).
+
+        Per entity: vector candidates → guardrail verdicts (T1 #42, the
+        rule layer decides — no LLM), then every merge lands through the
+        atomic ``mark_consolidated`` seam (T2 #43). Runs after the
+        forgetting batch, so only memories that survived it (is_latest)
+        are eligible. One entity's failure is logged and skipped — the
+        sweep never aborts.
+
+        A duplicate *group* (the connected component of consolidate
+        verdicts) converges on a single representative: the deterministic
+        total order (trust desc → created_at desc → id asc) picks the
+        group representative, and each other member merges into it iff
+        its own pair verdict with the representative is CONSOLIDATE — a
+        vetoed member is kept as-is (误并率 = 0 硬门: a veto is never
+        bypassed through a third member).
+
+        Observability: one structured log and one metric increment per
+        pair decision (``emerald_consolidate_duplicates_total``, action
+        labels from ``DuplicateAction``), plus a log line per landed
+        merge.
+
+        Returns the number of consolidated memories.
+        """
+        now = datetime.now(UTC)
+        target_entities = [entity_id] if entity_id else await self._list_all_entity_ids()
+
+        detector = DuplicatesDetector(
+            graph=self.graph,
+            vector=self._vector_store,
+            profile_manager=self._profile_manager,
+            config=self._duplicate_config,
+        )
+
+        total = 0
+        for eid in target_entities:
+            total += await self._consolidate_entity(eid, now, detector)
+
+        if total:
+            logger.info("forget.consolidate", count=total)
+        return total
+
+    async def _consolidate_entity(
+        self, entity_id: str, now: datetime, detector: DuplicatesDetector
+    ) -> int:
+        """Detect + decide one entity, report every decision, then land the
+        merges. A broken entity is logged and skipped (AGENTS.md: 每次提取
+        必须优雅处理失败 — one failure never aborts the sweep)."""
+        try:
+            verdicts = await detector.detect(entity_id, now=now)
+            if not verdicts:
+                return 0
+
+            for verdict in verdicts:  # already deterministic (pair-ids order)
+                consolidate_duplicates_total.labels(action=verdict.action.value).inc()
+                merged_id = None
+                if verdict.representative_id is not None:
+                    a_id: str = verdict.candidate.memory_a["id"]
+                    merged_id = (
+                        verdict.candidate.memory_b["id"]
+                        if verdict.representative_id == a_id
+                        else a_id
+                    )
+                logger.info(
+                    "forget.consolidate.decision",
+                    entity_id=entity_id,
+                    memory_a=verdict.candidate.memory_a["id"],
+                    memory_b=verdict.candidate.memory_b["id"],
+                    similarity=verdict.candidate.similarity,
+                    action=verdict.action.value,
+                    reason=verdict.reason,
+                    representative_id=verdict.representative_id,
+                    merged_id=merged_id,
+                )
+            return await self._land_merges(entity_id, verdicts)
+        except Exception:
+            logger.exception("forget.consolidate.entity_error", entity_id=entity_id)
+            return 0
+
+    async def _land_merges(
+        self, entity_id: str, verdicts: list[DuplicateVerdict]
+    ) -> int:
+        """Reduce consolidate verdicts to merges: group the pairs into
+        connected components, pick the component representative with the
+        deterministic total order, and consolidate every member into it
+        iff the member's own pair verdict with the representative
+        consolidates. A vetoed or absent pair verdict leaves the member
+        untouched — pairwise guardrails are never bypassed transitively.
+        """
+        by_pair = {v.candidate.ids: v for v in verdicts}
+        consolidating = [v for v in verdicts if v.action is DuplicateAction.CONSOLIDATE]
+        if not consolidating:
+            return 0
+
+        # Union-find over the consolidating pairs → duplicate groups.
+        parent: dict[str, str] = {}
+
+        def _find(mid: str) -> str:
+            root = parent.setdefault(mid, mid)
+            while parent[root] != root:
+                root = parent[root]
+            while parent[mid] != root:  # path compression
+                parent[mid], mid = root, parent[mid]
+            return root
+
+        def _union(a: str, b: str) -> None:
+            ra, rb = _find(a), _find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        for verdict in consolidating:
+            first_id, second_id = verdict.candidate.ids
+            _union(first_id, second_id)
+
+        members: dict[str, set[str]] = {}
+        trust: dict[str, float] = {}
+        records: dict[str, dict[str, Any]] = {}
+        for verdict in consolidating:
+            mem_a, mem_b = verdict.candidate.memory_a, verdict.candidate.memory_b
+            members.setdefault(_find(mem_a["id"]), set()).update(
+                (mem_a["id"], mem_b["id"])
+            )
+            trust.setdefault(mem_a["id"], verdict.candidate.trust_a)
+            trust.setdefault(mem_b["id"], verdict.candidate.trust_b)
+            records.setdefault(mem_a["id"], mem_a)
+            records.setdefault(mem_b["id"], mem_b)
+
+        count = 0
+        for root in sorted(members):
+            component = sorted(members[root])
+            representative = select_representative(
+                [records[mid] for mid in component], trust
+            )
+            for mid in component:
+                if mid == representative:
+                    continue
+                pair = (mid, representative) if mid < representative else (
+                    representative,
+                    mid,
+                )
+                pair_verdict = by_pair.get(pair)
+                if (
+                    pair_verdict is None
+                    or pair_verdict.action is not DuplicateAction.CONSOLIDATE
+                ):
+                    continue  # vetoed or unverified — kept as-is
+                try:
+                    await self.graph.mark_consolidated(
+                        mid, representative, reason="consolidated"
+                    )
+                    count += 1
+                    logger.info(
+                        "forget.consolidate.merged",
+                        entity_id=entity_id,
+                        merged=mid,
+                        representative=representative,
+                    )
+                except Exception:
+                    # A single failing memory must not abort the rest of
+                    # the entity's merges.
+                    logger.exception(
+                        "forget.consolidate.mark_consolidated_error",
+                        entity_id=entity_id,
+                        memory_id=mid,
+                    )
+        return count
 
     async def _list_all_entity_ids(self) -> list[str]:
         """List all entity IDs that have at least one latest memory.

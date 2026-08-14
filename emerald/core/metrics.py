@@ -62,6 +62,12 @@ forget_communities_total = Counter(
     ["action"],
 )
 
+consolidate_duplicates_total = Counter(
+    "emerald_consolidate_duplicates_total",
+    "Duplicate consolidation decisions (B6): per-pair actions.",
+    ["action"],
+)
+
 # ---------------------------------------------------------------------------
 # Histograms
 # ---------------------------------------------------------------------------
