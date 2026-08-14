@@ -88,7 +88,7 @@
 | 🟡 | 框架集成生态空白（仅 Pandaria） | 精简后仅 LangChain.js 进 M3（v0.7.0）；Vercel AI / Mastra 延后至有用户信号 | comparison-supermemory §10 P1 |
 | ⚪ | 真实基准策略 | **方向调整**：不追字面 LongMemEval/LoCoMo/ConvoMem 跑分（agent+memory 端到端基准，无法归因 memory 层）；改为合成对抗场景 + 真实嵌入绝对分 + 独立侧套件（ADR-0001） | comparison-supermemory §10 P0 |
 | ✅ | Cross-encoder 重排序 | M2 已完成：三级降级链 | production-readiness §5 |
-| ⚪ | NER 实体抽取层未实现 | ✅ **已完成**（2026-08，B3 issue #21–#28） | comparison-supermemory §10 P2 |
+| ✅ | ~~NER 实体抽取层未实现~~ | ✅ **已完成**（2026-08，B3 issue #21–#28） | comparison-supermemory §10 P2 |
 | ✅ | 分布式追踪（OpenTelemetry） | M1 已完成（手动 + 自动 instrumentation） | production-readiness §4 |
 | 🟡 | 安全审计未做 | M2 部分完成（CORS 校验、跨实体授权、OAuth state）；正式审计在 M5 计划中 | production-readiness §7 |
 | 🟡 | 负载测试未做 | Locust 基础设施已在 M1 完成（`tests/load/`），压测验证仍待 D2/D3 | production-readiness §5 |
