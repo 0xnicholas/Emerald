@@ -51,6 +51,11 @@ mentions_extracted_total = Counter(
     "Total number of named-entity mentions extracted during ingestion (B3 NER).",
 )
 
+multihop_paths_returned_total = Counter(
+    "emerald_multihop_paths_returned_total",
+    "Total number of multihop results (paths) returned across searches (B4).",
+)
+
 # ---------------------------------------------------------------------------
 # Histograms
 # ---------------------------------------------------------------------------
@@ -71,6 +76,14 @@ memory_add_latency_seconds = Histogram(
     "emerald_memory_add_latency_seconds",
     "Memory add latency in seconds.",
     buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
+search_hops = Histogram(
+    "emerald_search_hops",
+    "Graph traversal depth requested per multihop search query (B4).",
+    # Depth is clamped to [0, 4] (MAX_DEPTH); 0 is never observed — the
+    # histogram is touched only when the walk is opted in.
+    buckets=[1, 2, 3, 4],
 )
 
 

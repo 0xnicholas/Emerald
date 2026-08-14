@@ -1101,3 +1101,70 @@ async def test_ranking_seeds_first_then_by_depth(populated, graph):
     assert results.results[-1].id == mid_a
     assert results.results[-1].is_latest is False
 
+
+# ---- Multihop observability (B4, ticket #35) ----
+
+
+@pytest.mark.asyncio
+async def test_multihop_search_emits_metrics_and_logs(populated, graph):
+    """Every depth>0 query records hops + paths metrics and a depth log."""
+    import structlog
+    from prometheus_client import REGISTRY
+
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+    hops_before = REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+    paths_before = (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        results = await populated.search(
+            "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+            about="Foo", depth=2,
+        )
+
+    # The walk returned three paths: A (UPDATES), D1, D2.
+    assert len(results.results) == 4  # 1 seed + 3 multihop
+    assert (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    ) == paths_before + 3
+    assert (
+        REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+    ) == hops_before + 1
+
+    multihop_logs = [
+        entry for entry in logs
+        if entry.get("event") == "search.multihop"
+    ]
+    assert len(multihop_logs) == 1
+    assert multihop_logs[0]["depth"] == 2
+    assert multihop_logs[0]["paths_returned"] == 3
+    assert multihop_logs[0]["entity_id"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_depth0_search_emits_no_multihop_metrics(populated, graph):
+    """depth=0 (status quo) never touches the multihop observability."""
+    import structlog
+    from prometheus_client import REGISTRY
+
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+    paths_before = (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    )
+    hops_before = REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+
+    with structlog.testing.capture_logs() as logs:
+        await populated.search(
+            "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+            about="Foo", depth=0,
+        )
+
+    assert (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    ) == paths_before
+    assert (
+        REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+    ) == hops_before
+    assert not [e for e in logs if e.get("event") == "search.multihop"]
+

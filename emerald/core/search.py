@@ -18,7 +18,12 @@ from emerald.config import get_settings
 from emerald.core.embedder import EmbeddingProvider
 from emerald.core.fast_lane import FastLaneStore
 from emerald.core.graph import GraphStore
-from emerald.core.metrics import search_latency_seconds, timed
+from emerald.core.metrics import (
+    multihop_paths_returned_total,
+    search_hops,
+    search_latency_seconds,
+    timed,
+)
 from emerald.core.multihop import MAX_DEPTH, MultihopEngine
 from emerald.core.tracing import get_tracer
 from emerald.core.trust import compute_trust_score
@@ -376,11 +381,24 @@ class SearchOrchestrator:
         hops = await engine.expand(
             [r.id for r in results], entity_id, depth,
         )
+        # Observability (spec #29 / ticket #35): every multihop query
+        # records its depth and returned-path count in the metrics and
+        # in the log, so traversal health is monitorable.
+        search_hops.observe(depth)
         if not hops:
+            multihop_paths_returned_total.inc(0)
+            logger.info(
+                "search.multihop",
+                entity_id=entity_id,
+                depth=depth,
+                seeds=len(results),
+                paths_returned=0,
+            )
             return results
 
         seen_ids = {r.id for r in results}
         expanded: list[SearchResult] = list(results)
+        paths_returned = 0
         for bridged_id, hop in hops.items():
             if bridged_id in seen_ids:
                 continue
@@ -393,6 +411,7 @@ class SearchOrchestrator:
                 # chains surface it (engine contract, #32).
                 continue
             seen_ids.add(bridged_id)
+            paths_returned += 1
             expanded.append(
                 self._memory_to_result(
                     memory,
@@ -405,6 +424,14 @@ class SearchOrchestrator:
                     ],
                 )
             )
+        multihop_paths_returned_total.inc(paths_returned)
+        logger.info(
+            "search.multihop",
+            entity_id=entity_id,
+            depth=depth,
+            seeds=len(results),
+            paths_returned=paths_returned,
+        )
         return expanded
 
     async def _search_memory_keyword(
