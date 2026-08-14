@@ -335,6 +335,10 @@ class GraphStore:
 
         Used by ForgetEngine to scan for memories that need archiving.
         Unlike list_latest_memories, this does NOT filter out expired memories.
+        Ordered newest-first with memory id as the deterministic tie-break
+        (B5 #37: the community detector's capped node set must be
+        reproducible — equal created_at timestamps resolve by id on both
+        backends).
         """
         self._init_driver()
         if self._use_db and self._driver:
@@ -344,7 +348,7 @@ class GraphStore:
                     MATCH (e:Entity {id: $entity_id})-[:HAS_MEMORY]->(m:Memory)
                     WHERE m.is_latest = true
                     RETURN m
-                    ORDER BY m.created_at DESC
+                    ORDER BY m.created_at DESC, m.id
                     LIMIT $limit
                     """,
                     entity_id=entity_id,
@@ -361,6 +365,9 @@ class GraphStore:
         latest = [m for m in memories if m["is_latest"]]
         if memory_type:
             latest = [m for m in latest if m["memory_type"] == memory_type]
+        # Two-pass stable sort: newest first, equal timestamps by id
+        # ascending — mirrors the Cypher branch's deterministic tie-break.
+        latest.sort(key=lambda m: m["id"])
         latest.sort(key=lambda m: m["created_at"], reverse=True)
         return latest[:limit]
 

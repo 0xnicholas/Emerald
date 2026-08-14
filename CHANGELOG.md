@@ -25,6 +25,13 @@ All notable changes to this project will be documented in this file.
   - **可观测性**：`emerald_search_hops` 直方图 + `emerald_multihop_paths_returned_total` 计数 + 每次多跳查询 `search.multihop` 日志（depth/seeds/paths_returned）；depth=0 零排放
   - 质量套件 `tests/quality/multihop/`（5a 实体中心 / 5b 串联 / 5c 关系链 / 5d 路径透明 / 5e 环路安全 + Neo4j 变体），聚合门（quality.yml）登记新 section
   - CONTEXT.md 新增「提及」「实体中心检索」「多跳推理」术语；ADR 评估结论：多跳作为 search 参数决策可逆，不立 ADR-0006
+- **B5 社区检测器（issue #37，spec #36 T1）**——确定性标签传播，为社区遗忘提供纯结构划分：
+  - `emerald/core/community.py`：`CommunityDetector.detect(entity_id) → {memory_id: community_id}`，沿 UPDATES/EXTENDS/DERIVES_FROM（双向）与共享提及桥划分社区；异步标签传播（多数原则 + 度数/ID 双 tie-break 保住稠密簇不被单桥节点合并）
+  - **确定性契约**：固定节点序 + 固定邻居序 + 确定性 tie-break——同图同输入必得同划分（质量套件可精确断言）
+  - **实体隔离 + 历史排除**：仅 is_latest=true 的实体自有记忆参与结构；跨实体边过滤、历史节点既非成员也非粘合
+  - **零新增图存储方法**：邻接全部经由 B4 既有读取原语（`list_forget_candidates` / `get_relationship_neighbors` / `get_memory_mentions` 倒排索引），双后端可用，无 Neo4j GDS 依赖
+  - **规模护栏**：每实体记忆上限 + 迭代上限，护栏触达时结构化日志
+  - 单元测试 `tests/unit/test_community.py`（链/星/环路/双团+桥接/提及簇合成图 + 确定性 + 隔离 + 护栏，17 例）
 
 ### Changed
 
@@ -33,7 +40,7 @@ All notable changes to this project will be documented in this file.
 
 ### Test baseline
 
-- 全量：`1027 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
+- 全量：`1045 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
 
 ## [0.6.0] — 2026-08-11
 
