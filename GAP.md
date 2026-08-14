@@ -6,7 +6,7 @@
 > - 参照系声明（AGENTS.md）：Supermemory 自称在 LongMemEval、LoCoMo、ConvoMem 三项基准上最优（未经本仓库验证，Emerald 不背书）。Emerald 的度量体系独立于参照系，见 `docs/adr/0001`。
 > - **差距清单不是进度指标**：新投入须独立辩护（功能三问 gate），不得以「Supermemory 有」为理由。
 
-**更新日期**：2026-08-14（B3 NER + B4 多跳完成后）。依据：`docs/comparison-supermemory.md`（2026-06-21 v2 + 08-14 增补）、`docs/roadmap.md`。
+**更新日期**：2026-08-14（B5 交付后 + B6 立项 ADR-0006）。依据：`docs/comparison-supermemory.md`（2026-06-21 v2 + 08-14 增补）、`docs/roadmap.md`。
 
 ---
 
@@ -18,6 +18,7 @@
 | 关系推断 LLM-first | ✅ LLM-first + bigram 预滤 + 规则降级（2026-06） | comparison §10 P2 |
 | 图谱搜索遍历 | ✅ 从 depth=1 扩展到多跳图谱推理（B4，issue #29–#35）：`about=` 实体中心检索 + 共享主体桥 + UPDATES/EXTENDS/DERIVES_FROM 双向链式（depth ≤ 4）+ 路径透明 + 历史标记 | comparison §2（08-14 增补） |
 | NER 实体抽取层 | ✅ B3（issue #21–#28）：提及（Mention）图节点（ADR-0005），跨表层解析，实体隔离，遗忘/更新集成 | comparison §1.3、§10 P2 |
+| 高级遗忘策略（B5） | ✅ 社区检测 + 活性评分决策 + forget_communities 策略 + 确定性质量套件（issue #36–#40，2026-08-14） | roadmap 主题 B |
 | Cross-encoder 重排序 | ✅ 三级降级链（M2） | roadmap 未解决项 |
 | TypeScript SDK v1 | ✅ M2（`sdk/typescript/`，对齐 Python SDK） | comparison §10 P1 |
 | v2 API 实质改进 | ✅ M2：分页/限流/错误码在 v1 落地，v2 别名下线 | comparison §10 P1 |
@@ -32,8 +33,7 @@
 | **P1** | 框架集成生态（仅 Pandaria） | 🟡 M3 精简后仅 LangChain.js（C2，依赖已解除，待启动） | comparison §10 P1、roadmap 未解决项 |
 | **P1** | 第二模型嵌入对照（text-embedding-3-large 等） | 🟡 需真实 API 可达；D1 小尾巴 | comparison §10 P0 |
 | **P1** | 负载测试验证（Locust 基础设施已有，压测验证待 D2/D3） | 🟡 依赖 k8s 实操验证（A2） | production-readiness §5 |
-| **P2** | 高级遗忘策略（图谱社区检测批量遗忘，B5） | ⚪ 未启动（B3 依赖已解除） | roadmap 主题 B |
-| **P2** | 实时记忆整合（连续摄入图谱压缩，B6） | ⚪ 未启动（B4 依赖已解除） | roadmap 主题 B |
+| **P2** | 记忆整合（近重复活跃事实无损收敛，B6） | 🟡 已立项（ADR-0006，2026-08-14；spec 见 issue #41） | roadmap 主题 B |
 | **P2** | 细粒度实体链接（提及 ↔ 外部知识库 ID，如 Wikidata） | ⚪ 未启动；B3 定界：跨实体提及合并永久 out | comparison §1.3 |
 | **P2** | 正式安全审计 | 🟡 M2 部分完成（0 P0/P1）；M5 计划中 | production-readiness §7 |
 | **P3** | API 文档 overhaul 余项（教程、SDK 对照示例——C6 收窄范围内） | 🟡 OpenAPI 自动化 ✅；教程待 C2 | production-readiness §10 |
