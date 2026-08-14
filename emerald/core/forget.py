@@ -1,11 +1,15 @@
 """Forget engine — automatic memory lifecycle management.
 
-Four strategies, triggered by Celery Beat scheduled tasks:
+Five strategies, triggered by Celery Beat scheduled tasks:
 
 1. Time-based expiry: valid_until passed → is_latest=False, expired_at=now
 2. Contradiction resolution: handled by RelationshipEngine (Phase 4)
 3. Noise filtering: confidence < 0.3, no references, > 7 days old → archive
 4. Episodic decay: episodic memories > 90 days → archive
+5. Community forgetting (B5, #39): low-activity communities forgotten
+   wholesale — deterministic detection + scoring + decision (see
+   emerald.core.community), bridge memories and profile-referenced /
+   high-importance communities exempt.
 
 Forgetting integration (B3 NER, #27): every strategy funnels through
 GraphStore.mark_expired, which also removes the memory's MENTIONS edges
@@ -18,12 +22,23 @@ AGENTS.md: "没有遗忘，每句随意的话都会变成永久记忆。图谱�
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 import structlog
 
+from emerald.core.community import (
+    CommunityDetector,
+    MemoryFeatures,
+    build_adjacency,
+    decide_communities,
+    forgotten_memories,
+    score_communities,
+)
 from emerald.core.graph import GraphStore
+from emerald.core.metrics import forget_communities_total
+from emerald.core.profile import ProfileManager
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +48,7 @@ class ForgetStrategy(str, Enum):
     CONTRADICTION = "contradiction"
     NOISE_FILTER = "noise_filter"
     EPISODIC_DECAY = "episodic_decay"
+    COMMUNITY = "community_forgotten"
 
 
 class ForgetEngine:
@@ -50,8 +66,13 @@ class ForgetEngine:
     EPISODIC_ARCHIVE_DAYS = 90
     EPISODIC_REDUCE_WEIGHT_DAYS = 30
 
-    def __init__(self, graph: GraphStore | None = None) -> None:
+    def __init__(
+        self,
+        graph: GraphStore | None = None,
+        profile_manager: ProfileManager | None = None,
+    ) -> None:
         self.graph = graph or GraphStore(use_db=False)
+        self._profile_manager = profile_manager
 
     # ---- Time-based expiry (runs hourly) ----
 
@@ -156,6 +177,133 @@ class ForgetEngine:
         if count:
             logger.info("forget.episodic_decay", count=count)
         return count
+
+    # ---- Community forgetting (B5, #39) — runs daily ----
+
+    async def forget_communities(self, entity_id: str | None = None) -> int:
+        """Forget low-activity communities wholesale (B5, spec #36).
+
+        Per entity: detect communities (deterministic label propagation,
+        #37), score their activity and decide (pure structural/statistical
+        signals, #38), then forget each forgotten community's members
+        through the existing ``mark_expired`` seam with reason
+        ``community_forgotten`` — MENTIONS edge removal and orphan
+        mention pruning ride along automatically (#27). Bridge memories
+        and profile-referenced / high-importance communities are exempt
+        and kept as-is. One community is processed as one unit within a
+        single run.
+
+        Observability: one structured log and one metric increment per
+        community decision (entity_id, community_id, size,
+        activity_score, action). A broken entity is logged and skipped —
+        one failure never aborts the sweep.
+
+        Returns the number of forgotten memories.
+        """
+        now = datetime.now(UTC)
+        target_entities = [entity_id] if entity_id else await self._list_all_entity_ids()
+
+        total = 0
+        for eid in target_entities:
+            total += await self._forget_communities_for_entity(eid, now)
+
+        if total:
+            logger.info("forget.communities", count=total)
+        return total
+
+    async def _forget_communities_for_entity(
+        self, entity_id: str, now: datetime
+    ) -> int:
+        try:
+            partition = await CommunityDetector(graph=self.graph).detect(entity_id)
+            if not partition:
+                return 0
+
+            nodes = sorted(partition)
+            adjacency = await build_adjacency(self.graph, entity_id, nodes)
+            features = await self._community_features(entity_id, nodes)
+            scores = score_communities(partition, adjacency, features, now=now)
+            verdicts = decide_communities(partition, adjacency, features, scores)
+            forgotten = forgotten_memories(partition, verdicts)
+
+            count = 0
+            members_by_community: dict[str, list[str]] = {}
+            for mid, community_id in partition.items():
+                members_by_community.setdefault(community_id, []).append(mid)
+
+            # One community is handled as one unit: decide, log, then
+            # forget its cohort consecutively — a community is never
+            # interleaved with another entity's work within the run.
+            for community_id in sorted(members_by_community):
+                verdict = verdicts[community_id]
+                forget_communities_total.labels(action=verdict.action.value).inc()
+                logger.info(
+                    "forget.community_decision",
+                    entity_id=entity_id,
+                    community_id=community_id,
+                    size=verdict.size,
+                    activity_score=verdict.activity_score,
+                    action=verdict.action.value,
+                )
+                for mid in sorted(members_by_community[community_id]):
+                    if mid not in forgotten:
+                        continue
+                    try:
+                        await self.graph.mark_expired(mid, reason="community_forgotten")
+                        count += 1
+                    except Exception:
+                        # A single failing memory must not abort the rest
+                        # of the entity's communities.
+                        logger.exception(
+                            "forget.communities.mark_expired_error",
+                            entity_id=entity_id,
+                            memory_id=mid,
+                        )
+            return count
+        except Exception:
+            # AGENTS.md: 每次提取必须优雅处理失败 — one broken entity
+            # must never abort the sweep across the rest.
+            logger.exception("forget.communities.entity_error", entity_id=entity_id)
+            return 0
+
+    async def _community_features(
+        self, entity_id: str, nodes: list[str]
+    ) -> dict[str, MemoryFeatures]:
+        """Assemble per-memory scoring features: graph records plus the
+        entity profile's static/dynamic references (#38 seam)."""
+        features: dict[str, MemoryFeatures] = {}
+        for mid in nodes:
+            memory = await self.graph.get_memory(mid)
+            if memory is None:
+                continue
+            features[mid] = MemoryFeatures(
+                confidence=float(memory.get("confidence", 0.5)),
+                created_at=memory.get("created_at"),
+                last_accessed_at=memory.get("last_accessed_at"),
+            )
+
+        if self._profile_manager is None:
+            self._profile_manager = ProfileManager(graph=self.graph)
+        profile = await self._profile_manager.get(entity_id)
+        for fact in profile.static:
+            if fact.memory_id not in features:
+                continue
+            current = features[fact.memory_id]
+            features[fact.memory_id] = replace(
+                current,
+                profile_referenced=True,
+                importance=max(current.importance, float(fact.importance)),
+            )
+        for fact in profile.dynamic:
+            if fact.memory_id not in features:
+                continue
+            current = features[fact.memory_id]
+            features[fact.memory_id] = replace(
+                current,
+                profile_referenced=True,
+                importance=max(current.importance, float(fact.relevance)),
+            )
+        return features
 
     async def _list_all_entity_ids(self) -> list[str]:
         """List all entity IDs that have at least one latest memory.

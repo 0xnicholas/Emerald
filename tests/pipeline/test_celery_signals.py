@@ -1,7 +1,5 @@
 """Tests for Celery worker lifecycle signal wiring."""
 
-import pytest
-
 from emerald.pipeline.celery import _dispose_db_pool_before_task
 
 
@@ -57,3 +55,33 @@ def test_worker_process_init_signal_is_registered():
         recv = ref() if isinstance(ref, weakref.ReferenceType) else ref
         names.append(getattr(recv, "__name__", None))
     assert "_init_worker_process" in names
+
+
+def test_beat_schedule_entries_reference_registered_tasks():
+    """Every beat entry must resolve to a registered task name.
+
+    Regression for B5 #39: the forget beat entries once pointed at bare
+    names (``forget_expired``) while the tasks register as ``*_task`` —
+    beat would raise NotRegistered and the strategies never fired.
+    """
+    from emerald.pipeline.celery import celery_app
+
+    registered = set(celery_app.tasks.keys())
+    for name, entry in celery_app.conf.beat_schedule.items():
+        assert entry["task"] in registered, (
+            f"beat entry {name!r} references unregistered task {entry['task']!r}"
+        )
+
+
+def test_community_forgetting_is_scheduled_daily():
+    """The B5 strategy is wired into beat alongside the three existing ones."""
+    from emerald.pipeline.celery import celery_app
+
+    schedule = celery_app.conf.beat_schedule
+    assert "forget-community-memories" in schedule
+    entry = schedule["forget-community-memories"]
+    assert entry["task"] == "emerald.pipeline.tasks.forget_communities_task"
+    assert entry["schedule"] == 86400.0
+    # The existing three strategies keep their own entries.
+    for key in ("forget-expired-memories", "forget-noise-memories", "decay-episodic-memories"):
+        assert key in schedule

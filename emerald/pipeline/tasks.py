@@ -466,6 +466,31 @@ async def _run_decay_episodic() -> dict:
 
 
 @shared_task
+def forget_communities_task() -> dict:
+    """Celery Beat: daily - community-based forgetting (B5, #39)."""
+    return run_async(_run_forget_communities)()
+
+
+async def _run_forget_communities() -> dict:
+    from emerald.core.forget import ForgetEngine
+    from emerald.core.graph import GraphStore
+
+    async def _work():
+        async with _neo4j_driver_for_loop():
+            engine = ForgetEngine(graph=GraphStore(use_db=True))
+            count = await engine.forget_communities()
+            logger.info("pipeline.task.forget_communities", count=count)
+            return {"strategy": "community_forgotten", "count": count}
+
+    result = await _locked_run(_work(), "task_forget_communities", ttl=3600)
+    return (
+        result
+        if result is not None
+        else {"strategy": "community_forgotten", "count": 0, "skipped": True}
+    )
+
+
+@shared_task
 def reconcile_index_task() -> dict:
     """Celery Beat: every 30 min - repair orphaned graph nodes.
 

@@ -174,9 +174,13 @@ async def test_shared_mention_bridges_memories(detector, graph):
 
 @pytest.mark.asyncio
 async def test_mention_bridge_glues_relationship_clusters(detector, graph):
-    """A mention edge between two relationship clusters merges them."""
-    a = await _clique(graph, "e1", "a", 3)
-    b = await _clique(graph, "e1", "b", 3)
+    """A mention edge between two relationship clusters merges them.
+
+    The fixture is a path (a1-a0-b0-b1): chains converge to a single
+    community for every node ordering, so the assertion is deterministic.
+    """
+    a = await _clique(graph, "e1", "a", 2)
+    b = await _clique(graph, "e1", "b", 2)
     await _mention(graph, a[0], "e1", "Shared")
     await _mention(graph, b[0], "e1", "Shared")
 

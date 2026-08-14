@@ -83,6 +83,50 @@ DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_MAX_MEMORIES = 1000
 
 
+async def build_adjacency(
+    graph: GraphStore,
+    entity_id: str,
+    nodes: list[str],
+) -> dict[str, set[str]]:
+    """Build the undirected adjacency of a node set (B5 #37/#39 seam).
+
+    Relationship edges: one batch read via the B4 neighbor primitive,
+    filtered to same-entity, is_latest=true neighbors. Mention bridges:
+    per-node mention reads assembled into an in-process inverted index;
+    memories sharing a Mention node become neighbors (nodes iterate in
+    sorted order, so index members are ordered and the built adjacency
+    is deterministic). Used by the detector (#37) and by the
+    forget_communities strategy (#39) for scoring / bridge detection.
+    """
+    node_set = set(nodes)
+    adjacency: dict[str, set[str]] = {nid: set() for nid in nodes}
+
+    neighbors = await graph.get_relationship_neighbors(nodes, RELATIONSHIP_TYPES)
+    for nid, edges in neighbors.items():
+        for neighbor in edges:
+            if neighbor.get("entity_id") != entity_id:
+                continue  # ADR-0002: never cross the entity boundary
+            if not neighbor.get("is_latest", True):
+                continue  # history never participates in structure
+            neighbor_id = neighbor["id"]
+            if neighbor_id in node_set:
+                adjacency[nid].add(neighbor_id)
+
+    mention_index: dict[str, list[str]] = {}
+    for nid in nodes:
+        for mention in await graph.get_memory_mentions(nid):
+            if mention.get("entity_id") != entity_id:
+                continue  # defense-in-depth: mentions are entity-scoped
+            mention_index.setdefault(mention["id"], []).append(nid)
+    for members in mention_index.values():
+        for i, first in enumerate(members):
+            for second in members[i + 1 :]:
+                adjacency[first].add(second)
+                adjacency[second].add(first)
+
+    return adjacency
+
+
 class CommunityDetector:
     """Deterministic in-process community detection over an entity's pool."""
 
@@ -110,7 +154,7 @@ class CommunityDetector:
         nodes = await self._load_nodes(entity_id)
         if not nodes:
             return {}
-        adjacency = await self._build_adjacency(entity_id, nodes)
+        adjacency = await build_adjacency(self.graph, entity_id, nodes)
         labels, converged = self._propagate(nodes, adjacency)
         if not converged:
             logger.info(
@@ -145,44 +189,6 @@ class CommunityDetector:
             )
             memories = memories[: self.max_memories]
         return sorted({m["id"] for m in memories})
-
-    async def _build_adjacency(self, entity_id: str, nodes: list[str]) -> dict[str, set[str]]:
-        """Build the undirected adjacency of the node set.
-
-        Relationship edges: one batch read via the B4 neighbor primitive,
-        filtered to same-entity, is_latest=true neighbors. Mention
-        bridges: per-node mention reads assembled into an in-process
-        inverted index; memories sharing a Mention node become neighbors
-        (nodes iterate in sorted order, so index members are ordered and
-        the built adjacency is deterministic).
-        """
-        node_set = set(nodes)
-        adjacency: dict[str, set[str]] = {nid: set() for nid in nodes}
-
-        neighbors = await self.graph.get_relationship_neighbors(nodes, RELATIONSHIP_TYPES)
-        for nid, edges in neighbors.items():
-            for neighbor in edges:
-                if neighbor.get("entity_id") != entity_id:
-                    continue  # ADR-0002: never cross the entity boundary
-                if not neighbor.get("is_latest", True):
-                    continue  # history never participates in structure
-                neighbor_id = neighbor["id"]
-                if neighbor_id in node_set:
-                    adjacency[nid].add(neighbor_id)
-
-        mention_index: dict[str, list[str]] = {}
-        for nid in nodes:
-            for mention in await self.graph.get_memory_mentions(nid):
-                if mention.get("entity_id") != entity_id:
-                    continue  # defense-in-depth: mentions are entity-scoped
-                mention_index.setdefault(mention["id"], []).append(nid)
-        for members in mention_index.values():
-            for i, first in enumerate(members):
-                for second in members[i + 1 :]:
-                    adjacency[first].add(second)
-                    adjacency[second].add(first)
-
-        return adjacency
 
     def _propagate(
         self, nodes: list[str], adjacency: dict[str, set[str]]
@@ -266,11 +272,12 @@ RECENCY_HALF_LIFE_DAYS = 30.0
 class CommunityAction(StrEnum):
     """Per-community forgetting action (B5 T2, #38).
 
-    ``forget`` / ``exempt_profile`` / ``exempt_bridge`` / ``keep`` — the
-    same vocabulary T3 (#39) reports in metrics and per-decision logs.
+    ``forgotten`` / ``exempt_profile`` / ``exempt_bridge`` / ``keep`` —
+    the same vocabulary T3 (#39) reports in metrics and per-decision logs
+    (spec #39: 指标按 action：forgotten / exempt_bridge / exempt_profile).
     """
 
-    FORGET = "forget"
+    FORGET = "forgotten"
     EXEMPT_PROFILE = "exempt_profile"
     EXEMPT_BRIDGE = "exempt_bridge"
     KEEP = "keep"
@@ -496,7 +503,7 @@ def decide_communities(
        (spec #36: 桥接记忆豁免并保留), the remaining members are
        forgotten by the strategy (所在社区不整体遗忘);
     3. otherwise, a low-activity community is forgotten wholesale —
-       ``forget``;
+       ``forgotten``;
     4. healthy communities (score ≥ threshold) are ``keep``.
 
     Exemption labels only fire when they change the outcome: a healthy
@@ -552,7 +559,7 @@ def forgotten_memories(
 
     Pure projection of the decision rules:
 
-    - ``forget`` → every member;
+    - ``forgotten`` → every member;
     - ``exempt_bridge`` → every member except the bridge memories
       (the community is not wholly forgotten; the bridge survives);
     - ``exempt_profile`` / ``keep`` → nothing.

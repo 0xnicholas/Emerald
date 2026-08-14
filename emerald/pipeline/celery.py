@@ -38,16 +38,20 @@ celery_app.conf.beat_schedule = {
         "schedule": 3600.0,  # Every hour: fallback sweep, webhook events are primary
     },
     "forget-expired-memories": {
-        "task": "emerald.pipeline.tasks.forget_expired",
+        "task": "emerald.pipeline.tasks.forget_expired_task",
         "schedule": 3600.0,  # Every hour
     },
     "forget-noise-memories": {
-        "task": "emerald.pipeline.tasks.forget_noise",
+        "task": "emerald.pipeline.tasks.forget_noise_task",
         "schedule": 86400.0,  # Daily (3 AM handled by the task itself)
     },
     "decay-episodic-memories": {
-        "task": "emerald.pipeline.tasks.decay_episodic",
+        "task": "emerald.pipeline.tasks.decay_episodic_task",
         "schedule": 86400.0,  # Daily (4 AM)
+    },
+    "forget-community-memories": {
+        "task": "emerald.pipeline.tasks.forget_communities_task",
+        "schedule": 86400.0,  # Daily (B5 #39, low-frequency)
     },
     "reconcile-index": {
         "task": "emerald.pipeline.tasks.reconcile_index_task",

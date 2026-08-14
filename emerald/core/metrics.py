@@ -56,6 +56,12 @@ multihop_paths_returned_total = Counter(
     "Total number of multihop results (paths) returned across searches (B4).",
 )
 
+forget_communities_total = Counter(
+    "emerald_forget_communities_total",
+    "Community forgetting decisions (B5): per-community actions.",
+    ["action"],
+)
+
 # ---------------------------------------------------------------------------
 # Histograms
 # ---------------------------------------------------------------------------

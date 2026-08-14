@@ -37,6 +37,13 @@ All notable changes to this project will be documented in this file.
   - `find_bridge_memories`：邻居跨越 ≥2 社区的边界节点；`decide_communities` 决策矩阵：低于阈值 → 整社区遗忘；含画像引用或高 importance 记忆的社区豁免（exempt_profile）；持桥接记忆的低活性社区部分遗忘（exempt_bridge：桥接记忆保留、其余遗忘——所在社区不整体遗忘）；健康社区 keep
   - `forgotten_memories`：决策到遗忘集的纯投影（T3 落地接缝）；豁免标签仅在改变结局时打出
   - 确定性：全部纯函数形态（显式传 `now`，无 I/O）；单元测试 `tests/unit/test_community_decisions.py` 决策矩阵 25 例全绿
+- **B5 forget_communities 策略（issue #39，spec #36 T3）**——第四个自动遗忘策略上线：
+  - `ForgetEngine.forget_communities(entity_id=None)`：枚举实体 → 检测社区（T1）→ 评分决策（T2）→ 整社区经既有 `mark_expired` 接缝遗忘（reason=`community_forgotten`；MENTIONS 边剪除与孤立提及节点剪除随既有接缝自动生效）
+  - 豁免生效：活跃社区、桥接记忆（及边界端点）、画像引用/高 importance 社区原样保留；单实体运行不影响其他实体；单次运行内同社区连续处理
+  - 可观测性：每社区决策结构化日志（entity_id/community_id/size/activity_score/action）+ `emerald_forget_communities_total` 指标（按 action：forgotten / exempt_bridge / exempt_profile / keep）
+  - Celery Beat 日级调度 `forget_communities_task`；修复既有三个遗忘策略 beat 条目指向未注册任务名的问题（`forget_expired`→`forget_expired_task` 等），并新增 beat 回归测试断言所有条目指向已注册任务
+  - `build_adjacency` 从检测器提为模块级函数（T1/T3 共用接缝，零重复逻辑）
+  - 引擎级单元测试 `tests/unit/test_forget_communities.py` 10 例（精确遗忘集、桥接存活不变式、画像豁免、提及剪除、实体隔离、指标、幂等/确定性）；顺带修复 T1 一条刀口边缘测试（3-clique 桥接合并依赖 UUID 顺序 → 改为路径结构）
 
 ### Changed
 
@@ -45,7 +52,7 @@ All notable changes to this project will be documented in this file.
 
 ### Test baseline
 
-- 全量：`1070 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
+- 全量：`1082 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
 
 ## [0.6.0] — 2026-08-11
 
