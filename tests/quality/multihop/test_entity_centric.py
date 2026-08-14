@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import pytest
 
-from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.search import SearchMode
 from tests.quality.mentions.conftest import add_content
 from tests.quality.mentions.corpus import HAPPY_PATH_CORPUS
+from tests.quality.multihop.conftest import make_orchestrator
 
 pytestmark = [pytest.mark.quality]
 
@@ -34,14 +35,6 @@ BOTH_ENTRY = HAPPY_PATH_CORPUS[4]  # Python + Google in one memory
 NO_MENTION_ENTRY = HAPPY_PATH_CORPUS[6]  # "用户喜欢喝咖啡" → []
 
 
-def _orchestrator(engine) -> SearchOrchestrator:
-    return SearchOrchestrator(
-        graph=engine.graph,
-        vector=engine.vector,
-        fast_lane_store=engine.fast_lane_store,
-        embedder=engine.embedder,
-    )
-
 
 async def test_about_returns_all_surface_forms_of_the_mention(engine, entity_id):
     """about=Google returns the Google/谷歌/GOOGLE memories, not others."""
@@ -51,7 +44,7 @@ async def test_about_returns_all_surface_forms_of_the_mention(engine, entity_id)
     both_mid = await add_content(engine, entity_id, BOTH_ENTRY[0])
     python_mid = await add_content(engine, entity_id, PYTHON_ENTRY[0])
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "关于 Google 的一切",
         entity_id=entity_id,
         search_mode=SearchMode.MEMORY,
@@ -67,7 +60,7 @@ async def test_about_unknown_canonical_returns_empty(engine, entity_id):
     await add_content(engine, entity_id, GOOGLE_ENTRY[0])
     await add_content(engine, entity_id, NO_MENTION_ENTRY[0])
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "关于 NoSuchThing 的一切",
         entity_id=entity_id,
         search_mode=SearchMode.MEMORY,
@@ -82,7 +75,7 @@ async def test_about_is_entity_scoped(engine, entity_id):
     mid_a = await add_content(engine, entity_id, GOOGLE_ENTRY[0])
     mid_b = await add_content(engine, other_entity, GOOGLE_ENTRY[0])
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY, about="Google",
     )
     ids = {r.id for r in results.results}
@@ -98,7 +91,7 @@ async def test_about_returns_memory_source_only(engine, entity_id):
         entity_id=entity_id, document_id="doc-1",
     )
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.HYBRID, about="Google",
     )
     assert all(r.source == "memory" for r in results.results)

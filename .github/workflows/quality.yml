@@ -6,8 +6,12 @@ name: Quality Suites (temporal)
 # - graph relationship precision (tests/quality/temporal/test_graph_relationship_precision.py)
 # - mention precision / resolution / taxonomy / isolation
 #   (tests/quality/mentions/)
+# - multihop retrieval (B4): entity-centric about retrieval, shared-subject
+#   bridging, relationship chains, path transparency, cycle safety
+#   (tests/quality/multihop/)
 # - real-storage variants on Neo4j (tests/quality/temporal/test_neo4j_quality_variants.py,
-#   tests/quality/mentions/test_neo4j_mention_variants.py)
+#   tests/quality/mentions/test_neo4j_mention_variants.py,
+#   tests/quality/multihop/test_neo4j_multihop_variants.py)
 #
 # The suite is green only when every section's metrics meet their thresholds;
 # sections cannot offset each other.

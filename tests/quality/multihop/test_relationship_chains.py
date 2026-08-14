@@ -28,8 +28,9 @@ import pytest
 
 from emerald.core.mentions import Mention
 from emerald.core.multihop import MultihopEngine
-from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.search import SearchMode
 from tests.quality.mentions.conftest import add_content
+from tests.quality.multihop.conftest import make_orchestrator
 
 pytestmark = [pytest.mark.quality]
 
@@ -42,14 +43,6 @@ X_CONTENT = "河里游着金鱼"        # extends A2
 E_CONTENT = "树下堆着落叶"        # unrelated, also mentions Foo (2nd seed)
 C_OTHER_CONTENT = "天上飘着白云"  # another entity, derives from D1
 
-
-def _orchestrator(engine) -> SearchOrchestrator:
-    return SearchOrchestrator(
-        graph=engine.graph,
-        vector=engine.vector,
-        fast_lane_store=engine.fast_lane_store,
-        embedder=engine.embedder,
-    )
 
 
 async def _seed_chain_world(engine, entity_id: str) -> dict[str, str]:
@@ -88,7 +81,7 @@ async def test_depth0_returns_only_the_about_seeds(engine, entity_id):
     """depth=0 (default): exactly the current facts mentioning Foo."""
     ids = await _seed_chain_world(engine, entity_id)
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Foo", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo", depth=0,
     )
@@ -101,7 +94,7 @@ async def test_depth1_surfaces_derived_and_history(engine, entity_id):
     """Depth 1: reverse DERIVES_FROM + EXTENDS + UPDATES history, marked."""
     ids = await _seed_chain_world(engine, entity_id)
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Foo", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo", depth=1,
     )
@@ -119,11 +112,11 @@ async def test_derives_chain_depth2_exact(engine, entity_id):
     """D2 derives from D1 derives from A2: depth 2 reaches exactly D2."""
     ids = await _seed_chain_world(engine, entity_id)
 
-    depth1 = await _orchestrator(engine).search(
+    depth1 = await make_orchestrator(engine).search(
         "Foo", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo", depth=1,
     )
-    depth2 = await _orchestrator(engine).search(
+    depth2 = await make_orchestrator(engine).search(
         "Foo", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo", depth=2,
     )
@@ -142,7 +135,7 @@ async def test_cross_entity_edge_never_surfaces(engine, entity_id):
     """C (other entity) derives from D1 — the walk never leaves the pool."""
     ids = await _seed_chain_world(engine, entity_id)
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Foo", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo", depth=5,
     )
@@ -185,7 +178,7 @@ async def test_depth_cap_at_four(engine, entity_id):
     for derived, source in zip(ids[1:], ids, strict=False):
         await engine.graph.create_relationship(derived, source, "DERIVES_FROM")
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Foo2", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo2", depth=5,  # clamped to 4
     )

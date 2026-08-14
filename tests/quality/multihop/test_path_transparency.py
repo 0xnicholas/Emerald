@@ -24,9 +24,10 @@ from __future__ import annotations
 import pytest
 
 from emerald.core.mentions import Mention
-from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.search import SearchMode
 from tests.quality.mentions.conftest import add_content
 from tests.quality.mentions.corpus import HAPPY_PATH_CORPUS
+from tests.quality.multihop.conftest import make_orchestrator
 
 pytestmark = [pytest.mark.quality]
 
@@ -35,14 +36,6 @@ GOOGLE_ENTRY = HAPPY_PATH_CORPUS[1]  # "用户在 Google 工作"
 GUGE_ENTRY = HAPPY_PATH_CORPUS[8]  # "用户在谷歌工作"
 BOTH_ENTRY = HAPPY_PATH_CORPUS[4]  # Python + Google
 
-
-def _orchestrator(engine) -> SearchOrchestrator:
-    return SearchOrchestrator(
-        graph=engine.graph,
-        vector=engine.vector,
-        fast_lane_store=engine.fast_lane_store,
-        embedder=engine.embedder,
-    )
 
 
 async def test_seeds_are_depth0_with_empty_path(engine, entity_id):
@@ -53,7 +46,7 @@ async def test_seeds_are_depth0_with_empty_path(engine, entity_id):
         "both": await add_content(engine, entity_id, BOTH_ENTRY[0]),
     }
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=0,
     )
@@ -72,7 +65,7 @@ async def test_mention_bridge_carries_full_path(engine, entity_id):
         "python": await add_content(engine, entity_id, PYTHON_ENTRY[0]),
     }
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=1,
     )
@@ -116,7 +109,7 @@ async def test_derives_chain_carries_relationship_path(engine, entity_id):
     await engine.graph.create_relationship(ids["d1"], ids["a2"], "DERIVES_FROM")
     await engine.graph.create_relationship(ids["d2"], ids["d1"], "DERIVES_FROM")
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Foo", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Foo", depth=2,
     )
@@ -157,7 +150,7 @@ async def test_ranking_seeds_first_multihop_annotated(engine, entity_id):
         "python": await add_content(engine, entity_id, PYTHON_ENTRY[0]),
     }
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=1,
     )

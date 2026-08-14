@@ -11,10 +11,12 @@ scenarios against a real Neo4j backend, covering the Cypher branches:
 - relationship chains over UPDATES / EXTENDS / DERIVES_FROM via
   get_relationship_neighbors: reverse DERIVES_FROM, chained depth ≥ 2,
   UPDATES-surfaced history marked and terminal (#32)
+- cycle safety on the Cypher branch: mutual mentions and mutual
+  relationship edges surface each memory once (#34)
 
 Skipped when no test Neo4j is reachable; the CI `quality-temporal` job
-runs it with the compose services up. Later B4 tickets (#33-#34) extend
-this file with unified-path and ranking scenarios.
+runs it with the compose services up. The aggregate gate collects every
+file in tests/quality/ marked ``quality`` (.github/workflows/quality.yml).
 """
 
 from __future__ import annotations
@@ -222,6 +224,22 @@ async def _run_relationship_chains_on_neo4j(driver) -> None:
     hops = await engine.expand([chain[0]], entity_a, depth=99)
     assert chain[4] in hops and chain[5] not in hops
     assert hops[chain[4]].depth == 4
+
+    # Cycle safety on the Cypher branch (#34): mutual EXTENDS + a shared
+    # mention — every memory surfaces once at its shallowest depth.
+    mid_cyc_a = await seed(entity_a, "猫在房顶上睡觉")
+    mid_cyc_b = await seed(entity_a, "冰箱里有牛奶")
+    await store.attach_mentions(
+        mid_cyc_a, entity_a, [Mention("Cyc", "Cyc", "concept", 0.9)],
+    )
+    await store.attach_mentions(
+        mid_cyc_b, entity_a, [Mention("Cyc", "Cyc", "concept", 0.9)],
+    )
+    await store.create_relationship(mid_cyc_a, mid_cyc_b, "EXTENDS")
+    await store.create_relationship(mid_cyc_b, mid_cyc_a, "EXTENDS")
+    hops = await engine.expand([mid_cyc_a], entity_a, depth=4)
+    assert set(hops) == {mid_cyc_b}
+    assert hops[mid_cyc_b].depth == 1
 
 
 @pytest.mark.asyncio

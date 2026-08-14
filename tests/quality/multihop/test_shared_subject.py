@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import pytest
 
-from emerald.core.search import SearchMode, SearchOrchestrator
+from emerald.core.search import SearchMode
 from tests.quality.mentions.conftest import add_content
 from tests.quality.mentions.corpus import HAPPY_PATH_CORPUS
+from tests.quality.multihop.conftest import make_orchestrator
 
 pytestmark = [pytest.mark.quality]
 
@@ -36,14 +37,6 @@ BOTH_ENTRY = HAPPY_PATH_CORPUS[4]  # Python + Google
 GUGE_ENTRY = HAPPY_PATH_CORPUS[8]  # "用户在谷歌工作" → Google
 UPPER_GOOGLE_ENTRY = HAPPY_PATH_CORPUS[9]  # "用户在 GOOGLE 工作" → Google
 
-
-def _orchestrator(engine) -> SearchOrchestrator:
-    return SearchOrchestrator(
-        graph=engine.graph,
-        vector=engine.vector,
-        fast_lane_store=engine.fast_lane_store,
-        embedder=engine.embedder,
-    )
 
 
 async def _seed_google_python_world(engine, entity_id: str) -> dict[str, str]:
@@ -63,7 +56,7 @@ async def test_depth0_is_the_t1_exact_set(engine, entity_id):
     """depth=0 (default): exactly the mentioning memories, no bridging."""
     ids = await _seed_google_python_world(engine, entity_id)
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=0,
     )
@@ -76,7 +69,7 @@ async def test_depth1_bridges_through_the_shared_mention(engine, entity_id):
     """depth=1: Python-only memories surface via the Google∩Python memory."""
     ids = await _seed_google_python_world(engine, entity_id)
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=1,
     )
@@ -90,11 +83,11 @@ async def test_depth2_adds_nothing_and_never_duplicates(engine, entity_id):
     """The walk is bounded: depth 2 == depth 1 here, no duplicate ids."""
     ids = await _seed_google_python_world(engine, entity_id)
 
-    depth1 = await _orchestrator(engine).search(
+    depth1 = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=1,
     )
-    depth2 = await _orchestrator(engine).search(
+    depth2 = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=2,
     )
@@ -111,7 +104,7 @@ async def test_bridging_is_entity_scoped(engine, entity_id):
     mine = await _seed_google_python_world(engine, entity_id)
     await _seed_google_python_world(engine, other_entity)
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=2,
     )
@@ -131,7 +124,7 @@ async def test_type_participates_in_the_bridge(engine, entity_id):
         mid_tech, entity_id, [Mention("Google", "Google", "technology", 0.9)],
     )
 
-    results = await _orchestrator(engine).search(
+    results = await make_orchestrator(engine).search(
         "Google", entity_id=entity_id, search_mode=SearchMode.MEMORY,
         about="Google", depth=1,
     )
