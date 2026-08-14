@@ -2,9 +2,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any, cast
+
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+def _coerce_embedding(value: object) -> list[float]:
+    """Normalize a stored embedding value to a list of floats.
+
+    Backends differ: the in-memory store keeps Python lists; pgvector's
+    ``Vector`` is a numpy array (``tolist``); and without a registered
+    asyncpg codec a raw ``text()`` read returns the literal string
+    ``'[0.1, 0.2, …]'``. Handle all three so the B6 candidate generator
+    (#42) never corrupts a query vector.
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            stripped = stripped[1:-1]
+        if not stripped.strip():
+            return []
+        return [float(part) for part in stripped.split(",")]
+    if isinstance(value, (list, tuple)):
+        parts: Iterable[Any] = value
+    elif hasattr(value, "tolist"):
+        parts = cast("Any", value).tolist()
+    else:
+        parts = cast("Iterable[Any]", value)
+    return [float(part) for part in parts]
 
 
 def _pg_vector_literal(embedding: list[float]) -> str:
@@ -114,6 +142,35 @@ class VectorStore:
                 return result.fetchone() is not None
         return chunk_id in self._memory_store
 
+    async def get_embeddings(self, chunk_ids: list[str]) -> dict[str, list[float]]:
+        """Bulk-read stored embeddings by chunk id (B6 candidate generation, #42).
+
+        Returns ``{chunk_id: embedding}``; ids with no stored embedding
+        are absent. Memory embeddings (``document_id=None``) and RAG
+        chunk embeddings alike. Used by the duplicate-candidate
+        generator to query near-duplicates of each latest memory — the
+        stored embedding is the canonical one, so candidate search never
+        re-embeds.
+        """
+        ids = [cid for cid in chunk_ids if cid]
+        if not ids:
+            return {}
+        if self._use_db and self._session_factory:
+            from sqlalchemy import text as sql_text
+
+            async with self._session_factory.session() as session:
+                result = await session.execute(
+                    sql_text(
+                        "SELECT chunk_id, embedding FROM embeddings WHERE chunk_id = ANY(:ids)"
+                    ),
+                    {"ids": ids},
+                )
+                embeddings: dict[str, list[float]] = {}
+                for row in result.fetchall():
+                    embeddings[row.chunk_id] = _coerce_embedding(row.embedding)
+                return embeddings
+        return {cid: self._memory_store[cid] for cid in ids if cid in self._memory_store}
+
     async def search(
         self,
         query_embedding: list[float],
@@ -121,6 +178,7 @@ class VectorStore:
         entity_id: str | None = None,
         top_k: int = 10,
         require_document_id: bool = False,
+        memory_only: bool = False,
     ) -> list[tuple[str, str, float]]:
         """Search for similar embeddings.
 
@@ -129,6 +187,11 @@ class VectorStore:
         Args:
             require_document_id: If True, only return embeddings that belong to
                 a document (RAG chunks). Memory embeddings have ``document_id=None``.
+            memory_only: If True, only return memory embeddings
+                (``document_id IS NULL``) — the inverse of
+                ``require_document_id``. Used by the B6 duplicate-candidate
+                generator (#42) so RAG chunks never consume the candidate
+                top-k budget.
 
         Architecture note: There is no ``offset`` parameter.  Callers that need
         more candidates than ``top_k`` should request a larger ``top_k`` value.
@@ -136,7 +199,10 @@ class VectorStore:
         """
         if self._use_db and self._session_factory:
             from sqlalchemy import text as sql_text
+
             doc_filter = "AND document_id IS NOT NULL" if require_document_id else ""
+            if memory_only:
+                doc_filter = "AND document_id IS NULL"
             async with self._session_factory.session() as session:
                 result = await session.execute(
                     sql_text(f"""
@@ -156,7 +222,9 @@ class VectorStore:
                 rows = result.fetchall()
                 return [(row.chunk_id, row.text, float(row.score)) for row in rows]
         else:
-            return self._memory_search(query_embedding, entity_id, top_k, require_document_id)
+            return self._memory_search(
+                query_embedding, entity_id, top_k, require_document_id, memory_only
+            )
 
     def _memory_search(
         self,
@@ -164,6 +232,7 @@ class VectorStore:
         entity_id: str | None,
         top_k: int,
         require_document_id: bool = False,
+        memory_only: bool = False,
     ) -> list[tuple[str, str, float]]:
         """In-memory cosine similarity search."""
         results = []
@@ -171,6 +240,8 @@ class VectorStore:
             if entity_id and self._memory_entities.get(chunk_id) != entity_id:
                 continue
             if require_document_id and not self._memory_document_ids.get(chunk_id):
+                continue
+            if memory_only and self._memory_document_ids.get(chunk_id):
                 continue
             score = self._cosine_similarity(query_embedding, emb)
             results.append((chunk_id, self._memory_texts[chunk_id], score))

@@ -263,7 +263,9 @@ class ProfileManager:
                 version=merged.version,
             )
 
-    async def compute(self, entity_id: str) -> EntityProfile:
+    async def compute(
+        self, entity_id: str, *, now: datetime | None = None
+    ) -> EntityProfile:
         """Compute profile from the graph store.
 
         Uses per-entity config overrides when available (via Redis),
@@ -271,6 +273,12 @@ class ProfileManager:
 
         Static facts: fact/preference type, confidence >= config.min_confidence_static
         Dynamic facts: episodic type, created within config.dynamic_lookback_days
+
+        ``now`` is optional and defaults to the wall clock; maintenance
+        paths that need determinism (B6 consolidation, #42: same graph
+        + same explicit now → same profile → same decision) pass it
+        explicitly — it drives the dynamic-lookback cutoff, trust's age
+        decay and importance.
         """
         tracer = get_tracer()
         with tracer.start_as_current_span("profile.compute") as span:
@@ -279,7 +287,7 @@ class ProfileManager:
                 config = await self._resolve_config(entity_id)
 
                 all_memories = await self.graph.list_latest_memories(entity_id, limit=200)
-                now = datetime.now(UTC)
+                now = now or datetime.now(UTC)
                 cutoff = now - timedelta(days=config.dynamic_lookback_days)
 
                 static_facts: list[ProfileFact] = []
@@ -291,7 +299,7 @@ class ProfileManager:
                     created_at = m.get("created_at", now)
                     content = m.get("content", "")
                     mid = m.get("id", "")
-                    trust = compute_trust_score(m)
+                    trust = compute_trust_score(m, now=now)
 
                     # Compute multi-factor importance score
                     importance = ProfileManager._compute_importance(

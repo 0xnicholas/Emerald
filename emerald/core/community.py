@@ -347,12 +347,13 @@ def _as_datetime(value: Any, *, fallback: datetime) -> datetime:
     return value
 
 
-def _is_protected(feature: MemoryFeatures, importance_threshold: float) -> bool:
+def is_protected(feature: MemoryFeatures, importance_threshold: float) -> bool:
     """Profile-referenced or high-importance — the protection predicate.
 
-    Single source of truth shared by the score's profile component and
-    the decision layer's exemption rule (spec #36: 画像引用数（高
-    importance 或画像 static/dynamic 引用）).
+    Single source of truth shared by the score's profile component, the
+    decision layer's exemption rule (spec #36: 画像引用数（高
+    importance 或画像 static/dynamic 引用）), and the B6 consolidation
+    exemption (spec #41: 复用 ``is_protected`` 单点).
     """
     return feature.profile_referenced or feature.importance >= importance_threshold
 
@@ -442,7 +443,7 @@ def score_communities(
         protected = sum(
             1
             for mid in members
-            if mid in features and _is_protected(features[mid], importance_threshold)
+            if mid in features and is_protected(features[mid], importance_threshold)
         )
         profile_fraction = protected / size
 
@@ -526,7 +527,7 @@ def decide_communities(
         protected = sorted(
             mid
             for mid in members
-            if mid in features and _is_protected(features[mid], importance_threshold)
+            if mid in features and is_protected(features[mid], importance_threshold)
         )
         community_bridges = sorted(mid for mid in members if mid in bridges)
 

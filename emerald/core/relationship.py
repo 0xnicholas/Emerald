@@ -217,41 +217,54 @@ class RelationshipEngine:
         # Phase 2: Rule-based fallback (deterministic, fast, always available)
         return self._rule_classify(new_content, old_content)
 
-    def _rule_classify(self, new_content: str, old_content: str) -> RelationType:
+    @staticmethod
+    def rule_classify(new_content: str, old_content: str) -> RelationType:
+        """Deterministic rule-only classification (public seam, B6 #42).
+
+        The same rule path as ``_rule_classify`` — stateless and pure: no
+        LLM, no I/O, no clock. Used by the consolidation veto layer
+        (``emerald.core.duplicates``) to reject contradiction pairs — the
+        decision whether a candidate pair is a duplicate or a timeline
+        step must never depend on an LLM call (ADR-0006: 无 LLM 判定).
+        """
+        return RelationshipEngine._rule_classify(new_content, old_content)
+
+    @staticmethod
+    def _rule_classify(new_content: str, old_content: str) -> RelationType:
         """Fast rule-based classification."""
         # Time-aware update: a future event in the old fact followed by a
         # completion/cancellation word in the new fact is an UPDATE.
-        if self._is_temporal_update(new_content, old_content):
+        if RelationshipEngine._is_temporal_update(new_content, old_content):
             return RelationType.UPDATES
 
         # Numeric update: same unit with a different value is an UPDATE.
-        if self._is_numeric_update(new_content, old_content):
+        if RelationshipEngine._is_numeric_update(new_content, old_content):
             return RelationType.UPDATES
 
         # Extract structure patterns
-        new_struct = self._extract_structure(new_content)
-        old_struct = self._extract_structure(old_content)
+        new_struct = RelationshipEngine._extract_structure(new_content)
+        old_struct = RelationshipEngine._extract_structure(old_content)
 
         # Same structure template, different fillers → UPDATE
         if new_struct and old_struct and new_struct == old_struct:
-            new_fillers = self._extract_fillers(new_content, new_struct)
-            old_fillers = self._extract_fillers(old_content, old_struct)
+            new_fillers = RelationshipEngine._extract_fillers(new_content, new_struct)
+            old_fillers = RelationshipEngine._extract_fillers(old_content, old_struct)
             if new_fillers and old_fillers and new_fillers != old_fillers:
                 return RelationType.UPDATES
 
         # Check for contradictory patterns, guarded by subject/topic overlap
         # to avoid classifying unrelated memories as updates just because the
         # new text contains a negation or change word.
-        if self._has_text_overlap(new_content, old_content) and self._is_contradictory(
-            new_content, old_content,
-        ):
+        if RelationshipEngine._has_text_overlap(
+            new_content, old_content
+        ) and RelationshipEngine._is_contradictory(new_content, old_content):
             return RelationType.UPDATES
 
         # Check for extension patterns (complementary information).
         # Guarded by subject/topic overlap to avoid accidental EXTENDS.
-        if self._has_text_overlap(new_content, old_content) and self._is_complementary(
-            new_content, old_content,
-        ):
+        if RelationshipEngine._has_text_overlap(
+            new_content, old_content
+        ) and RelationshipEngine._is_complementary(new_content, old_content):
             return RelationType.EXTENDS
 
         return RelationType.NONE

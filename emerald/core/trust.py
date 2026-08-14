@@ -37,7 +37,9 @@ PROVENANCE_WEIGHTS: dict[Provenance, float] = {
 DECAYING_MEMORY_TYPES = {"preference", "observation", "episodic"}
 
 
-def compute_trust_score(memory: dict[str, Any]) -> float:
+def compute_trust_score(
+    memory: dict[str, Any], *, now: datetime | None = None
+) -> float:
     """Compute a trust score in [0, 1] for a memory dict.
 
     Factors:
@@ -46,6 +48,11 @@ def compute_trust_score(memory: dict[str, Any]) -> float:
       - age decay for preference/observation/episodic memories
       - contradiction penalty (score * 0.3)
       - superseded status -> 0
+
+    ``now`` is optional and defaults to the wall clock; callers that
+    need determinism (B6 consolidation representative selection, #42:
+    same graph + same inputs must yield the same decision) pass it
+    explicitly.
 
     The returned score is independent of vector similarity; it should be
     multiplied into the search ranking score or used for profile weighting.
@@ -78,7 +85,7 @@ def compute_trust_score(memory: dict[str, Any]) -> float:
         if isinstance(created_at, datetime):
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=UTC)
-            age_days = (datetime.now(UTC) - created_at).days
+            age_days = ((now or datetime.now(UTC)) - created_at).days
             if age_days > 90:
                 score -= 0.2
             elif age_days > 30:
