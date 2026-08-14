@@ -1,13 +1,22 @@
-"""Community detection (B5, ticket #37) — deterministic label propagation.
+"""Community detection and policy (B5, tickets #37/#38) — deterministic
+structural partitioning, activity scoring and forgetting decisions.
 
-The detector partitions an entity's latest memories (is_latest=true) into
-**communities** — structurally interlinked clusters over relationship
+The detector (#37) partitions an entity's latest memories (is_latest=true)
+into **communities** — structurally interlinked clusters over relationship
 edges (UPDATES / EXTENDS / DERIVES_FROM, both directions) and mention
 bridges (two memories referencing the same Mention node). It is the
 first stage of the community forgetting strategy (spec #36): a pure
 structural partition ``memory_id → community_id``, consumed by the
 activity scoring / decision layer (#38) and the ``forget_communities``
 strategy (#39). Internal module — no public API surface.
+
+The policy layer (#38) turns a partition into per-community actions via
+pure functions: ``score_communities`` computes an activity score from
+structural/statistical signals only (no LLM), ``find_bridge_memories``
+marks boundary nodes spanning ≥2 communities, and ``decide_communities``
+applies the decision rules — below threshold forget the whole
+community; profile-referenced or high-importance communities exempt;
+bridge-carrying communities exempt so the bridge survives.
 
 Determinism contract (spec #36, story 8): the same graph and the same
 input yield the same partition on every run. Fixed node order (sorted
@@ -53,6 +62,10 @@ when they engage. No LLM calls, no randomness.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
 
 import structlog
 
@@ -224,3 +237,337 @@ class CommunityDetector:
             for nid in members:
                 partition[nid] = community_id
         return partition
+
+
+# ---------------------------------------------------------------------------
+# B5 T2 (#38): activity scoring + decision rules — pure functions.
+#
+# Scoring is a weighted blend of structural/statistical signals (spec #36:
+# 纯结构/统计信号，不调 LLM): mean confidence, recency of the newest
+# touch (last_accessed_at, falling back to created_at), internal edge
+# density, and the fraction of members referenced by the entity profile
+# or carrying high importance. Decision rules: score below threshold →
+# forget the whole community; profile-referenced / high-importance
+# communities exempt; bridge-carrying communities exempt so the bridge
+# (a boundary node spanning ≥2 communities) survives — keeping the
+# graph connected and multi-hop paths intact (spec #36 story 7).
+# ---------------------------------------------------------------------------
+
+# Score below this threshold → the whole community is forgotten (#38).
+ACTIVITY_THRESHOLD = 0.5
+
+# A memory with profile-fact importance at/above this counts as protected.
+IMPORTANCE_THRESHOLD = 0.7
+
+# Recency half-life in days (mirrors ProfileManager's decay shape).
+RECENCY_HALF_LIFE_DAYS = 30.0
+
+
+class CommunityAction(StrEnum):
+    """Per-community forgetting action (B5 T2, #38).
+
+    ``forget`` / ``exempt_profile`` / ``exempt_bridge`` / ``keep`` — the
+    same vocabulary T3 (#39) reports in metrics and per-decision logs.
+    """
+
+    FORGET = "forget"
+    EXEMPT_PROFILE = "exempt_profile"
+    EXEMPT_BRIDGE = "exempt_bridge"
+    KEEP = "keep"
+
+
+@dataclass(frozen=True)
+class MemoryFeatures:
+    """Per-memory structural/statistical features consumed by the policy.
+
+    Built by the caller from graph records + profile facts (T3, #39):
+    ``confidence`` from the memory, ``created_at`` / ``last_accessed_at``
+    for recency, ``profile_referenced`` / ``importance`` from the
+    entity's static/dynamic profile facts.
+    """
+
+    confidence: float = 0.5
+    created_at: datetime | None = None
+    last_accessed_at: datetime | None = None
+    profile_referenced: bool = False
+    importance: float = 0.0
+
+
+@dataclass(frozen=True)
+class ActivityWeights:
+    """Weights of the activity-score components (sum should be 1.0)."""
+
+    confidence: float = 0.3
+    recency: float = 0.3
+    density: float = 0.2
+    profile: float = 0.2
+
+    def __post_init__(self) -> None:
+        weights = (self.confidence, self.recency, self.density, self.profile)
+        if any(weight < 0 for weight in weights):
+            raise ValueError(f"activity weights must be non-negative: {self}")
+        if sum(weights) <= 0:
+            raise ValueError(f"activity weights must not sum to zero: {self}")
+
+
+@dataclass(frozen=True)
+class CommunityVerdict:
+    """Per-community decision with the evidence behind it (T3 logging)."""
+
+    community_id: str
+    action: CommunityAction
+    activity_score: float
+    size: int
+    bridge_memory_ids: tuple[str, ...]
+    protected_memory_ids: tuple[str, ...]
+
+
+def _as_datetime(value: Any, *, fallback: datetime) -> datetime:
+    """Coerce a timestamp (Neo4j DateTime / str / datetime) to aware UTC."""
+    if value is None:
+        return fallback
+    if hasattr(value, "to_native"):
+        value = value.to_native()
+    elif isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
+    if not isinstance(value, datetime):
+        return fallback
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def _is_protected(feature: MemoryFeatures, importance_threshold: float) -> bool:
+    """Profile-referenced or high-importance — the protection predicate.
+
+    Single source of truth shared by the score's profile component and
+    the decision layer's exemption rule (spec #36: 画像引用数（高
+    importance 或画像 static/dynamic 引用）).
+    """
+    return feature.profile_referenced or feature.importance >= importance_threshold
+
+
+def _recency(now: datetime, features: dict[str, MemoryFeatures], members: list[str]) -> float:
+    """Recency of the community's newest touch, exponential decay."""
+    newest: datetime | None = None
+    for mid in members:
+        feat = features.get(mid)
+        if feat is None:
+            continue
+        for stamp in (feat.last_accessed_at, feat.created_at):
+            if stamp is None:
+                continue
+            candidate = _as_datetime(stamp, fallback=now)
+            if newest is None or candidate > newest:
+                newest = candidate
+    if newest is None:
+        # No timestamp anywhere — unknown age must never make a
+        # community forgettable, so it counts as fresh.
+        return 1.0
+    days_ago = max(0.0, (now - newest).total_seconds() / 86400.0)
+    return float(2.0 ** (-days_ago / RECENCY_HALF_LIFE_DAYS))
+
+
+def _internal_edge_count(adjacency: dict[str, set[str]], members: list[str]) -> int:
+    """Count undirected edges with both endpoints inside the community."""
+    count = 0
+    for i, first in enumerate(members):
+        neighbors = adjacency.get(first, set())
+        for second in members[i + 1 :]:
+            if second in neighbors:
+                count += 1
+    return count
+
+
+def score_communities(
+    partition: dict[str, str],
+    adjacency: dict[str, set[str]],
+    features: dict[str, MemoryFeatures],
+    *,
+    now: datetime,
+    weights: ActivityWeights | None = None,
+    importance_threshold: float = IMPORTANCE_THRESHOLD,
+) -> dict[str, float]:
+    """Compute an activity score per community, in [0, 1].
+
+    Pure function of its inputs (``now`` included — callers pass it
+    explicitly so the same inputs always yield the same scores). The
+    score blends, per community:
+
+    - **confidence**: mean member confidence;
+    - **recency**: exponential decay (30-day half-life) of the newest
+      member touch time (last_accessed_at, else created_at, else ``now``);
+    - **density**: fraction of possible internal edges present
+      (0 for singletons);
+    - **profile**: fraction of members that are profile-referenced or
+      carry importance ≥ ``importance_threshold`` (the protection
+      predicate shared with the decision layer).
+
+    ``adjacency`` must be symmetric; members missing from ``features``
+    score as defaults. Returned scores are rounded to 6 decimals.
+    """
+    weights = weights or ActivityWeights()
+    groups: dict[str, list[str]] = {}
+    for mid, community_id in partition.items():
+        groups.setdefault(community_id, []).append(mid)
+    for members in groups.values():
+        members.sort()
+
+    scores: dict[str, float] = {}
+    for community_id in sorted(groups):
+        members = groups[community_id]
+        size = len(members)
+
+        confidences = [
+            max(0.0, min(1.0, features[mid].confidence)) for mid in members if mid in features
+        ]
+        mean_confidence = sum(confidences) / len(confidences) if confidences else 0.5
+
+        recency = _recency(now, features, members)
+
+        density = 0.0
+        if size >= 2:
+            density = (2.0 * _internal_edge_count(adjacency, members)) / (size * (size - 1))
+
+        protected = sum(
+            1
+            for mid in members
+            if mid in features and _is_protected(features[mid], importance_threshold)
+        )
+        profile_fraction = protected / size
+
+        score = (
+            weights.confidence * mean_confidence
+            + weights.recency * recency
+            + weights.density * density
+            + weights.profile * profile_fraction
+        )
+        scores[community_id] = round(min(1.0, score), 6)
+    return scores
+
+
+def find_bridge_memories(
+    partition: dict[str, str],
+    adjacency: dict[str, set[str]],
+) -> set[str]:
+    """Return memories whose neighbors span ≥2 distinct communities.
+
+    A bridge is a boundary node connecting two (or more) communities —
+    forgetting it would fracture the graph and break multi-hop paths, so
+    the decision layer exempts its community (spec #36 story 7). Only
+    neighbors present in the partition count.
+    """
+    bridges: set[str] = set()
+    for mid in sorted(partition):
+        neighbor_communities = {
+            partition[neighbor] for neighbor in adjacency.get(mid, set()) if neighbor in partition
+        }
+        if len(neighbor_communities) >= 2:
+            bridges.add(mid)
+    return bridges
+
+
+def decide_communities(
+    partition: dict[str, str],
+    adjacency: dict[str, set[str]],
+    features: dict[str, MemoryFeatures],
+    scores: dict[str, float],
+    *,
+    activity_threshold: float = ACTIVITY_THRESHOLD,
+    importance_threshold: float = IMPORTANCE_THRESHOLD,
+) -> dict[str, CommunityVerdict]:
+    """Apply the decision rules and return one verdict per community.
+
+    Pure function: given the partition, adjacency, per-memory features
+    and precomputed scores, the same inputs always produce the same
+    verdicts (deterministic ordering and tuples; no I/O, no time).
+
+    Rules, in priority order:
+
+    1. a community containing a profile-referenced or high-importance
+       (importance ≥ ``importance_threshold``) memory is exempt —
+       ``exempt_profile``, the whole community kept;
+    2. otherwise, a low-activity community (score <
+       ``activity_threshold``) holding a bridge memory is partially
+       forgotten — ``exempt_bridge``: the bridge memories are kept
+       (spec #36: 桥接记忆豁免并保留), the remaining members are
+       forgotten by the strategy (所在社区不整体遗忘);
+    3. otherwise, a low-activity community is forgotten wholesale —
+       ``forget``;
+    4. healthy communities (score ≥ threshold) are ``keep``.
+
+    Exemption labels only fire when they change the outcome: a healthy
+    community with bridges or profile references is a plain ``keep``.
+    Every verdict reports its score, size, sorted bridge ids and sorted
+    protected ids for T3 observability. A community missing from
+    ``scores`` scores 0 (defensively forgettable unless exempt).
+    """
+    bridges = find_bridge_memories(partition, adjacency)
+
+    groups: dict[str, list[str]] = {}
+    for mid, community_id in partition.items():
+        groups.setdefault(community_id, []).append(mid)
+
+    verdicts: dict[str, CommunityVerdict] = {}
+    for community_id in sorted(groups):
+        members = sorted(groups[community_id])
+        score = scores.get(community_id, 0.0)
+
+        protected = sorted(
+            mid
+            for mid in members
+            if mid in features and _is_protected(features[mid], importance_threshold)
+        )
+        community_bridges = sorted(mid for mid in members if mid in bridges)
+
+        if score < activity_threshold:
+            if protected:
+                action = CommunityAction.EXEMPT_PROFILE
+            elif community_bridges:
+                action = CommunityAction.EXEMPT_BRIDGE
+            else:
+                action = CommunityAction.FORGET
+        else:
+            action = CommunityAction.KEEP
+
+        verdicts[community_id] = CommunityVerdict(
+            community_id=community_id,
+            action=action,
+            activity_score=score,
+            size=len(members),
+            bridge_memory_ids=tuple(community_bridges),
+            protected_memory_ids=tuple(protected),
+        )
+    return verdicts
+
+
+def forgotten_memories(
+    partition: dict[str, str],
+    verdicts: dict[str, CommunityVerdict],
+) -> set[str]:
+    """The memories a strategy forgets for the given verdicts (T3 seam).
+
+    Pure projection of the decision rules:
+
+    - ``forget`` → every member;
+    - ``exempt_bridge`` → every member except the bridge memories
+      (the community is not wholly forgotten; the bridge survives);
+    - ``exempt_profile`` / ``keep`` → nothing.
+    """
+    members_by_community: dict[str, set[str]] = {}
+    for mid, community_id in partition.items():
+        members_by_community.setdefault(community_id, set()).add(mid)
+
+    forgotten: set[str] = set()
+    for community_id, members in members_by_community.items():
+        verdict = verdicts.get(community_id)
+        if verdict is None:
+            continue
+        if verdict.action is CommunityAction.FORGET:
+            forgotten |= members
+        elif verdict.action is CommunityAction.EXEMPT_BRIDGE:
+            forgotten |= members - set(verdict.bridge_memory_ids)
+    return forgotten

@@ -31,7 +31,12 @@ All notable changes to this project will be documented in this file.
   - **实体隔离 + 历史排除**：仅 is_latest=true 的实体自有记忆参与结构；跨实体边过滤、历史节点既非成员也非粘合
   - **零新增图存储方法**：邻接全部经由 B4 既有读取原语（`list_forget_candidates` / `get_relationship_neighbors` / `get_memory_mentions` 倒排索引），双后端可用，无 Neo4j GDS 依赖
   - **规模护栏**：每实体记忆上限 + 迭代上限，护栏触达时结构化日志
-  - 单元测试 `tests/unit/test_community.py`（链/星/环路/双团+桥接/提及簇合成图 + 确定性 + 隔离 + 护栏，17 例）
+  - 单元测试 `tests/unit/test_community.py`（链/星/环路/双团+桥接/提及簇合成图 + 确定性 + 隔离 + 护栏，18 例）
+- **B5 社区活性评分与决策（issue #38，spec #36 T2）**——纯函数层把划分变成每社区行动：
+  - `score_communities`：活性分 = 加权信号（平均置信度 + 最近触达指数衰减 30 天半衰期 + 内部边密度 + 画像引用占比），纯结构/统计信号，不调 LLM
+  - `find_bridge_memories`：邻居跨越 ≥2 社区的边界节点；`decide_communities` 决策矩阵：低于阈值 → 整社区遗忘；含画像引用或高 importance 记忆的社区豁免（exempt_profile）；持桥接记忆的低活性社区部分遗忘（exempt_bridge：桥接记忆保留、其余遗忘——所在社区不整体遗忘）；健康社区 keep
+  - `forgotten_memories`：决策到遗忘集的纯投影（T3 落地接缝）；豁免标签仅在改变结局时打出
+  - 确定性：全部纯函数形态（显式传 `now`，无 I/O）；单元测试 `tests/unit/test_community_decisions.py` 决策矩阵 25 例全绿
 
 ### Changed
 
@@ -40,7 +45,7 @@ All notable changes to this project will be documented in this file.
 
 ### Test baseline
 
-- 全量：`1045 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
+- 全量：`1070 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1，与 v0.6.0 基线同源）；质量门 63 项全绿（含 Neo4j 变体实跑）
 
 ## [0.6.0] — 2026-08-11
 
