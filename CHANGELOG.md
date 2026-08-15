@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Web 核心循环补全（issue #53，计划 `docs/plans/web-core-loop-completion-v0.7.0.md`）**——apps/web 三批补全，满足 `docs/web-core-loop-standard.md` 发布门：
+  - **H 基建**：全服务端口改绑 127.0.0.1，仅 nginx :80 对外（H1）；baseUrl 同源默认（空=相对路径，Server URL 留空合法）；compose 切 standalone runner 生产构建 + `docker-compose.dev.yml` 显式 dev override（H2）；修复 Dockerfile deps 阶段 `--only=production` 致 runner 链路不可构建；移除未用依赖 `@supermemory/memory-graph`
+  - **I 摄入**：Add Memory 弹窗三 tab 真实落库——Note 直存、Link 存 URL+title+description（D1 元数据记忆）、File 走 `POST /v1/upload`（multipart）+ `getPipelineStatus` 轻量轮询（2s 阶段显示 / done 报告记忆数 / failed 显式报错 / 3 分钟有界放弃）（D2）；Space 选择器经 container_tag 生效；修复 dashboard 快速保存失效 key 错位（I1）
+  - **C 对话**：盘活 `/api/chat` 代理——SSE 流式打字机（C2）；无 key 返回 `{degraded:true}` 结构化降级 + 气泡「记忆检索模式」badge（C3/D4）；模型选择器真实发送并修剪为 gpt-4o/gpt-4o-mini（C4/D4）；profile.static 按 importance top10/~1500 字符注入 system prompt 且置于 memories 之前（P3/D5）；OPENAI_API_KEY 仅经 env 注入 frontend 容器（D3）
+  - 验证：web 生产构建零错误；compose 双形态 config 合法；引擎测试零回归（18 项既有环境失败与基线 17de549 一致）；质量套件 62 passed
+
 - **B3 NER 提及层（issue #21–#28）**——提取后解析命名事物为图节点，为图谱深度打物理基底：
   - **提及（Mention）节点**（ADR-0005）：`(:Memory)-[:MENTIONS]->(:Mention)` 是非事实引用类别（非第四种关系），去重键 `(entity_id, 规范形式, 类型)`，表层别名累积（「谷歌」「GOOGLE」解析到同一 Google 节点），mention_count 计数，创建/重复附加幂等
   - **规则提取 + 封闭分类法**：`RuleMentionExtractor`（无 LLM 确定性路径）+ 封闭类型分类法（person/organization/location/technology/concept，域外回退 concept）+ 置信度门槛（低置信丢弃，无节点无边）
