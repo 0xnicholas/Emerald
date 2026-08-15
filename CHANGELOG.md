@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — M3（v0.7.0 目标）
 
+### Fixed
+
+- `GET /v1/pipelines/{id}` 命中即 500：response_model 顶层字段 × 实际 {data,meta} 信封错配，新增 PipelineStatusEnvelope + 回归测试 ×3（issue #52 冒烟发现；D2 轮询依赖端点）
+- compose worker/beat 起不来：`-A emerald.pipeline.tasks` 错指（celery app 在 `emerald.pipeline.celery`）既有死路径；同批：引擎镜像四重构建去重（仅 api 构建，worker/beat/mcp 复用）、redis 归一 8.0-alpine
+
 ### Added
 
 - **Web 核心循环补全（issue #53，计划 `docs/plans/web-core-loop-completion-v0.7.0.md`）**——apps/web 三批补全，满足 `docs/web-core-loop-standard.md` 发布门：
