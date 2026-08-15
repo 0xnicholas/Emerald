@@ -32,12 +32,14 @@
 | `GET /v1/pipelines/{id}` 命中即 500 | 路由 `response_model=PipelineStatusResponse`（顶层字段）× 实际返回 `{data,meta}` 信封 → ResponseValidationError；既有测试无该端点功能用例 | `PipelineStatusEnvelope`（沿 keys.py 惯例）+ 回归测试 ×3（`ed4ab9e`） |
 | worker/beat 起不来（Exited 2） | compose `-A emerald.pipeline.tasks` 错——celery app 在 `emerald.pipeline.celery:celery_app`；既有死路径 | 改 `-A emerald.pipeline.celery`（`b2adbc8`） |
 | 引擎镜像四重构建 | api/worker/beat/mcp 各自 `build:` 同一 Dockerfile | 仅 api 构建 + `image: emerald-api:latest` 复用（`b2adbc8`） |
+| Benchmark CI 专红（本地绿） | workflow 共享 Redis 的 `profile:<entity>` 跨测试缓存污染 forget_communities 画像豁免 | fixture/scenario 显式 `ProfileManager(redis_client=False)`（`3199851`） |
+| fastembed 下向量写入必败 | engine 三处读私有 `embedder._model`：OpenAI 是字符串侥幸，Fastembed 是 TextEmbedding 对象 → 落库 asyncpg DataError；嵌入缓存键同受 object repr 地址漂移影响 | `provider_model_name()` 只返回 str + 回归 ×5（`59d4ed2`） |
 
 ## 3. 环境限制（非缺陷，黑盒走查时需注意）
 
-1. **rag 态语义命中**：dev 镜像未装 fastembed，`EMBEDDING_PROVIDER=local` 回退 `MockEmbeddingProvider`（确定性但非语义）——上传文档的向量已入库（`vector.store` 日志），但 rag 态语义查询无法真实命中。黑盒走查 S1-rag 时需：宿主 `.env.docker` 配 `OPENAI_API_KEY`（openai 嵌入），或镜像安装 fastembed。**S1-rag/hybrid 态在浏览器走查前必须重配嵌入后复验**。
-2. **C1 真 LLM**：本机未配 OPENAI_API_KEY，对话环按 C3 降级态验收（已验）；C1/C2/P3 的真 LLM 路径需配 key 后在浏览器走查。
-3. **数据残留**：volumes 含 2026-08-13 旧实体数据（Q3 Pilot Plan 等）与重复事实——B6 整合为日级调度，不阻断走查；如需干净环境 `docker compose down -v` 重起。
+1. **rag 态语义命中（修正 2026-08-15 下午）**：`embeddings.embedding` 列定长 `vector(1536)`（migration 002），而 fastembed 全系无 1536 维模型，且 `bge_model_path`（sentence-transformers 路径）被 local 工厂错喂 FastembedProvider 模型名参数——**本地语义嵌入在当前 schema 下结构性不可写**（此前「或镜像安装 fastembed」的替代方案不成立，已证伪）。本地回退 Mock（1536 维，确定性非语义）可支撑摄入/搜索/画像全流程与词汇级命中。**S1-rag/hybrid 语义条款走查必须配 OPENAI_API_KEY**（text-embedding-3-small，schema 原生 1536）。→ 本地嵌入锁死 1536 是待立项的引擎议题（动态维度或本地 1536 模型引入，涉及 schema/索引权衡）。
+2. **C1 真 LLM**：本机未配 OPENAI_API_KEY，对话环按 C3 降级态验收（已验）；C1/C2/P3 的真 LLM 路径需配 key 后在浏览器走查。注：route 仅转发 api.openai.com；若仅有 DeepSeek 等 OpenAI 兼容 key，需 route 增加 OPENAI_BASE_URL 支持（小改动，待需要时立项）。
+3. **数据状态**：2026-08-15 下午已 `down -v` 全新重起（干净卷），四环 Mock 态全绿；走查 rag 语义前需配 key 并再次清卷（Mock 与真嵌入向量空间不同）。
 
 ## 4. 引擎门（质量套件）
 
