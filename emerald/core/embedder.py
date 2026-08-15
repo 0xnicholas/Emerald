@@ -44,6 +44,22 @@ class EmbeddingProvider(ABC):
         """Return the embedding vector dimension."""
 
 
+def provider_model_name(provider: EmbeddingProvider) -> str:
+    """Best-effort model *name* string for audit/storage columns.
+
+    Providers are heterogeneous: OpenAIProvider keeps the name in ``_model``
+    (a str), FastembedProvider in ``_model_name`` while ``_model`` holds the
+    loaded TextEmbedding *object*.  Engine code previously read ``_model``
+    directly and serialized the object into ``embeddings.model_name``
+    (asyncpg DataError, 2026-08-15 :80 smoke).  Only str values pass.
+    """
+    for attr in ("model_name", "_model_name", "_model"):
+        value = getattr(provider, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
+
+
 # ---- Built-in providers ----
 
 

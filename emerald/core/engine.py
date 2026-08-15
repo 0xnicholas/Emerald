@@ -15,7 +15,7 @@ import structlog
 from emerald.config import get_settings
 from emerald.core.chunker import Chunk, ChunkerRegistry
 from emerald.core.chunker import get_default_registry as get_default_chunker_registry
-from emerald.core.embedder import EmbeddingProvider, get_embedding_provider
+from emerald.core.embedder import EmbeddingProvider, get_embedding_provider, provider_model_name
 from emerald.core.exceptions import IndexingError
 from emerald.core.extractor import ExtractedContent, ExtractorRegistry
 from emerald.core.extractor import get_default_registry as get_default_extractor_registry
@@ -371,8 +371,8 @@ class MemoryEngine:
         # for real embeddings — corrupting every downstream search score
         # (observed in the 2026-08-11 bge-m3 benchmark run: vector.store
         # logged dims=128 while the embedder produced 1024).
-        model_id = getattr(self.embedder, "_model", None)
-        if model_id is None:
+        model_id = provider_model_name(self.embedder)
+        if model_id == "unknown":
             dim_fn = getattr(self.embedder, "dimension", None)
             dim = dim_fn() if callable(dim_fn) else "?"
             model_id = f"mock-{dim}"
@@ -424,7 +424,7 @@ class MemoryEngine:
         """
         memory_ids = []
         failed_chunks: list[tuple[str, str]] = []  # (memory_id, reason)
-        model_name = getattr(self.embedder, "_model", "unknown")
+        model_name = provider_model_name(self.embedder)
 
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             # 1. Store in Neo4j graph — memory_id becomes the canonical ID
@@ -720,7 +720,7 @@ class MemoryEngine:
             )
             return []
 
-        model_name = getattr(self.embedder, "_model", "unknown")
+        model_name = provider_model_name(self.embedder)
         fast_lane_ids: list[str] = []
         for chunk_text, embedding in zip(chunks, embeddings, strict=False):
             try:
