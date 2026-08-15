@@ -21,7 +21,7 @@ export default function LoginPage() {
   } = useAppStore();
 
   const [localKey, setLocalKey] = useState(apiKey);
-  const [localUrl, setLocalUrl] = useState(baseUrl || "http://localhost:8000");
+  const [localUrl, setLocalUrl] = useState(baseUrl);  // H1: 空 = 同源（经 nginx 代理），无需填写
   const [localEntity, setLocalEntity] = useState(entityId);
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -65,7 +65,7 @@ export default function LoginPage() {
     router.push("/");
   };
 
-  const isValid = localUrl.trim() && localKey.trim() && localEntity.trim();
+  const isValid = localKey.trim() && localEntity.trim();  // URL 可空 = 同源
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface-base p-4">
@@ -93,7 +93,7 @@ export default function LoginPage() {
             <Input
               value={localUrl}
               onChange={(e) => setLocalUrl(e.target.value)}
-              placeholder="http://localhost:8000"
+              placeholder="Leave empty for same origin"
             />
           </div>
 

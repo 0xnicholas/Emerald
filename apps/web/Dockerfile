@@ -14,7 +14,9 @@ CMD ["npm", "run", "dev"]
 # Dependencies
 FROM base AS deps
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production && npm cache clean --force
+# 全量安装：builder 阶段需要 devDependencies（next build 工具链）。
+# 此前 --only=production 导致 runner 链路从未可构建（H2 补全计划批 1 修复）。
+RUN npm ci && npm cache clean --force
 
 # Build
 FROM base AS builder

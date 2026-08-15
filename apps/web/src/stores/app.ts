@@ -32,7 +32,8 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   apiKey: "",
-  baseUrl: "http://localhost:8000",
+  // H1 同源默认：空串 = 相对路径（经同源 nginx 代理到引擎）；显式填远端地址仍是合法拓扑
+  baseUrl: "",
   entityId: "",
   connected: false,
   demoMode: false,
@@ -64,8 +65,7 @@ export const useAppStore = create<AppState>((set) => ({
     if (typeof window === "undefined") return;
     set({
       apiKey: localStorage.getItem("emerald_api_key") ?? "",
-      baseUrl:
-        localStorage.getItem("emerald_base_url") ?? "http://localhost:8000",
+      baseUrl: localStorage.getItem("emerald_base_url") ?? "",
       entityId: localStorage.getItem("emerald_entity_id") ?? "",
     });
   },

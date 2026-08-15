@@ -313,9 +313,8 @@ export function getClient(): EmeraldClient {
         : "";
     const baseUrl =
       typeof window !== "undefined"
-        ? localStorage.getItem("emerald_base_url") ??
-          "http://localhost:8000"
-        : "http://localhost:8000";
+        ? localStorage.getItem("emerald_base_url") ?? ""
+        : "";  // H1 同源默认：空 = 相对路径，经 nginx :80 代理
     const entityId =
       typeof window !== "undefined"
         ? localStorage.getItem("emerald_entity_id") ?? ""

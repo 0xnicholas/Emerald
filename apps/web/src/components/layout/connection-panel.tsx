@@ -90,7 +90,7 @@ export function ConnectionPanel() {
           <Input
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="http://localhost:8000"
+            placeholder="留空 = 同源（经 nginx 代理）"
           />
         </div>
         <div className="space-y-1.5">

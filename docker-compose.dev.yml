@@ -1,0 +1,14 @@
+# Dev override：恢复前端 dev 工作流（热重载 + bind mount）。
+# 用法：docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# 生产/验收形态（仅 :80 对外）直接用 docker-compose.yml，不叠加本文件。
+services:
+  frontend:
+    build:
+      target: development
+    command: npm run dev
+    ports:
+      - "127.0.0.1:3000:3000"  # 本机调试直达（绕过 nginx 时用）
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
