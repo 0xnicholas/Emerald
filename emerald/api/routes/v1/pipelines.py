@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 
 from emerald.api.dependencies import api_key_auth
-from emerald.api.schemas.pipeline import PipelineStatusResponse
+from emerald.api.schemas.pipeline import PipelineStatusEnvelope, PipelineStatusResponse
 from emerald.db.session import session_factory
 from emerald.models.pipeline_job import PipelineJob
 
@@ -17,7 +17,7 @@ router = APIRouter(tags=["Pipelines"])
 
 @router.get(
     "/pipelines/{pipeline_id}",
-    response_model=PipelineStatusResponse,
+    response_model=PipelineStatusEnvelope,
 )
 async def get_pipeline_status(
     pipeline_id: str,
