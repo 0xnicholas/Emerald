@@ -47,6 +47,31 @@
 - CI（push `d30e5c0` 后）：Quality Suites ✅ / Security Scan ✅ / Benchmarks 🔴（2026-08-14 起既有红，B5 时期，先于本次改动；非门项，待独立排查）
 - 全量 API 套件回归：`test_pipeline_status_envelope` 3 passed；openapi drift 5 passed（spec 已再生成提交）
 
-## 5. 待办（黑盒走查清单 → 标尺条款映射）
+## 5. 黑盒走查清单（人工执行，结果回填本节）
 
-浏览器（≥1280px）+ 重配嵌入（§3.1）后逐条走查：I1-I5 / S1-S3 / P1-P3 / C1-C4（配 key 与不配 key 两轮）/ H1-H3。全绿 = #52 可关，v0.7.0 web 门放行。
+环境两档：**A 配 key**（
+`.env.docker` 填 `OPENAI_API_KEY` → `down -v` → `up -d` → 迁移+种子 key，全条款可走）；**B 无 key**（当前栈即可，跳过标 🄚 的语义/LLM 项）。
+浏览器 ≥1280px，登 http://localhost：Server URL **留空**，API Key `em_dev_test_key_001`，Entity ID `dev_user`。
+
+| # | 操作 | 预期 | 结果 |
+|---|---|---|---|
+| I1 | Dashboard 快速笔记输入「我偏好深色主题」→ Save | toast 成功；「最近保存」**不刷新即现** | |
+| I2 | Add Memory 弹窗 Note：「我每周三健身」→ Save → 搜索「健身」 | 保存真提示；命中 | |
+| I3 | 弹窗 Link：粘任一 URL → 等预览卡 → Save → 搜标题词 | 命中（元数据记忆） | |
+| I4 🄚 | 弹窗 File：选 txt/pdf → Upload | toast 阶段更新 →「已索引 N 条记忆」；搜文件内容词命中 | |
+| I5 | DevTools Console：`localStorage.setItem('emerald_api_key','em_invalid');location.reload()` → 保存笔记 | 红色失败 toast 带详情，**无假成功**（验完改回） | |
+| S1 🄚 | 搜索页三态：搜「健身」（memory）/搜文件内容词（rag）/同词 | 三态各自命中对应类型；hybrid 两类皆回 | |
+| S2 | 空间选择器新建 space → Link 保存到该 space → 搜索选该 space vs 不选 | 选=仅该空间；不选=全池 | |
+| S3 | 新笔记保存 → toast 后立即搜 | 可搜往返 | |
+| P1 | Dashboard | 静态事实卡 + 统计数字 | |
+| P2 | 保存「我是后端工程师主要写 Python」→ 回 Dashboard（≤10s） | 画像静态层新现该事实 | |
+| P3 🄚 | Chat 问「我是谁？」「我用什么语言？」 | 回答基于画像/记忆，非套话（降级态下至少携带检索记忆） | |
+| C1 🄚 | Chat 问需记忆的问题（如「我每周几健身？」） | 回答引用检索内容，非固定模板 | |
+| C2 🄚 | 同上观察 | 打字机流式呈现 | |
+| C3 | Chat 随便问（无 key 态） | 气泡「记忆检索模式｜未配置 AI key」badge + 降级文案 | |
+| C4 | 模型选择器 | 仅 GPT-4o / Mini 两项；切换后问答正常（真 LLM 需 key） | |
+| H1 | 全程 DevTools Network | 请求全为相对路径（/v1/*、/api/chat），无 localhost:8000 | |
+| H2 | 页面右下角 | 无 Next.js dev overlay（N 标志）、无热重载 | |
+| H3 | Settings 页 | 可见 `docker exec … seed_dev_api_key.py` 文档化命令 | |
+
+全绿 = #52 可关，v0.7.0 web 门放行。🄚 = 需 OPENAI_API_KEY（S1-rag 语义命中另受本地嵌入结构性限制约束——配 key 后走 openai 嵌入即真语义）。
