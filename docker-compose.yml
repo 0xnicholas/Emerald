@@ -9,6 +9,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: development
+      # 单一构建：worker/beat/mcp 复用本镜像（同一引擎进程家族，避免重复构建 4 份）
+    image: emerald-api:latest
     container_name: emerald-api
     command: uvicorn emerald.api.app:app --host 0.0.0.0 --port 8000 --reload
     ports:
@@ -33,12 +35,10 @@ services:
   # Celery Worker
   # ============================================
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: development
+    # 复用 api 构建的 emerald-api 镜像（不再单独 build）
+    image: emerald-api:latest
     container_name: emerald-worker
-    command: celery -A emerald.pipeline.tasks worker --loglevel=info --concurrency=4
+    command: celery -A emerald.pipeline.celery worker --loglevel=info --concurrency=4
     volumes:
       - .:/app
     env_file:
@@ -55,12 +55,10 @@ services:
   # Celery Beat (定时任务)
   # ============================================
   beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: development
+    # 复用 api 构建的 emerald-api 镜像（不再单独 build）
+    image: emerald-api:latest
     container_name: emerald-beat
-    command: celery -A emerald.pipeline.tasks beat --loglevel=info
+    command: celery -A emerald.pipeline.celery beat --loglevel=info
     volumes:
       - .:/app
     env_file:
@@ -120,7 +118,7 @@ services:
   # Redis
   # ============================================
   redis:
-    image: redis:8.0
+    image: redis:8.0-alpine
     container_name: emerald-redis
     command: redis-server --appendonly yes --requirepass emerald_dev
     ports:
@@ -185,10 +183,8 @@ services:
   # MCP Server
   # ============================================
   mcp:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: development
+    # 复用 api 构建的 emerald-api 镜像（不再单独 build）
+    image: emerald-api:latest
     container_name: emerald-mcp
     command: python -m emerald.mcp.server --transport sse --port 8001
     ports:
