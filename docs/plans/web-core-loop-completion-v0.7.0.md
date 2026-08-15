@@ -7,7 +7,7 @@
 > - 审计标尺：`docs/web-core-loop-standard.md`（issue #47，v0.7.0 起 web 侧发布门）
 > - 接缝决议：issue #49（核心四走 TS SDK `@emerald/sdk`；EmeraldClient 瘦身 REST-only；chat LLM 走 web 侧代理；鉴权维持 localStorage key + Bearer；Server URL 同源默认）
 >
-> **日期**：2026-08-15（issue #50，grilling 决议 Q1-Q4）
+> **日期**：2026-08-15（issue #50 grilling 决议 Q1-Q4；issue #51 设计决议 D1-D5 已并入，2026-08-15）
 
 ---
 
@@ -56,8 +56,8 @@
 
 | # | 项 | 覆盖 | 要点 |
 |---|---|---|---|
-| I-1 | 弹窗三 tab 真实落库 | I2/I3/I5 | 4 个渲染点接线保存；Note 直存文本；Link/File 保存语义与降级路径 → #51 设计 |
-| I-2 | File 上传接线 | I4、S1-rag、I5 | `@emerald/sdk`（`sdk/typescript`，已存在）`upload` 方法：multipart → 202 + pipeline_id；管线完成反馈（toast vs `getPipelineStatus` 轮询）→ #51 设计 |
+| I-1 | 弹窗三 tab 真实落库 | I2/I3/I5 | 4 个渲染点接线保存；Note 直存文本（contentType `text`，与快速笔记一致）；**Link 存 URL + title + description 经 `addMemory`**（复用 `extract-url` 预览结果；全文摄入出图立票——见 §4）（D1） |
+| I-2 | File 上传接线 | I4、S1-rag、I5 | `@emerald/sdk`（`sdk/typescript`，已存在）`upload` 方法：multipart → 202 + pipeline_id；**轻量轮询**：`getPipelineStatus` ~2s 间隔显示管线阶段，done → 「已索引，N 条记忆」，3 分钟有界放弃转「仍在后台处理」，failed 显式报错（D2） |
 | I-3 | 修复失效 key | I1 | `["search-demo"]` → `["search"]`（一行） |
 
 ### 批 3：C 对话（含 P3）
@@ -65,9 +65,9 @@
 | # | 项 | 覆盖 | 要点 |
 |---|---|---|---|
 | C-1 | 盘活 `/api/chat` | C1/C2 | 前端 `handleSend` 从 `formatMemoryResponse` 模板改为调 route + 流式消费（SSE）；检索记忆随请求注入（现状 topK:8 hybrid 保留） |
-| C-2 | 模型选择器接线 | C4 | 所选 model 随请求发送（route 已接受）；或删选择器——取向 → #51 |
-| C-3 | 无 key 显式降级 | C3 | route 返回结构化降级标记（非仅文案）；UI 显式标识降级态；降级 UX 形态 → #51 |
-| C-4 | 画像注入 system prompt | P3 | route 的 system prompt 注入 `getProfile` 静态事实（引擎原则 5 的 web 落地）；注入格式 → #51 |
+| C-2 | 模型选择器接线 | C4 | 所选 model 随请求发送（route 已接受）；**`CHAT_MODELS` 修剪为 `gpt-4o` / `gpt-4o-mini`**——移除 `claude-sentnet-4`（route 仅转发 OpenAI 端点，必 502 的假选项）与 `auto`（语义不明）（D4①） |
+| C-3 | 无 key 显式降级 | C3 | **key 走 env-only**：compose frontend 透传 `OPENAI_API_KEY=${OPENAI_API_KEY:-}`，`.env.example` 补一行，无本地存储、不随请求过客户端（D3）；**route 无 key 时返回单条 JSON 带 `degraded: true`**（不再伪装 choices 格式），前端统一消费路径 + 消息气泡挂「记忆检索模式（未配置 AI key）」badge；降级判定归 route（key 存在性唯一事实源）（D4②） |
+| C-4 | 画像注入 system prompt | P3 | **客户端 `getProfile` 后 `profile` 字段随请求传入**（route 无引擎 key，与 memories 同模式）；route 注入**仅 `profile.static`**，按 `importance` 降序 top 10、字符预算 ~1500，置于 memories 段之前（引擎原则 5「画像先于搜索注入」的 web 落地）；动态层不注（与 hybrid 检索通道重叠）（D5） |
 
 每项执行时携带：差距依据（§1 file:line，经事实清单）、验收条款映射（标尺）、设计决议（#51 并入后）。
 
@@ -81,14 +81,18 @@
 | `"default"` 哨兵 vs ADR-0002 | 行为合规（default = 无过滤 = 全池），仅字面量张力 | 记债出图（无用户可见损害） |
 | Settings JSON 导出 | `search("", topK:500)` 客户端拼接，未经 memory.md 端点 | 出图记录（标尺无导出条款） |
 | v0.7.0 发布门清单票 | 引擎 B3-B6 门 + web 门 | 待 #51 后毕业（Q4 决议） |
+| Link 全文摄入（引擎扩展） | D1 决议出图：引擎加「link → 正文提取 → upload 管线」路径，正文级 RAG 可搜；与 #49「引擎不加端点」先例张力大，需独立辩护 | **立票出图**（本图仅存元数据记忆） |
 
-## 5. 遗留设计题 → #51 净表
+## 5. 设计决议（#51 已锁，2026-08-15）
 
-| # | 题 | 备注 |
+| # | 题 | 决议 |
 |---|---|---|
-| D1 | I2/I3 保存语义：Link 存什么（预览抽取结果 vs 原文 vs URL+摘要）；Note 的 contentType | 弹窗三 tab 共用保存路径 |
-| D2 | I4 反馈形态：toast「处理中」 vs pipeline_id 轮询显式状态 | I5 诚实反馈范围 |
-| D3 | chat key 来源：env（route 现状 `OPENAI_API_KEY`）vs web 设置页 | C3 联动 |
-| D4 | C3 降级 UX 形态 + C4 模型选择器接线 or 移除 | 标尺 C4 二选一 |
-| D5 | P3 注入格式：profile 静态事实如何进 system prompt（截断策略、字段选择） | 引擎原则 5 落地 |
-| — | H1/H2 两题已由 #50 Q3 预答（相对路径 + runner/standalone + dev override） | 从 #51 净表划去 |
+| D1 | Link/Note 保存语义 | **元数据记忆**：Link 存 URL+title+description 经 `addMemory`；Note contentType `text`；全文摄入立票出图（§4） |
+| D2 | 上传反馈形态 | **轻量轮询**：`getPipelineStatus` ~2s 阶段显示；done → 「已索引，N 条记忆」；3 分钟有界放弃；failed 显式报错 |
+| D3 | chat key 来源 | **env-only**：compose frontend 透传 + `.env.example` 补行；无 key = C3 降级；key 不落浏览器 |
+| D4 | 降级 UX + 模型选择器 | **route 返回 `degraded: true` 结构化标记 + 前端 badge**；模型选择器接线并修剪为 gpt-4o/gpt-4o-mini（去 claude-sentnet-4/auto） |
+| D5 | P3 注入格式 | **仅静态层**：`profile.static` 按重要性 top 10、~1500 字符，置于 memories 段之前；客户端随请求传入 |
+| H1 | 同源实现（#50 Q3 预答） | Server URL 保留字段、空值 = 同源相对路径 |
+| H2 | 生产构建形态（#50 Q3 预答） | compose `target: runner` + standalone；`docker-compose.dev.yml` 显式叠加恢复 dev |
+
+至此本计划达到「可直接执行」：每项含差距依据（§1）、验收映射（标尺）、设计决议（本节）。
