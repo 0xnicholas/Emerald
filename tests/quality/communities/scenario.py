@@ -350,7 +350,15 @@ async def run_community_forgetting(
     for mid in corpus.all_ids:
         assert await retrievable(mid), f"Baseline retrieval failed for {corpus.contents[mid]!r}"
 
-    forgotten_count = await ForgetEngine(graph=store).forget_communities(entity_id)
+    # 密闭性：禁用 Redis 画像缓存（同 tests/unit/test_forget_communities.py 根因修复）。
+    # benchmark workflow 的共享 Redis 会返回其他测试的图算出的 profile，
+    # 污染社区豁免判定（当前仅薗 entity 命名未碰撞，属潜伏耀序性 flake）。
+    from emerald.core.profile import ProfileManager
+
+    forgotten_count = await ForgetEngine(
+        graph=store,
+        profile_manager=ProfileManager(graph=store, redis_client=False),
+    ).forget_communities(entity_id)
     assert forgotten_count == EXPECTED_FORGOTTEN_COUNT, (
         f"forget_communities forgot {forgotten_count} memories, expected {EXPECTED_FORGOTTEN_COUNT}"
     )

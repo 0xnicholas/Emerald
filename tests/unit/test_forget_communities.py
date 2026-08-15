@@ -31,7 +31,16 @@ def graph() -> GraphStore:
 
 @pytest.fixture
 def engine(graph: GraphStore) -> ForgetEngine:
-    return ForgetEngine(graph=graph)
+    # 密闭性：禁用 Redis 画像缓存（redis_client=False → 跳过自动发现）。
+    # 否则带 Redis service 的 CI（benchmark.yml）会被先前测试写入的
+    # profile:<entity> 键污染——本文件的图是每 fixture 全新的内存图，
+    # 而共享缓存返回的是别的测试的图算出的画像（2026-08-15 CI 红根因）。
+    from emerald.core.profile import ProfileManager
+
+    return ForgetEngine(
+        graph=graph,
+        profile_manager=ProfileManager(graph=graph, redis_client=False),
+    )
 
 
 async def _mem(
