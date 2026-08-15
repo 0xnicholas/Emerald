@@ -8,6 +8,15 @@ import type {
   Space,
 } from "./types";
 
+export interface UploadResult {
+  document_id: string;
+  pipeline_id: string;
+  pipeline_status: string;
+  file_size_bytes: number;
+  content_type: string;
+  title: string;
+}
+
 export class EmeraldApiError extends Error {
   constructor(
     public status: number,
@@ -46,14 +55,19 @@ export class EmeraldClient {
     body?: unknown
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+    // FormData（文件上传）：不设 Content-Type，由浏览器携带 multipart boundary
+    const isForm = body instanceof FormData;
+    const headers: Record<string, string> = isForm
+      ? { Authorization: `Bearer ${this.config.apiKey}` }
+      : this.headers;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
     let res: Response;
     try {
       res = await fetch(url, {
         method,
-        headers: this.headers,
-        body: body ? JSON.stringify(body) : undefined,
+        headers,
+        body: body ? (isForm ? (body as FormData) : JSON.stringify(body)) : undefined,
         signal: controller.signal,
       });
     } catch (err) {
@@ -131,6 +145,7 @@ export class EmeraldClient {
       contentType?: string;
       memoryType?: string;
       confidence?: number;
+      containerTag?: string;
     }
   ): Promise<AddMemoryResult> {
     const data = await this.request<{ data: AddMemoryResult }>(
@@ -142,8 +157,23 @@ export class EmeraldClient {
         content_type: opts?.contentType ?? "text",
         memory_type: opts?.memoryType,
         confidence: opts?.confidence,
+        container_tag: opts?.containerTag,
       }
     );
+    return data.data;
+  }
+
+  async upload(
+    file: File,
+    entityId: string,
+    opts?: { contentType?: string; title?: string }
+  ): Promise<UploadResult> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("entity_id", entityId);
+    if (opts?.contentType) form.append("content_type", opts.contentType);
+    if (opts?.title) form.append("title", opts.title);
+    const data = await this.request<{ data: UploadResult }>("POST", "/v1/upload", form);
     return data.data;
   }
 

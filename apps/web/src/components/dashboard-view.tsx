@@ -376,7 +376,10 @@ export function DashboardView({ entityId }: { entityId: string }) {
       await getClient().addMemory(quickNote.trim(), entityId, { contentType: "text" });
       setQuickNote("");
       toast.success("Note saved!");
+      // I1: 失效 hook 实际使用的 ["search", …] 前缀（原 ["search-demo"] 错位致「最近保存」不刷新）
+      queryClient.invalidateQueries({ queryKey: ["search", entityId] });
       queryClient.invalidateQueries({ queryKey: ["search-demo", entityId] });
+      queryClient.invalidateQueries({ queryKey: ["profile", entityId] });
     } catch {
       toast.error("Failed to save note");
     } finally {

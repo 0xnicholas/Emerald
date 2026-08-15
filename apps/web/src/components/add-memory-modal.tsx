@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/typography";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { getClient } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { getClient, EmeraldClient } from "@/lib/api";
+import { useAppStore } from "@/stores/app";
 import { useSelectedSpace } from "@/hooks/use-space";
 import { useContainerTags } from "@/hooks/use-container-tags";
 import { SpaceGlyph } from "@/components/spaces/space-glyph";
@@ -16,10 +18,9 @@ import { SpaceGlyph } from "@/components/spaces/space-glyph";
 interface AddMemoryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAdd?: (type: string, content: string) => Promise<boolean>;
 }
 
-export function AddMemoryModal({ isOpen, onClose, onAdd }: AddMemoryModalProps) {
+export function AddMemoryModal({ isOpen, onClose }: AddMemoryModalProps) {
   return (
     <AnimatePresence>
       {isOpen && (
@@ -45,7 +46,7 @@ export function AddMemoryModal({ isOpen, onClose, onAdd }: AddMemoryModalProps) 
               </button>
             </div>
 
-            <AddMemoryForm onAdd={onAdd} onClose={onClose} />
+            <AddMemoryForm onClose={onClose} />
           </motion.div>
         </motion.div>
       )}
@@ -53,19 +54,28 @@ export function AddMemoryModal({ isOpen, onClose, onAdd }: AddMemoryModalProps) 
   );
 }
 
-function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: string) => Promise<boolean>; onClose: () => void }) {
+function AddMemoryForm({ onClose }: { onClose: () => void }) {
   const { selectedSpaceTag, setSelectedSpaceTag } = useSelectedSpace();
   const { spaces } = useContainerTags();
-  const selectedSpace = spaces.find((s) => s.containerTag === selectedSpaceTag);
+  const { entityId, demoMode, apiKey, baseUrl } = useAppStore();
+  const queryClient = useQueryClient();
   const [note, setNote] = useState("");
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [urlPreview, setUrlPreview] = useState<{ title: string; description: string; favicon: string; image: string; site_name: string } | null>(null);
   const [extracting, setExtracting] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["search-demo", entityId] });
+    queryClient.invalidateQueries({ queryKey: ["search", entityId] });
+    queryClient.invalidateQueries({ queryKey: ["profile", entityId] });
+  };
+
+  const containerTag = selectedSpaceTag !== "default" ? selectedSpaceTag : undefined;
 
   // Extract URL metadata when URL changes
   useEffect(() => {
@@ -90,17 +100,95 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [url]);
 
-  const handleSubmit = async (type: string, content: string) => {
-    if (!content.trim()) return;
+  // D2 轻量轮询：2s 间隔、3 分钟有界；done/failed/超时各自显式反馈（I5 诚实反馈）
+  const pollPipeline = (pipelineId: string, fileName: string) => {
+    const toastId = `pipeline-${pipelineId}`;
+    const deadline = Date.now() + 180_000;
+    const stageLabel: Record<string, string> = {
+      queued: "排队中",
+      extracting: "提取中",
+      chunking: "分块中",
+      embedding: "嵌入中",
+      indexing: "索引中",
+    };
+    toast.loading(`${fileName} 处理中…`, { id: toastId });
+    const timer = setInterval(async () => {
+      if (Date.now() > deadline) {
+        clearInterval(timer);
+        toast.info(`${fileName} 仍在后台处理，稍后可在搜索中确认`, { id: toastId, duration: 8_000 });
+        return;
+      }
+      try {
+        const st = await getClient().getPipelineStatus(pipelineId);
+        if (st.status === "done") {
+          clearInterval(timer);
+          toast.success(
+            `${fileName} 已索引${st.memory_count ? `，${st.memory_count} 条记忆` : ""}`,
+            { id: toastId }
+          );
+          invalidate();
+        } else if (st.status === "failed") {
+          clearInterval(timer);
+          toast.error(`${fileName} 处理失败：${st.error_message ?? "未知错误"}`, { id: toastId, duration: 10_000 });
+        } else {
+          toast.loading(`${fileName} ${stageLabel[st.status] ?? st.status}…`, { id: toastId });
+        }
+      } catch {
+        // 单次轮询失败不中断，下一轮重试（网络抖动容忍）
+      }
+    }, 2_000);
+  };
+
+  const finishSuccess = () => {
+    setSuccess(true);
+    setTimeout(() => { onClose(); }, 800);
+  };
+
+  const handleSaveNote = async () => {
+    if (!note.trim()) return;
     setSubmitting(true);
     try {
-      if (onAdd) {
-        await onAdd(type, content);
-      }
-      setSuccess(true);
-      setTimeout(() => { onClose(); }, 800);
-    } catch {
-      toast.error("Failed to save memory");
+      if (demoMode) { finishSuccess(); return; }
+      await getClient().addMemory(note.trim(), entityId, { contentType: "text", containerTag });
+      invalidate();
+      finishSuccess();
+    } catch (err) {
+      toast.error("保存失败", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // D1 元数据记忆：URL + title + description 经 addMemory 落库（全文摄入见计划 §4 出图项）
+  const handleSaveLink = async () => {
+    if (!url.trim()) return;
+    setSubmitting(true);
+    try {
+      if (demoMode) { finishSuccess(); return; }
+      const content = [urlPreview?.title, urlPreview?.description, url.trim()].filter(Boolean).join("\n");
+      await getClient().addMemory(content, entityId, { contentType: "text", containerTag });
+      invalidate();
+      finishSuccess();
+    } catch (err) {
+      toast.error("保存失败", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // I4 文件摄入：upload → 202 + pipeline_id → 轮询反馈
+  const handleUploadFile = async () => {
+    if (!file) return;
+    setSubmitting(true);
+    try {
+      if (demoMode) { finishSuccess(); return; }
+      // 大文件上传不受单例 10s 超时限制
+      const uploadClient = new EmeraldClient({ apiKey, baseUrl, entityId }, 120_000);
+      const res = await uploadClient.upload(file, entityId);
+      finishSuccess();
+      pollPipeline(res.pipeline_id, file.name);
+    } catch (err) {
+      toast.error("上传失败", { description: err instanceof Error ? err.message : undefined });
     } finally {
       setSubmitting(false);
     }
@@ -133,7 +221,7 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
             rows={5}
             className="w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-fg-primary placeholder:text-fg-faint focus:outline-none focus:ring-2 focus:ring-surface-ring resize-none"
           />
-          <Button onClick={() => handleSubmit("note", note)} disabled={!note.trim() || submitting} className="w-full">
+          <Button onClick={handleSaveNote} disabled={!note.trim() || submitting} className="w-full">
             {submitting ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Save Note
           </Button>
@@ -212,7 +300,7 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
             </div>
           )}
 
-          <Button onClick={() => handleSubmit("link", url)} disabled={!url.trim() || submitting} className="w-full">
+          <Button onClick={handleSaveLink} disabled={!url.trim() || submitting} className="w-full">
             {submitting ? <Loader className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
             {urlPreview ? "Save Link" : "Save Link"}
           </Button>
@@ -225,7 +313,7 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
             className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-surface-border p-8 hover:border-brand-accent/50 transition-colors"
           >
             <Upload className="mb-2 h-8 w-8 text-fg-faint" />
-            <p className="text-sm text-fg-muted">{fileName || "Click to select a file"}</p>
+            <p className="text-sm text-fg-muted">{file?.name || "Click to select a file"}</p>
             <p className="text-xs text-fg-faint">PDF, images, audio, video, code files</p>
           </div>
           <input
@@ -234,10 +322,10 @@ function AddMemoryForm({ onAdd, onClose }: { onAdd?: (type: string, content: str
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) setFileName(f.name);
+              if (f) setFile(f);
             }}
           />
-          <Button onClick={() => handleSubmit("file", fileName)} disabled={!fileName || submitting} className="w-full">
+          <Button onClick={handleUploadFile} disabled={!file || submitting} className="w-full">
             {submitting ? <Loader className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Upload File
           </Button>
