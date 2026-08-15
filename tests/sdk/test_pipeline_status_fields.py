@@ -36,7 +36,11 @@ def test_pipeline_status_dataclass_has_fact_extraction_status():
 
 
 def test_pipeline_route_returns_new_fields():
-    """The /v1/pipelines/{id} response must include fact_extraction_status + memory_count."""
+    """The /v1/pipelines/{id} response must include fact_extraction_status + memory_count.
+
+    2026-08-15: route response_model switched to PipelineStatusEnvelope
+    ({data: PipelineStatusResponse, meta}) — resolve through components
+    schemas instead of scanning the operation dict for field names."""
     sys.path.insert(0, str(REPO_ROOT))
     from emerald.api.app import create_app
     app = create_app()
@@ -44,15 +48,29 @@ def test_pipeline_route_returns_new_fields():
 
     # Find the operation for GET /v1/pipelines/{pipeline_id}
     op = schema["paths"]["/v1/pipelines/{pipeline_id}"]["get"]
-    # The response schema should reference the fields by name in some way.
-    # Easiest check: search the spec for the field names.
     spec_text = str(op)
-    assert "fact_extraction_status" in spec_text or "PipelineStatusResponse" in spec_text, (
-        "GET /v1/pipelines/{id} schema missing fact_extraction_status field"
+    assert (
+        "PipelineStatusEnvelope" in spec_text
+        or "fact_extraction_status" in spec_text
+        or "PipelineStatusResponse" in spec_text
+    ), "GET /v1/pipelines/{id} schema missing pipeline status schema reference"
+
+    # The envelope's data payload (PipelineStatusResponse) must carry the
+    # P1.2b fields — resolved via components, not string-scanned.
+    components = schema["components"]["schemas"]
+    assert "PipelineStatusEnvelope" in components, (
+        "Envelope schema missing from components"
     )
-    # And the 200 response data should at minimum allow extra properties
-    # (the route uses a free-form dict, not a strict schema). Check the
-    # generated route code for the field name in the response dict.
+    data_ref = components["PipelineStatusEnvelope"]["properties"]["data"]
+    ref_name = data_ref.get("$ref", "").split("/")[-1] or data_ref.get("allOf", [{}])[0].get("$ref", "").split("/")[-1]
+    assert ref_name, "Envelope data must reference PipelineStatusResponse"
+    data_props = components[ref_name].get("properties", {})
+    assert "fact_extraction_status" in data_props, (
+        f"{ref_name} missing fact_extraction_status"
+    )
+    assert "memory_count" in data_props, f"{ref_name} missing memory_count"
+
+    # And the route source must still populate the fields in the response.
     import importlib
     routes_module = importlib.import_module("emerald.api.routes.v1.pipelines")
     src = inspect.getsource(routes_module)
