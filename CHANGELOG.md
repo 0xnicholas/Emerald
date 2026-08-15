@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - `GET /v1/pipelines/{id}` 命中即 500：response_model 顶层字段 × 实际 {data,meta} 信封错配，新增 PipelineStatusEnvelope + 回归测试 ×3（issue #52 冒烟发现；D2 轮询依赖端点）
 - compose worker/beat 起不来：`-A emerald.pipeline.tasks` 错指（celery app 在 `emerald.pipeline.celery`）既有死路径；同批：引擎镜像四重构建去重（仅 api 构建，worker/beat/mcp 复用）、redis 归一 8.0-alpine
+- Benchmark CI 专红（2026-08-14 起）：单测 forget_communities 被 workflow 共享 Redis 的 `profile:<entity>` 跨测试缓存污染（本地无 Redis 故绿）；engine fixture 与 communities scenario 显式注入 `ProfileManager(redis_client=False)` 恢复密闭性
 
 ### Added
 
