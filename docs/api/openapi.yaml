@@ -597,7 +597,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PipelineStatusResponse'
+                $ref: '#/components/schemas/PipelineStatusEnvelope'
         '422':
           description: Validation Error
           content:
@@ -1540,6 +1540,27 @@ components:
       type: object
       title: PaginationMeta
       description: Cursor-based pagination metadata (v2).
+    PipelineStatusEnvelope:
+      properties:
+        data:
+          $ref: '#/components/schemas/PipelineStatusResponse'
+        meta:
+          additionalProperties: true
+          type: object
+          title: Meta
+      type: object
+      required:
+      - data
+      - meta
+      title: PipelineStatusEnvelope
+      description: 'Envelope for GET /v1/pipelines/{id}（与 keys.py 的 Envelope 派惯例一致）。
+
+
+        此前路由声明 response_model=PipelineStatusResponse 但返回 {data, meta}
+
+        信封，导致每次命中都 ResponseValidationError→500（D2 轮询依赖端点，
+
+        2026-08-15 :80 冒烟发现）。'
     PipelineStatusResponse:
       properties:
         pipeline_id:
