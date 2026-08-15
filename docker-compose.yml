@@ -211,6 +211,9 @@ services:
     container_name: emerald-frontend
     # H2: 生产构建（standalone runner）。dev 工作流：docker compose -f docker-compose.yml -f docker-compose.dev.yml up
     # H1: 不发布端口——nginx 经内网 frontend:3000 代理，对外仅 :80
+    # D3: chat LLM key 仅经环境变量注入（宿主 .env / shell），不落浏览器；无 key = C3 降级态
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     depends_on:
       - api
     networks:

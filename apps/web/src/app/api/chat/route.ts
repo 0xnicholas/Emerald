@@ -11,37 +11,48 @@ interface ChatMessage {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { messages = [], model = "gpt-4o-mini", memories } = body as {
+    const {
+      messages = [],
+      model = "gpt-4o-mini",
+      memories,
+      profile,
+    } = body as {
       messages: ChatMessage[];
       model?: string;
       memories?: string;
+      profile?: string;
     };
 
     const apiKey = process.env.OPENAI_API_KEY;
 
-    // Without API key, return fallback with memory results
+    // C3 无 key 降级：key 存在性是唯一事实源。返回结构化降级标记（D4②），
+    // 前端统一消费并显式标识「记忆检索模式」。
     if (!apiKey) {
-      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+      const lastUserMsg =
+        [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
       const responseText = memories
-        ? `Based on your memories, here's what I found relevant to "${lastUserMsg.slice(0, 80)}":\n\n${memories}`
-        : "AI responses require an OPENAI_API_KEY. Set it in your .env file to enable AI-powered chat. For now, I can still search your memories via the search bar.";
-
+        ? `AI 回答未启用（服务器未配置 OPENAI_API_KEY）。以下是针对「${lastUserMsg.slice(0, 80)}」检索到的记忆：\n\n${memories}`
+        : "AI 回答未启用：服务器未配置 OPENAI_API_KEY。仍可通过搜索栏检索记忆。";
       return new Response(
-        JSON.stringify({ choices: [{ message: { role: "assistant", content: responseText } }] }),
+        JSON.stringify({ degraded: true, content: responseText }),
         { headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Build the OpenAI request
+    // D5 画像先于记忆注入（引擎原则 5「画像是默认上下文」的 web 落地）。
+    // profile 由客户端按 importance 截断后传入（仅静态层，top10 / ~1500 字符）。
     const systemPrompt: ChatMessage = {
       role: "system",
       content: `You are Emerald's memory assistant. You help users understand and work with their personal knowledge base.
 
-The following memories are relevant to the current conversation:
+## User profile — who they are
+${profile || "No profile available yet."}
+
+## Memories relevant to the current conversation
 ${memories || "No specific memories retrieved."}
 
 Guidelines:
-- Answer questions based on the user's memories when relevant
+- Ground answers in the user's profile and memories when relevant
 - If you don't know something, say so
 - Use natural language — don't list raw memory data
 - Be concise but helpful`,
@@ -73,7 +84,7 @@ Guidelines:
       );
     }
 
-    // Stream the response
+    // 流式透传（C2 打字机效果的来源）
     return new Response(response.body, {
       headers: {
         "Content-Type": "text/event-stream",

@@ -7,6 +7,7 @@ export interface ChatMessage {
   timestamp: Date;
   relatedMemories?: SearchMemory[];
   reasoning?: string; // Chain of thought / reasoning text
+  degraded?: boolean; // C3：无 AI key 的降级回复（记忆检索模式）
 }
 
 export interface ChatSession {
@@ -18,7 +19,8 @@ export interface ChatSession {
   model?: string;
 }
 
-export type ChatModelId = "gpt-4o" | "gpt-4o-mini" | "claude-sonnet-4" | "auto";
+// D4①：列表 = route 实际可转发的 OpenAI 模型。claude-sonnet-4（route 仅转发 OpenAI，必 502）与 auto（语义不明）已移除。
+export type ChatModelId = "gpt-4o" | "gpt-4o-mini";
 
 export interface ChatModel {
   id: ChatModelId;
@@ -28,10 +30,8 @@ export interface ChatModel {
 }
 
 export const CHAT_MODELS: ChatModel[] = [
-  { id: "auto", label: "Auto (default)", provider: "Emerald", description: "Let Emerald choose the best model" },
-  { id: "gpt-4o", label: "GPT-4o", provider: "OpenAI", description: "Best quality, slower" },
   { id: "gpt-4o-mini", label: "GPT-4o Mini", provider: "OpenAI", description: "Fast, cost-effective" },
-  { id: "claude-sonnet-4", label: "Claude Sonnet 4", provider: "Anthropic", description: "Great for analysis" },
+  { id: "gpt-4o", label: "GPT-4o", provider: "OpenAI", description: "Best quality, slower" },
 ];
 
 let messageCounter = 0;
@@ -41,6 +41,7 @@ export function createMessage(
   content: string,
   relatedMemories?: SearchMemory[],
   reasoning?: string,
+  degraded?: boolean,
 ): ChatMessage {
   messageCounter++;
   return {
@@ -50,6 +51,7 @@ export function createMessage(
     timestamp: new Date(),
     relatedMemories,
     reasoning,
+    degraded,
   };
 }
 

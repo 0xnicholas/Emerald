@@ -148,26 +148,112 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
     setShowAtMention(false);
 
     try {
+      // 1. 检索（hybrid topK 8，现状保留）——与 Sources 面板同源
       const results = demoMode
         ? getMockSearchResults(q).results.slice(0, 8)
         : (await getClient().search(q, entityId, { searchMode: "hybrid", topK: 8 })).results;
 
-      // Simulate small delay for natural feel
-      if (demoMode) await new Promise((r) => setTimeout(r, 300 + Math.random() * 200));
+      // Demo 模式无后端，保留模板回复
+      if (demoMode) {
+        await new Promise((r) => setTimeout(r, 300 + Math.random() * 200));
+        const { text, memories } = formatMemoryResponse(q, results);
+        const final = [...newMessages, createMessage("assistant", text, memories)];
+        setMessages(final);
+        saveSession(final);
+        return;
+      }
 
-      const { text, memories } = formatMemoryResponse(q, results);
-      const botMsg = createMessage("assistant", text, memories);
-      const final = [...newMessages, botMsg];
-      setMessages(final);
-      saveSession(final);
+      // 2. 画像（D5：仅静态层，importance 降序 top10 / ~1500 字符，客户端截断后随请求传入）
+      let profileText: string | undefined;
+      try {
+        const profile = await getClient().getProfile(entityId);
+        const facts = [...(profile.static ?? [])]
+          .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
+          .slice(0, 10)
+          .map((f) => `• ${f.content}`);
+        profileText = facts.length ? facts.join("\n").slice(0, 1500) : undefined;
+      } catch {
+        // 画像不可用不阻断对话（P3 尽力而为）
+      }
+
+      // 3. 记忆上下文拼入请求（C1：回答须引用检索内容而非模板）
+      const memoriesText = results.length
+        ? results.map((r) => `• ${r.content}`).join("\n").slice(0, 4000)
+        : undefined;
+
+      // 4. 流式占位消息（Sources 面板即到即显）
+      const botMsg = createMessage("assistant", "", results);
+      setMessages([...newMessages, botMsg]);
+      const finalize = (content: string, degraded = false) => {
+        const finalMsg = { ...botMsg, content, degraded };
+        const final = [...newMessages, finalMsg];
+        setMessages(final);
+        saveSession(final);
+      };
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMessages.map(({ role, content }) => ({ role, content })),
+          model: selectedModel, // C4：模型选择器真实生效
+          memories: memoriesText,
+          profile: profileText,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`Chat API error (${res.status})`);
+
+      const ctype = res.headers.get("content-type") ?? "";
+      if (ctype.includes("application/json")) {
+        // D4② 结构化降级：route 是 key 存在性的唯一事实源
+        const data = await res.json();
+        if (data.degraded) {
+          finalize(data.content ?? "", true);
+        } else {
+          throw new Error(data.error ?? "Chat API error");
+        }
+        return;
+      }
+
+      // 5. SSE 流式消费（C2 打字机）
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response stream");
+      const decoder = new TextDecoder();
+      let buf = "";
+      let acc = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith("data:")) continue;
+          const payload = t.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const chunk = JSON.parse(payload);
+            const delta: string = chunk.choices?.[0]?.delta?.content ?? "";
+            if (delta) {
+              acc += delta;
+              setMessages([...newMessages, { ...botMsg, content: acc }]);
+            }
+          } catch {
+            // 忽略非 JSON 行
+          }
+        }
+      }
+      finalize(acc);
     } catch {
-      const errMsg = createMessage("assistant", "Sorry, I encountered an error searching your memories. Please try again.");
+      const errMsg = createMessage("assistant", "Sorry, I encountered an error. Please try again.");
       const final = [...newMessages, errMsg];
       setMessages(final);
     } finally {
       setIsLoading(false);
     }
-  }, [messages, isLoading, entityId, demoMode, saveSession]);
+  }, [messages, isLoading, entityId, demoMode, selectedModel, saveSession]);
 
   // ─── Input handling ──────────────────────────────────────────────
 
@@ -349,6 +435,13 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
                     ? "bg-brand-accent text-white"
                     : "border border-surface-border bg-surface-card/60 backdrop-blur-md"
                 )}>
+                  {/* C3 降级态显式标识 */}
+                  {msg.role === "assistant" && msg.degraded && (
+                    <div className="mb-1.5 flex items-center gap-1.5">
+                      <Badge className="bg-surface-hover text-fg-muted text-[9px]">记忆检索模式</Badge>
+                      <span className="text-[9px] text-fg-faint">未配置 AI key</span>
+                    </div>
+                  )}
                   <div className={cn(
                     "text-sm leading-relaxed whitespace-pre-wrap",
                     msg.role === "user" ? "text-white" : "text-fg-primary"
