@@ -741,6 +741,6 @@ Claude Desktop 集成无需变更；MCP 客户端会自动适配新字段。
 | 里程碑 | 对集成方的影响 |
 |---|---|
 | M2 (v0.5.0) | TypeScript SDK v1 发布，TypeScript/JS 集成成为一等公民 |
-| M3 (v0.6.0) | LangChain.js / Vercel AI SDK 集成，框架生态扩展 |
-| M4 (v0.7.0) | 多跳推理，搜索结果可能包含 DERIVES_FROM 链 |
-| M5 (v0.8.0) | Production-Ready Beta，SLA 文档发布，集成方需关注性能承诺 |
+| M3 (v0.7.0) | NER 提及层 + 多跳推理（已完成）；框架集成已取消/延后（2026-08-23 决议，待用户信号） |
+| M4 (v0.8.0) | 高级遗忘、负载压测 |
+| M5 (v0.9.0) | Production-Ready Beta，SLA 文档发布，集成方需关注性能承诺 |

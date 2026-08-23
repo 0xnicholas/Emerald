@@ -4,7 +4,7 @@
 >
 > **总体结论：Emerald 已具备受控环境生产部署的基础条件。** M1（Dockerfile/K8s/OTEL/基准/CI）完成；M2（v0.5.0，按 ADR-0001 重裁剪为「测试卫生 → 独立侧质量套件 → 真实嵌入绝对分报告 → 安全审计」）全部交付；v0.6.0 按 ADR-0004 退役自研连接器（连接能力外包给连接中心 Totem）。剩余差距：NER/多跳推理（M3）、负载压测验证（D2-D3）、框架集成生态（仅 Pandaria）。
 >
-> **可部署性评级：🟢 生产化进行中（推进至 ~80%）。** 建议路径：M3 生态爆发（NER / 多跳 / LangChain.js 等）→ M4 智能深度（高级遗忘 / 负载压测）→ v0.9.0 Production-Ready Beta。
+> **可部署性评级：🟢 生产化进行中（推进至 ~80%）。** 建议路径：M3 图谱深化与文档（NER / 多跳 / API 文档 overhaul）→ M4 智能深度（高级遗忘 / 负载压测）→ v0.9.0 Production-Ready Beta。
 
 ---
 
@@ -253,7 +253,7 @@
 ### 场景 B：生产环境（面向外部用户）
 
 ⚠️ **不建议立即部署**，需完成路线图 M3-M5：
-- M3（v0.7.0）：NER / 多跳推理 / LangChain.js / Vercel AI / Mastra / 文档 overhaul
+- M3（v0.7.0）：NER / 多跳推理 / 文档 overhaul（框架集成已于 2026-08-23 取消/延后，待用户信号）
 - M4（v0.8.0）：高级遗忘 / 实时记忆整合 / 负载压测基础设施 + 2 周 Staging 压测（解决 P0 性能 SLA）
 - M5（v0.9.0）：72h soak test / 模糊测试 / 部署文档 / 运维手册 → Production-Ready Beta
 - 路线图 [`docs/roadmap.md`](roadmap.md) §10 详述 v1.0 提升的 7 个硬性条件

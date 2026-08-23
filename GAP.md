@@ -30,13 +30,13 @@
 
 | 优先级 | 差距 | 状态 | 依据 |
 |---|---|---|---|
-| **P1** | 框架集成生态（仅 Pandaria） | 🟡 M3 精简后仅 LangChain.js（C2，依赖已解除，待启动） | comparison §10 P1、roadmap 未解决项 |
+| **P1** | 框架集成生态（仅 Pandaria） | ⚪ 2026-08-23 决议：LangChain.js（C2）取消，框架集成全部待真实用户信号再启动 | comparison §10 P1、roadmap 未解决项 |
 | **P1** | 第二模型嵌入对照（text-embedding-3-large 等） | 🟡 需真实 API 可达；D1 小尾巴 | comparison §10 P0 |
 | **P1** | 负载测试验证（Locust 基础设施已有，压测验证待 D2/D3） | 🟡 依赖 k8s 实操验证（A2） | production-readiness §5 |
 | **P2** | 记忆整合（近重复活跃事实无损收敛，B6） | 🟡 已立项（ADR-0006，2026-08-14；spec 见 issue #41） | roadmap 主题 B |
 | **P2** | 细粒度实体链接（提及 ↔ 外部知识库 ID，如 Wikidata） | ⚪ 未启动；B3 定界：跨实体提及合并永久 out | comparison §1.3 |
 | **P2** | 正式安全审计 | 🟡 M2 部分完成（0 P0/P1）；M5 计划中 | production-readiness §7 |
-| **P3** | API 文档 overhaul 余项（教程、SDK 对照示例——C6 收窄范围内） | 🟡 OpenAPI 自动化 ✅；教程待 C2 | production-readiness §10 |
+| **P3** | API 文档 overhaul 余项（教程、SDK 对照示例——A5 范围） | 🟡 OpenAPI 自动化 ✅；教程与对照待 A5（原依赖 C2，2026-08-23 解除） | production-readiness §10 |
 
 ## 三、延后（有用户信号再启动）
 

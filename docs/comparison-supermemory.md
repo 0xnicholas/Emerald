@@ -429,7 +429,7 @@ WEIGHT_RELATIONSHIPS = 0.20    # 关系数归一化到 [0,1]
 | **P0** | 优化 Dockerfile（production 独立 `pip install`） | 当前部署镜像 ~2GB 含 dev 依赖，生产环境启动慢、攻击面大 | 1-2 天 |
 | **P0** | 在真实 LLM/嵌入配置下重跑基准测试，发布分数 | 当前所有「LLM 质量」差距均为推测性，无真实数据支撑 | ✅ 部分完成（08-11：bge-m3 绝对分报告已发布，7/7 通过；第二模型对照待补） |
 | **P1** | TypeScript SDK v1（对齐 Python SDK 方法集） | 拓展开发者基础，TS 生态（LangChain.js、Vercel AI SDK、Mastra）是 AI 应用主流 | ✅ 已完成（M2，`sdk/typescript/`） |
-| **P1** | 至少 2 个框架集成：LangChain.js + Vercel AI SDK | 进入主流 AI 开发生态是 Supermemory 拉开差距的主因 | 🟡 M3 精简为仅 LangChain.js（2026-08-13 决议），待启动 |
+| **P1** | 至少 2 个框架集成：LangChain.js + Vercel AI SDK | 进入主流 AI 开发生态是 Supermemory 拉开差距的主因 | ⚪ 2026-08-23 决议取消（C2 不再进 M3），待真实用户信号 |
 | **P1** | v2 API 真实改进（v2 是 v1 别名问题） | 至少实现分页、限流、`customId` 幂等 3 项实质差异 | ✅ 已完成（M2：分页/限流/错误码在 v1 落地，v2 别名下线） |
 | **P2** | ~~关系推断规则路径重写为 LLM-first~~ ✅ 已完成（2026-06-22） | LLM-first + bigram 预滤 + 规则降级 | — |
 | **P2** | ~~NER 实体抽取层（在 LLM 提取后补充结构化实体节点）~~ ✅ 已完成（2026-08，B3 issue #21–#28） | 提及（Mention）图节点 + 实体隔离 + 跨表层解析 + 质量套件 | — |
