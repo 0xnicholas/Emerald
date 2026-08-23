@@ -30,3 +30,6 @@ backups/*
 # pi harness artifacts
 .pi/
 docker-compose.local.yml
+
+# Celery Beat scheduler state (runtime artifact)
+celerybeat-schedule
