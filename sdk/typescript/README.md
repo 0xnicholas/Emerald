@@ -55,6 +55,56 @@ client.profile(entityId: string): Promise<Profile>
 client.upload(file: File | { name, data }, entityId: string, opts?: UploadOptions): Promise<AddResult>
 ```
 
+#### `SearchOptions`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `search_mode` | `"hybrid" \| "memory" \| "rag"` | `"hybrid"` | `hybrid` returns memories + RAG documents in one call |
+| `top_k` | `number` | `30` | Max results (1–100) |
+| `rerank` | `boolean` | `false` | Enable cross-encoder re-ranking |
+| `rewrite_query` | `boolean` | `false` | Enable LLM query expansion |
+| `filters` | `object` | — | Metadata filters, MongoDB-style operators: `$and`, `$or`, `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte` |
+| `min_confidence` | `number` | — | Minimum memory confidence (0–1) |
+| `dynamic_truncation` | `boolean` | `true` | Cut off results at score cliffs |
+| `about` | `string` | — | Entity-centric retrieval: a mention canonical form or mention id; returns the entity's latest memories mentioning it across surface forms (skips RAG/fast-lane) |
+| `depth` | `number` | `0` | Graph traversal hops (0–4) over shared-subject mention bridges + relationship chains (`UPDATES` / `EXTENDS` / `DERIVES_FROM`) |
+
+#### `AddOptions`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content_type` | `string` | `text` (default), `conversation`, `url`, `code`, `markdown` |
+| `title` | `string` | Optional title |
+| `metadata` | `object` | Custom key-value metadata |
+| `memory_type` | `"fact" \| "preference" \| "episodic"` | Override the LLM-extracted type |
+| `confidence` | `number` | Override the LLM confidence score (0–1); skips re-scoring |
+| `valid_until` | `Date` | Expiry timestamp; the memory is marked non-latest after this point |
+| `require_confirmation_for_high_impact` | `boolean` | Flag high-impact contradictions for confirmation instead of auto-resolving |
+
+#### `UploadOptions`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content_type` | `string` | MIME type hint (auto-detected if omitted) |
+| `title` | `string` | File title (also used as filename in Node.js) |
+
+#### Multi-hop retrieval example
+
+```ts
+// All latest memories about Google, plus 2-hop graph expansion
+const results = await client.search("Google", "user_123", {
+  search_mode: "memory",
+  about: "Google", // entity-centric: mention canonical form or id
+  depth: 2,        // up to 4 hops over mention bridges + relationship chains
+});
+for (const r of results.results) {
+  if (r.depth > 0) {
+    // provenance path: seed → mention/relationship steps → this result
+    console.log(r.depth, r.path.map((s) => `${s.kind}:${s.id.slice(0, 8)}`).join(" → "));
+  }
+}
+```
+
 ### Utility Methods
 
 ```ts
@@ -93,6 +143,12 @@ try {
 | `EmeraldRateLimitError` | 429 | Rate limited (`.retryAfter`) |
 | `EmeraldServerError` | 5xx | Server error |
 | `EmeraldNetworkError` | — | Connection/DNS failure |
+
+## See also
+
+- [SDK guide (Python ↔ TypeScript)](../../docs/api/sdk-guide.md) — Python-side docs and the method mapping table
+- [REST API guide](../../docs/api/rest-guide.md) — full REST surface, including the REST-only admin extension endpoints (keys, sessions, conflicts, spaces) not exposed by any SDK (AGENTS.md principle 7)
+- [Quickstart](../../docs/quickstart.md)
 
 ## Development
 

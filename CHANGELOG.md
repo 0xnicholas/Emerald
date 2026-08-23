@@ -80,6 +80,19 @@ All notable changes to this project will be documented in this file.
 
 - **统一 search 接入**：`SearchResult` 新增 `depth`/`path` 字段（`PathStep`）；`_memory_to_result` 补 tags 消除向量/about 与 keyword 路径结果漂移；GET 路由补 `is_latest`；SDK `SearchResult` 对齐 REST（path/depth/container_tag/tags）
 - 遗留关系扩展改用 `get_relationship_neighbors`（含边类型），补实体隔离过滤
+- **C2 LangChain.js 集成与 C6 demo 取消**（2026-08-23 决议，issue #54/#55 关闭为 not planned）：框架集成属生态投资，无真实用户信号不投入；v0.7.0 生态可发布物清零，M3 收敛为 B3 ✅ + B4 ✅ + A5，里程碑改题「图谱深化与文档」
+
+### Documentation
+
+- **A5 API 文档 overhaul（issue #56，v0.7.0 可发布物）**：
+  - `docs/api/rest-guide.md` 重构为三层结构（快速入门 → 核心四 → 进阶/管理），核心四每端点给 cURL + Python SDK + TypeScript SDK 三段示例；补齐此前未文档化的 16 个操作（PATCH/validate 记忆、profile config ×3、memory.md 导出、conflicts resolve、extract-url、sessions ×2、Spaces ×4、keys ×3），openapi.yaml 全部 34 个操作入文
+  - 修正三处文档偏差：`top_k` 默认 10 → 30、`/v1/files` 改游标分页、`AddMemoryRequest` 补 `idempotency_key`/`container_tag`/`valid_until` 等字段
+  - `docs/api/sdk-guide.md` 新增「Python ↔ TypeScript 方法对照」节与双语言示例；`sdk/typescript/README.md` 补 `SearchOptions`（含 `about`/`depth`）/ `AddOptions` / `UploadOptions` 字段表与多跳示例
+  - 明确管理扩展端点（keys/sessions/conflicts/spaces 等）为 REST-only，SDK 不暴露（AGENTS.md 原则 7）
+
+### Fixed (docs)
+
+- OpenAPI 顶层 tags 声明漂移：声明 6 个 tag（含已退役的 Connectors）vs 实际使用 12 个——`scripts/generate_openapi.py` EXTRA_INFO 更新为 12 个 tag 并重新生成 `docs/api/openapi.yaml`（drift 门恢复真实约束力）
 
 ### Test baseline
 

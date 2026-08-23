@@ -1859,17 +1859,29 @@ servers:
   description: Production
 tags:
 - name: Memories
-  description: Ingest and retrieve memories
+  description: Ingest, retrieve and manage memories (incl. batch add and validation)
 - name: Search
-  description: Hybrid search across memory and RAG
+  description: Hybrid search across memory and RAG, with multi-hop reasoning and entity-centric retrieval
 - name: Profiles
-  description: Entity profiles and context
+  description: Entity profiles (static + dynamic facts), profile config and MEMORY.md export
 - name: Upload
-  description: File upload and pipeline tracking
-- name: Connectors
-  description: External data source integrations
+  description: File upload and processing pipeline
+- name: Pipelines
+  description: Ingestion pipeline status
+- name: Spaces
+  description: User-explicit organization views (ADR-0002)
+- name: Sources
+  description: External data source bindings via the connection hub (ADR-0004)
+- name: Conflicts
+  description: Contradiction review and resolution (admin extension)
+- name: Extract
+  description: URL content extraction
+- name: Sessions
+  description: Session tokens (admin extension)
+- name: Keys
+  description: API key management
 - name: System
-  description: Health and metrics
+  description: Health check and memory graph visualization
 x-emerald-meta:
   content_types:
     supported:

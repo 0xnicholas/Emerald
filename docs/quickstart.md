@@ -266,9 +266,9 @@ python test_emerald.py
 | 目标 | 文档 |
 |---|---|
 | 理解记忆 vs RAG、三种记忆类型、三种关系 | [`concepts.md`](concepts.md) |
+| 核心四之外的能力（多跳/提及/Spaces/管理端点） | [`api/rest-guide.md`](api/rest-guide.md) 第二、三部分 |
+| Python ↔ TypeScript SDK 对照 | [`api/sdk-guide.md`](api/sdk-guide.md) |
 | 系统架构全景 | [`architecture/overview.md`](architecture/overview.md) |
-| 完整 REST API | [`api/rest-guide.md`](api/rest-guide.md) |
-| Python SDK 完整参考 | [`api/sdk-guide.md`](api/sdk-guide.md) |
 | 部署到生产（K8s、灾备） | [`architecture/deployment.md`](architecture/deployment.md) |
 | 与 Supermemory 能力对比 | [`comparison-supermemory.md`](comparison-supermemory.md) |
 | 项目路线图 | [`roadmap.md`](roadmap.md) |

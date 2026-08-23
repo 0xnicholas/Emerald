@@ -383,7 +383,7 @@ docker compose up -d mcp
 
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **M3 (v0.7.0)**：NER 提及层 ✅ + 多跳图谱推理 ✅（2026-08 完成）；剩余 LangChain.js 集成（Vercel AI / Mastra 延后至有用户信号）
+- **M3 (v0.7.0)**：NER 提及层 ✅ + 多跳图谱推理 ✅（2026-08 完成）；剩余 API 文档 overhaul（A5）——框架集成已全部取消/延后（LangChain.js 2026-08-23 取消；Vercel AI / Mastra 待真实用户信号）
 - **M4 (v0.8.0)**：高级遗忘、负载测试验证、Staging 压测（解决性能 SLA P0）
 - **M5 (v0.9.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
 
@@ -439,9 +439,8 @@ pytest  # 657 pass / 1 skip / 0 fail (post-M2 hardening)
 | 系统架构全景 | [docs/architecture/overview.md](docs/architecture/overview.md) |
 | 数据模型设计 | [docs/architecture/data-model.md](docs/architecture/data-model.md) |
 | 处理管线 | [docs/architecture/pipeline.md](docs/architecture/pipeline.md) |
-| REST API 完整参考 | [docs/api/rest-guide.md](docs/api/rest-guide.md) |
-| Python SDK | [docs/api/sdk-guide.md](docs/api/sdk-guide.md) |
-| TypeScript SDK | [sdk/typescript/README.md](sdk/typescript/README.md) |
+| REST API（核心四 → 进阶 → 管理三层结构） | [docs/api/rest-guide.md](docs/api/rest-guide.md) |
+| Python ↔ TypeScript SDK 对照 | [docs/api/sdk-guide.md](docs/api/sdk-guide.md) · [sdk/typescript/README.md](sdk/typescript/README.md) |
 | 错误码 / OpenAPI spec | [docs/api/error-codes.md](docs/api/error-codes.md) · [docs/api/openapi.yaml](docs/api/openapi.yaml) |
 | K8s 灾备 / 可观测性 | [docs/deployment/k8s-runbook.md](docs/deployment/k8s-runbook.md) · [docs/deployment/observability.md](docs/deployment/observability.md) |
 | 生产就绪度评估 | [docs/production-readiness-assessment.md](docs/production-readiness-assessment.md) |

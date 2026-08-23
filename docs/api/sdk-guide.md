@@ -1,8 +1,8 @@
 # Emerald Python SDK 指南
 
-Emerald 提供官方 Python SDK，以最小化的接口封装 REST API。SDK 遵循 AGENTS.md 设计原则：**不暴露内部图谱操作**，公共方法仅限 `add`、`search`、`profile`、`upload` 四个核心方法。
+Emerald 提供官方 Python SDK 与 TypeScript SDK（`@emerald/sdk`），以最小化的接口封装 REST API。SDK 遵循 AGENTS.md 设计原则：**不暴露内部图谱操作**，公共方法仅限 `add`、`search`、`profile`、`upload` 四个核心方法。
 
-> **需要 TypeScript / JavaScript？** 参见 [`sdk/typescript/README.md`](../../sdk/typescript/README.md)（`@emerald/sdk`，v0.5.0）。两个 SDK 在方法集、异常体系、错误码上保持一致。
+本指南以 Python 为主；每个核心方法的 Python 示例旁附 TypeScript 对等示例（完整 TypeScript 签名与 Options 字段见 [`sdk/typescript/README.md`](../../sdk/typescript/README.md)）。两个 SDK 在方法集、异常体系、错误码上保持一致，方法对照见下文「Python ↔ TypeScript 方法对照」一节。
 
 ---
 
@@ -141,9 +141,34 @@ result = await client.add(
 )
 ```
 
+**TypeScript 示例**（`client.add(content: string, entityId: string, opts?: AddOptions)`）：
+
+```ts
+// 添加事实
+const result = await client.add(
+  "用户是资深前端工程师，偏好 React 和 TypeScript",
+  "user_123",
+  { metadata: { source: "linkedin_import" } },
+);
+
+// 添加对话
+await client.add(
+  "Assistant: 你好！User: 你好，我想学习 Rust",
+  "user_123",
+  { content_type: "conversation" },
+);
+
+// 添加 URL
+await client.add(
+  "https://example.com/blog/rust-tutorial",
+  "user_123",
+  { content_type: "url" },
+);
+```
+
 ---
 
-### `search(q, *, entity_id, search_mode="hybrid", top_k=10, rerank=False, rewrite_query=False, filters=None, min_confidence=None, dynamic_truncation=True, about=None, depth=0)`
+### `search(q, *, entity_id, search_mode="hybrid", top_k=30, rerank=False, rewrite_query=False, filters=None, min_confidence=None, dynamic_truncation=True, about=None, depth=0)`
 
 混合搜索——单次查询同时返回记忆结果和 RAG 文档结果；`about`/`depth` 开启图谱多跳检索（B4）。
 
@@ -154,7 +179,7 @@ result = await client.add(
 | `q` | `str` | ✅ | 搜索查询 |
 | `entity_id` | `str` | ✅ | 实体范围 |
 | `search_mode` | `str` | — | `hybrid`（默认）、`memory`、`rag` |
-| `top_k` | `int` | — | 返回结果数（1-100，默认 10） |
+| `top_k` | `int` | — | 返回结果数（1-100，默认 30） |
 | `rerank` | `bool` | — | 启用重排序 |
 | `rewrite_query` | `bool` | — | 启用查询改写 |
 | `filters` | `dict` | — | 元数据过滤 |
@@ -234,6 +259,48 @@ for r in results.results:
         print(r.depth, [(s.kind, s.id[:8]) for s in r.path])
 ```
 
+**TypeScript 示例**（`client.search(q: string, entityId: string, opts?: SearchOptions)`）：
+
+```ts
+// 基础搜索
+const results = await client.search("用户的编程偏好", "user_123");
+
+// 仅搜索记忆
+const memResults = await client.search("用户最近的项目", "user_123", {
+  search_mode: "memory",
+  top_k: 5,
+});
+
+// 仅搜索文档（RAG）
+const ragResults = await client.search("Rust 内存安全", "user_123", {
+  search_mode: "rag",
+  top_k: 10,
+});
+
+// 带过滤的搜索（MongoDB 风格操作符）
+const filtered = await client.search("用户偏好", "user_123", {
+  filters: {
+    $and: [
+      { memory_type: "preference" },
+      { confidence: { $gte: 0.8 } },
+    ],
+  },
+});
+
+// 实体中心检索（B4）+ 多跳图谱遍历
+const hopResults = await client.search("Google", "user_123", {
+  search_mode: "memory",
+  about: "Google", // 提及规范形式或 Mention id
+  depth: 2,        // 0-4 跳：共享主体提及桥 + UPDATES/EXTENDS/DERIVES_FROM 链
+});
+for (const r of hopResults.results) {
+  if (r.depth > 0) {
+    // 路径解释：从种子到该结果经过的节点/边（memory/mention/关系边）
+    console.log(r.depth, r.path.map((s) => [s.kind, s.id.slice(0, 8)]));
+  }
+}
+```
+
 ---
 
 ### `profile(entity_id)`
@@ -283,6 +350,22 @@ for fact in profile.dynamic:
     print(f"  • {fact.content} (relevance: {fact.relevance:.2f}, source: {fact.source})")
 ```
 
+**TypeScript 示例**（`client.profile(entityId: string)`）：
+
+```ts
+const profile = await client.profile("user_123");
+
+console.log("=== 静态画像 ===");
+for (const fact of profile.static) {
+  console.log(`  • ${fact.content} (importance: ${fact.importance})`);
+}
+
+console.log("=== 动态画像 ===");
+for (const fact of profile.dynamic) {
+  console.log(`  • ${fact.content} (relevance: ${fact.relevance}, source: ${fact.source})`);
+}
+```
+
 ---
 
 ### `upload(file, *, entity_id, content_type=None, title=None)`
@@ -320,6 +403,23 @@ with open("/path/to/photo.jpg", "rb") as f:
 # 上传字节串
 raw_bytes = Path("/path/to/audio.mp3").read_bytes()
 result = await client.upload(raw_bytes, entity_id="user_123")
+```
+
+**TypeScript 示例**（`client.upload(file: File | { name, data }, entityId: string, opts?: UploadOptions)`）：
+
+```ts
+// Node.js —— { name, data } 形式（data 为 Buffer/Uint8Array 或 Blob）
+import { readFileSync } from "node:fs";
+
+const result = await client.upload(
+  { name: "resume.pdf", data: readFileSync("/path/to/resume.pdf") },
+  "user_123",
+  { title: "用户简历" },
+);
+console.log(`Pipeline ID: ${result.pipeline_id}`);
+
+// 浏览器 —— File 对象（如 <input type="file"> 的 files[0]）
+await client.upload(fileInput.files[0], "user_123");
 ```
 
 ---
@@ -360,6 +460,25 @@ memory = await client.get_memory("mem_abc123")
 print(memory["content"])
 print(memory["relationships"])
 ```
+
+---
+
+## Python ↔ TypeScript 方法对照
+
+两个 SDK 的方法集一一对应（AGENTS.md「SDK 一致性」原则）。
+
+**命名惯例：** Python 方法名用 `snake_case`，TypeScript 方法名用 `camelCase`；选项参数名与返回字段两边同名同义（均为 `snake_case`，与 REST wire format 一致）。位置参数差异：Python 的 `entity_id` 为 keyword-only 参数，TypeScript 中为第二个位置参数 `entityId`，其余选项收入 `opts` 对象。
+
+| Python | TypeScript | 端点 |
+|---|---|---|
+| `add(content, *, entity_id, ...)` | `add(content, entityId, opts?)` | `POST /v1/memories` |
+| `search(q, *, entity_id, ...)` | `search(q, entityId, opts?)` | `POST /v1/search` |
+| `profile(entity_id)` | `profile(entityId)` | `GET /v1/profiles/{id}` |
+| `upload(file, *, entity_id, ...)` | `upload(file, entityId, opts?)` | `POST /v1/upload` |
+| `health()` | `health()` | `GET /v1/health` |
+| `pipeline_status(pipeline_id)` | `pipelineStatus(pipelineId)` | `GET /v1/pipelines/{id}` |
+| `get_memory(memory_id)` | `getMemory(memoryId)` | `GET /v1/memories/{id}` |
+| `close()` | —（基于 `fetch`，无长连接需关闭） | — |
 
 ---
 
@@ -485,7 +604,9 @@ Python SDK (`emerald/sdk/client.py`) 当前公开 8 个方法，与 REST API 对
 | `get_memory(id)` | `GET /v1/memories/{id}` | ✅ | — |
 | `close()` | — | ✅ | — |
 
-**SDK 未覆盖的 Post-v0.3.0 新端点**（临时通过 httpx 调用）：
+> **REST-only 管理扩展端点：** keys、sessions、conflicts、spaces、extract、profile config、memory.md 等管理扩展端点为 REST-only，Python 与 TypeScript SDK 均不暴露（AGENTS.md 原则 7「禁止 API 泄漏」）。用法见 [`docs/api/rest-guide.md`](./rest-guide.md) 第三部分「管理与运维」。
+
+**SDK 暂未覆盖的高级端点**（批量、图谱导出、软删除——可先通过 httpx 直接调用；管理扩展端点为 REST-only，见上方说明）：
 
 ```python
 # POST /v1/memories/batch
