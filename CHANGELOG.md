@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **chat OpenAI 兼容后端支持（#52 走查 §3.2 预告项落地）**：web chat edge route 新增 `OPENAI_BASE_URL` / `OPENAI_MODELS` / `OPENAI_DEFAULT_MODEL` 环境变量（默认不设 = OpenAI 官方行为不变）；模型列表经 `GET /api/chat` 运行时下发（C4 选择器不再烘死在内建列表，standalone 生产构建兼容）；compose frontend 服务补两个插值变量透传——同时修正 chat key 注入路径事实：frontend 走 compose 插值（宿主根 `.env`/shell）而非 `.env.docker`（引擎侧 env_file）。以 DeepSeek 验证：deepseek-chat 流式透传、记忆/画像注入接龙、C3 降级态回归均绿
+
 - **Web 核心循环补全（issue #53，计划 `docs/plans/web-core-loop-completion-v0.7.0.md`）**——apps/web 三批补全，满足 `docs/web-core-loop-standard.md` 发布门：
   - **H 基建**：全服务端口改绑 127.0.0.1，仅 nginx :80 对外（H1）；baseUrl 同源默认（空=相对路径，Server URL 留空合法）；compose 切 standalone runner 生产构建 + `docker-compose.dev.yml` 显式 dev override（H2）；修复 Dockerfile deps 阶段 `--only=production` 致 runner 链路不可构建；移除未用依赖 `@supermemory/memory-graph`
   - **I 摄入**：Add Memory 弹窗三 tab 真实落库——Note 直存、Link 存 URL+title+description（D1 元数据记忆）、File 走 `POST /v1/upload`（multipart）+ `getPipelineStatus` 轻量轮询（2s 阶段显示 / done 报告记忆数 / failed 显式报错 / 3 分钟有界放弃）（D2）；Space 选择器经 container_tag 生效；修复 dashboard 快速保存失效 key 错位（I1）
@@ -96,7 +98,7 @@ All notable changes to this project will be documented in this file.
 
 ### Test baseline
 
-- 全量：`1148 passed / 18 failed`（可选提取依赖 ×17 + docker 镜像 ×1；LLM 重写 flake 偶发——`test_rewrite_query_noop_for_long_query` 依赖真实 LLM 行为非确定，与 v0.6.0 基线同源）；质量门 67 项全绿（含 Neo4j 变体实跑）
+- 全量：`1158 passed / 18 failed`（2026-08-23 复跑，7ffffd4；可选提取依赖 ×17 + docker 镜像 ×1；LLM 重写 flake 偶发——`test_rewrite_query_noop_for_long_query` 依赖真实 LLM 行为非确定，与 v0.6.0 基线同源）；质量门 67 项全绿（含 Neo4j 变体实跑）
 
 ## [0.6.0] — 2026-08-11
 

@@ -19,8 +19,10 @@ export interface ChatSession {
   model?: string;
 }
 
-// D4①：列表 = route 实际可转发的 OpenAI 模型。claude-sonnet-4（route 仅转发 OpenAI，必 502）与 auto（语义不明）已移除。
-export type ChatModelId = "gpt-4o" | "gpt-4o-mini";
+// D4①：默认列表 = OpenAI 官方双档（claude-sonnet-4 与 auto 已移除，见下）。接 OpenAI 兼容后端
+// （OPENAI_BASE_URL，如 DeepSeek）时，运行时列表由 GET /api/chat 下发（OPENAI_MODELS），
+// 本表仅作内建档位的元数据与拉取失败时的回退。
+export type ChatModelId = string;
 
 export interface ChatModel {
   id: ChatModelId;

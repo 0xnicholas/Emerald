@@ -207,9 +207,12 @@ services:
     container_name: emerald-frontend
     # H2: 生产构建（standalone runner）。dev 工作流：docker compose -f docker-compose.yml -f docker-compose.dev.yml up
     # H1: 不发布端口——nginx 经内网 frontend:3000 代理，对外仅 :80
-    # D3: chat LLM key 仅经环境变量注入（宿主 .env / shell），不落浏览器；无 key = C3 降级态
+    # D3: chat LLM 配置仅经环境变量注入（宿主根 .env / shell，compose 插值），不落浏览器；无 key = C3 降级态
+    # OPENAI_BASE_URL/OPENAI_MODELS：OpenAI 兼容后端支持（如 DeepSeek），空 = OpenAI 官方默认
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODELS=${OPENAI_MODELS:-}
     depends_on:
       - api
     networks:

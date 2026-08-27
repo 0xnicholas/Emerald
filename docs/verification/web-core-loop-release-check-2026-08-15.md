@@ -38,7 +38,7 @@
 ## 3. 环境限制（非缺陷，黑盒走查时需注意）
 
 1. **rag 态语义命中（修正 2026-08-15 下午）**：`embeddings.embedding` 列定长 `vector(1536)`（migration 002），而 fastembed 全系无 1536 维模型，且 `bge_model_path`（sentence-transformers 路径）被 local 工厂错喂 FastembedProvider 模型名参数——**本地语义嵌入在当前 schema 下结构性不可写**（此前「或镜像安装 fastembed」的替代方案不成立，已证伪）。本地回退 Mock（1536 维，确定性非语义）可支撑摄入/搜索/画像全流程与词汇级命中。**S1-rag/hybrid 语义条款走查必须配 OPENAI_API_KEY**（text-embedding-3-small，schema 原生 1536）。→ 本地嵌入锁死 1536 是待立项的引擎议题（动态维度或本地 1536 模型引入，涉及 schema/索引权衡）。
-2. **C1 真 LLM**：本机未配 OPENAI_API_KEY，对话环按 C3 降级态验收（已验）；C1/C2/P3 的真 LLM 路径需配 key 后在浏览器走查。注：route 仅转发 api.openai.com；若仅有 DeepSeek 等 OpenAI 兼容 key，需 route 增加 OPENAI_BASE_URL 支持（小改动，待需要时立项）。
+2. **C1 真 LLM / OpenAI 兼容后端（更新 2026-08-27）**：chat edge route 已支持 OpenAI 兼容后端——`OPENAI_BASE_URL` / `OPENAI_MODELS` / `OPENAI_DEFAULT_MODEL` 环境变量（§3.2 预告的「小改动」已落地）。本机当前配置 DeepSeek（根 `.env`：key + `OPENAI_BASE_URL=https://api.deepseek.com/v1` + `OPENAI_MODELS=deepseek-chat,deepseek-reasoner`），C1/C2/P3 真 LLM 路径可走。**注意 chat key 的注入路径与引擎不同**：frontend 容器用 compose 插值（根 `.env` / shell），不是 `.env.docker`（那是引擎侧 env_file）——此前「填 .env.docker」的指引对 chat 环节不生效，已修正 §5。**嵌入不受此覆盖**：DeepSeek 无 embeddings API，`EMBEDDING_PROVIDER=local`（Mock）不变，S1-rag 语义命中与 I4 语义搜仍受 §3.1 约束（需 OpenAI 嵌入 key 或本地 1536 维方案落地）。
 3. **数据状态**：2026-08-15 下午已 `down -v` 全新重起（干净卷），四环 Mock 态全绿；走查 rag 语义前需配 key 并再次清卷（Mock 与真嵌入向量空间不同）。
 
 ## 4. 引擎门（质量套件）
@@ -49,8 +49,8 @@
 
 ## 5. 黑盒走查清单（人工执行，结果回填本节）
 
-环境两档：**A 配 key**（
-`.env.docker` 填 `OPENAI_API_KEY` → `down -v` → `up -d` → 迁移+种子 key，全条款可走）；**B 无 key**（当前栈即可，跳过标 🄚 的语义/LLM 项）。
+环境两档：**A 配 key**（当前已配 DeepSeek：根 `.env` 三变量（chat）+ `.env.docker`（引擎）不变；换 OpenAI 则根 `.env` 改 key 并删 BASE_URL/MODELS 两行 → `down -v` → `up -d` → 迁移+种子 key，全条款可走）；**B 无 key**（根 `.env` 清空 OPENAI_API_KEY → `up -d frontend`，跳过标 🄚 的 LLM 项）。
+注：当前 DeepSeek 配置下，C1/C2/P3/C4 按 🄚 走（真 LLM）；S1-rag 语义与 I4 语义搜受 §3.1 约束仍为 Mock 态（词汇级命中可验，改写语义命中不可验）；模型选择器预期为 deepseek-chat / deepseek-reasoner（OPENAI_MODELS 下发）。
 浏览器 ≥1280px，登 http://localhost：Server URL **留空**，API Key `em_dev_test_key_001`，Entity ID `dev_user`。
 
 | # | 操作 | 预期 | 结果 |
@@ -69,7 +69,7 @@
 | C1 🄚 | Chat 问需记忆的问题（如「我每周几健身？」） | 回答引用检索内容，非固定模板 | |
 | C2 🄚 | 同上观察 | 打字机流式呈现 | |
 | C3 | Chat 随便问（无 key 态） | 气泡「记忆检索模式｜未配置 AI key」badge + 降级文案 | |
-| C4 | 模型选择器 | 仅 GPT-4o / Mini 两项；切换后问答正常（真 LLM 需 key） | |
+| C4 | 模型选择器 | 列表 = 部署配置下发（OPENAI_MODELS，当前 deepseek-chat/reasoner；默认部署为 GPT-4o/Mini）；切换后问答正常 | |
 | H1 | 全程 DevTools Network | 请求全为相对路径（/v1/*、/api/chat），无 localhost:8000 | |
 | H2 | 页面右下角 | 无 Next.js dev overlay（N 标志）、无热重载 | |
 | H3 | Settings 页 | 可见 `docker exec … seed_dev_api_key.py` 文档化命令 | |

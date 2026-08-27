@@ -18,7 +18,7 @@ import { useAppStore } from "@/stores/app";
 import { getMockSearchResults } from "@/lib/mock-data";
 import {
   createMessage, formatMemoryResponse, readSessions, writeSessions,
-  CHAT_MODELS, type ChatMessage, type ChatSession, type ChatModelId,
+  CHAT_MODELS, type ChatMessage, type ChatSession, type ChatModelId, type ChatModel,
 } from "./types";
 import type { SearchMemory } from "@/lib/types";
 
@@ -73,6 +73,7 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ChatModelId>("gpt-4o-mini");
+  const [modelOptions, setModelOptions] = useState<ChatModel[]>(CHAT_MODELS);
 
   // @-mention
   const atMention = useAtMentionSearch(entityId, demoMode);
@@ -81,6 +82,33 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atTriggerPos = useRef<number>(-1);
+
+  // C4：运行时模型列表（OPENAI_MODELS 经 GET /api/chat 下发）；拉取失败回退内建 OpenAI 双档
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/chat")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { models?: string[]; default?: string; provider?: string } | null) => {
+        if (cancelled || !data?.models?.length) return;
+        const known = new Map(CHAT_MODELS.map((m) => [m.id, m]));
+        const options: ChatModel[] = data.models.map((id) =>
+          known.get(id) ?? {
+            id,
+            label: id,
+            provider: data.provider ?? "Custom",
+            description: "部署配置模型（OPENAI_MODELS）",
+          }
+        );
+        setModelOptions(options);
+        setSelectedModel((cur) =>
+          options.some((m) => m.id === cur) ? cur : (data.default ?? options[0].id)
+        );
+      })
+      .catch(() => {/* 回退内建列表 */});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ─── Effects ─────────────────────────────────────────────────────
 
@@ -325,7 +353,7 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
 
   // ─── Render ──────────────────────────────────────────────────────
 
-  const currentModelLabel = CHAT_MODELS.find((m) => m.id === selectedModel)?.label ?? "Auto";
+  const currentModelLabel = modelOptions.find((m) => m.id === selectedModel)?.label ?? "Auto";
 
   return (
     <div className="flex h-full flex-col">
@@ -363,7 +391,7 @@ export function ChatInterface({ onClose }: ChatInterfaceProps) {
             </button>
           </PopoverTrigger>
           <PopoverContent className="w-56 p-1.5 rounded-2xl border-surface-border bg-surface-card shadow-xl" side="top">
-            {CHAT_MODELS.map((model) => (
+            {modelOptions.map((model) => (
               <button
                 key={model.id}
                 onClick={() => setSelectedModel(model.id)}

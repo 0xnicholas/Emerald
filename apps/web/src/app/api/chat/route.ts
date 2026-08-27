@@ -8,21 +8,61 @@ interface ChatMessage {
   content: string;
 }
 
+// OpenAI 兼容后端支持（走查记录 §3.2 预告项）：默认行为不变（OpenAI 官方双档），
+// 经 OPENAI_BASE_URL / OPENAI_MODELS 环境变量即可接 DeepSeek 等 OpenAI 兼容服务。
+function resolveModelConfig() {
+  const models = (process.env.OPENAI_MODELS || "gpt-4o-mini,gpt-4o")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const list = models.length ? models : ["gpt-4o-mini"];
+  const defaultModel =
+    process.env.OPENAI_DEFAULT_MODEL ||
+    (list.includes("gpt-4o-mini") ? "gpt-4o-mini" : list[0]);
+  const baseUrl = (
+    process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
+  ).replace(/\/+$/, "");
+  return { models: list, defaultModel, baseUrl };
+}
+
+function providerLabel(baseUrl: string): string {
+  try {
+    const host = new URL(baseUrl).hostname;
+    const known: Record<string, string> = {
+      "api.openai.com": "OpenAI",
+      "api.deepseek.com": "DeepSeek",
+    };
+    if (host in known) return known[host];
+    const seg = host.split(".").filter(Boolean);
+    const name = seg.length >= 2 ? seg[seg.length - 2] : host;
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  } catch {
+    return "Custom";
+  }
+}
+
+// C4：模型选择器的运行时事实源——列表随部署配置下发，避免 standalone 生产构建
+// 把模型清单烘死在客户端 bundle 里。
+export async function GET() {
+  const { models, defaultModel, baseUrl } = resolveModelConfig();
+  return new Response(
+    JSON.stringify({ models, default: defaultModel, provider: providerLabel(baseUrl) }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const {
-      messages = [],
-      model = "gpt-4o-mini",
-      memories,
-      profile,
-    } = body as {
+    const { messages = [], model, memories, profile } = body as {
       messages: ChatMessage[];
       model?: string;
       memories?: string;
       profile?: string;
     };
 
+    const { defaultModel, baseUrl } = resolveModelConfig();
+    const effectiveModel = model || defaultModel;
     const apiKey = process.env.OPENAI_API_KEY;
 
     // C3 无 key 降级：key 存在性是唯一事实源。返回结构化降级标记（D4②），
@@ -60,14 +100,14 @@ Guidelines:
 
     const openaiMessages = [systemPrompt, ...messages];
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model,
+        model: effectiveModel,
         messages: openaiMessages,
         temperature: 0.7,
         max_tokens: 1024,
