@@ -29,6 +29,7 @@
 
 | 缺陷 | 根因 | 修复 |
 |---|---|---|
+| 连接测试在健康栈上报「API 返回异常状态: ok」（2026-08-27 黑盒走查首报） | 面板判 `status === "healthy"`，而 `/v1/health` 契约值为 `ok`/`degraded`——API 从不返回 healthy | 判定改接受 `ok`（`536369a`）；顺带健康端点版本串 0.3.0 硬编码 → `emerald.__version__`；compose neo4j 探测 cypher-shell → wget :7474（JVM 冷启动间歇超时误判 unhealthy 拦依赖链重启） |
 | `GET /v1/pipelines/{id}` 命中即 500 | 路由 `response_model=PipelineStatusResponse`（顶层字段）× 实际返回 `{data,meta}` 信封 → ResponseValidationError；既有测试无该端点功能用例 | `PipelineStatusEnvelope`（沿 keys.py 惯例）+ 回归测试 ×3（`ed4ab9e`） |
 | worker/beat 起不来（Exited 2） | compose `-A emerald.pipeline.tasks` 错——celery app 在 `emerald.pipeline.celery:celery_app`；既有死路径 | 改 `-A emerald.pipeline.celery`（`b2adbc8`） |
 | 引擎镜像四重构建 | api/worker/beat/mcp 各自 `build:` 同一 Dockerfile | 仅 api 构建 + `image: emerald-api:latest` 复用（`b2adbc8`） |
