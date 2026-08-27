@@ -6,11 +6,13 @@ AI Agent 在每次对话之间会遗忘一切。Emerald 解决了这个问题。
 
 | | |
 |---|---|
-| **记忆引擎** | 从对话中提取事实。处理时序变化、矛盾解决和自动遗忘。 |
+| **记忆引擎** | 从对话中提取事实。处理时序变化、矛盾解决和自动维护——6 种策略：时间过期、矛盾取代、噪音过滤、情节衰减、社区遗忘、重复整合。 |
 | **用户画像** | 自动维护的用户上下文——稳定事实 + 近期动态。一次调用，~50ms。 |
 | **混合搜索** | 单次查询同时返回 RAG 结果和记忆结果，知识库文档与个性化上下文合为一体。 |
+| **图谱深度** | 提及节点（NER，ADR-0005）+ 实体中心检索（`about=`）+ 多跳图谱推理（`depth` ≤ 4，路径与跳数透明）。 |
 | **连接器** | 接入连接中心 Totem（ADR-0004，内部自托管动作层）：OAuth/同步/执行外包，Emerald 维护数据源绑定；Pilot 验证通过（2026-08-10） |
 | **多模态提取** | PDF、图片（OCR）、视频（转录）、代码（AST 感知分块）。上传即可用。 |
+| **Web UI** | 内置 Web 控制台（ADR-0003，产品层）：摄入、三态搜索、画像、流式对话、图谱可视化。compose 起栈后浏览器即用。 |
 
 所有这一切运行在同一个记忆图谱之上——记忆、画像和搜索共享同一个上下文池。
 
@@ -19,13 +21,13 @@ AI Agent 在每次对话之间会遗忘一切。Emerald 解决了这个问题。
 ## 工作原理
 
 ```
-你的应用 / AI Agent
+你的应用 / AI Agent / 浏览器（Web UI）
       ↓
    Emerald
       │
       ├── 记忆引擎     提取事实、追踪更新、解决矛盾、自动遗忘过期信息
       ├── 用户画像     静态事实 + 动态上下文，始终最新
-      ├── 混合搜索     RAG + 记忆，一次查询
+      ├── 混合搜索     RAG + 记忆，一次查询；提及桥 + 关系链多跳扩展
       ├── 数据源绑定  经连接中心接入外部数据源
       └── 文件处理     PDF、图片、视频、代码 → 可搜索的分块
 ```
@@ -88,6 +90,44 @@ Emerald 构建一个活的知识图谱，记忆与记忆彼此连接。与传统
                        → 「Emerald 很可能是一家 AI 公司」
 ```
 
+### 提及节点
+
+除了记忆之间的三种关系，Emerald 还把记忆中提到的命名事物解析为图节点（ADR-0005）：
+
+```
+「Alex 在 Stripe 工作」── MENTIONS ──> (Mention: Stripe，类型 = organization)
+```
+
+- **非事实引用类别**——提及不是第四种关系，是记忆 → 事物的引用
+- **规范形式去重**——「谷歌」「Google」「GOOGLE」解析到同一节点，表层别名累积
+- **封闭分类法**——person / organization / location / technology / concept 五类，域外回退 concept
+- **规则提取**——确定性路径（无 LLM），低置信丢弃，创建/重复附加幂等
+
+提及节点是图谱深度的物理基底：共享同一提及的记忆互为兄弟，多跳推理沿提及桥行走。
+
+### 实体中心检索与多跳推理
+
+搜索不只是向量相似度——图谱遍历是 `search` 的深度参数：
+
+```python
+# 实体中心检索：该实体上下文池内提及 Stripe 的全部最新记忆（跨所有表层形式）
+results = client.search(
+    q="", entity_id="user_123", search_mode="memory", about="Stripe"
+)
+
+# 多跳推理：沿共享提及桥 + UPDATES/EXTENDS/DERIVES_FROM 链式行走（depth 0-4）
+results = client.search(q="支付基础设施", entity_id="user_123", depth=2)
+for r in results.results:
+    if r.depth > 0:
+        print(r.depth, r.path)  # 每个多跳结果携带 path（途经节点与边）与 depth 溯源
+```
+
+- **共享主体串联**：提及同一事物的记忆一跳互达
+- **关系链式**：`D2 ← D1 ← A`，查 A 时 D2 以 depth 2 浮现
+- **路径透明**：结果携带 `path` 与 `depth`；排名按信任分 × 0.85^depth 折扣，同分种子在前
+- **历史不穿越**：被取代的事实只在沿 UPDATES 被踩到时浮出，从不主动返回历史
+- **默认关闭**：`depth=0` 行为与现状完全一致，显式 opt-in
+
 ### 自动记忆提取
 
 从一段对话中，Emerald 提取出多个相互关联的事实：
@@ -104,10 +144,13 @@ Emerald 构建一个活的知识图谱，记忆与记忆彼此连接。与传统
 
 ### 自动遗忘
 
-Emerald 知道什么时候记忆不再有意义：
+Emerald 知道什么时候记忆不再有意义——6 种自动维护策略，全部后台调度、零手动干预：
 - **基于时间：**「我明天有考试」——考试日期过后自动遗忘
 - **矛盾解决：**被更新取代的旧事实保留历史记录，但不在搜索中返回
 - **噪音过滤：**随意的、无意义的内容不会成为永久记忆
+- **情节衰减：**不重要的事件随时间推移失去相关性
+- **社区遗忘：**标签传播划分记忆社区，活性评分（置信度/时近性/密度/画像引用）低的社区整体淘汰；桥接记忆与画像引用豁免
+- **重复整合：**语义重复组收敛为单代表（确定性全序），护栏否决（画像保护/矛盾/UPDATES 边）绝不被绕过——误并率 = 0 硬门
 
 ### 记忆类型（自动检测）
 
@@ -243,6 +286,29 @@ const profile = await client.profile("user_123");
 
 ---
 
+## Web UI
+
+Emerald 内置 Web 控制台（ADR-0003：web UI 是产品层，所有操作走同一套 REST API）。compose 起栈后浏览器直接可用：
+
+```bash
+docker compose up -d
+# 打开 http://localhost（nginx :80 对外；其余服务仅绑 127.0.0.1）
+# 以 API key + Entity ID 登录；前端开发模式用 docker-compose.dev.yml override
+```
+
+| 能力 | 说明 |
+|---|---|
+| **摄入** | 快速笔记 + 弹窗三 tab：Note 直存 / Link 元数据记忆 / File 上传（管线状态轮询，完成报告记忆数，失败显式报错） |
+| **搜索** | memory / rag / hybrid 三态真实切换；Spaces 过滤（指定空间或默认全池） |
+| **画像** | 静态事实 + 记忆统计，新摄入管线完成后即时反映 |
+| **对话** | SSE 流式输出；检索记忆 + 画像注入 system prompt；无 LLM key 时显式降级为「记忆检索模式」；支持 OpenAI 兼容后端（`OPENAI_BASE_URL` / `OPENAI_MODELS`） |
+| **图谱** | 记忆关系图可视化 |
+| **整合** | 数据源绑定（连接中心 Totem）面板 |
+
+Web 核心循环以 [`docs/web-core-loop-standard.md`](docs/web-core-loop-standard.md) 为发布门——摄入/搜索/画像/对话四环黑盒走查验收。
+
+---
+
 ## Pandaria 集成
 
 [Pandaria](https://github.com/earendil-works/pandaria)（Rust Agent Runtime）通过 HTTP 适配器 `EmeraldMemoryStore` 与 Emerald 集成。Agent 的每一轮对话自动保存到 Emerald，后续对话自动召回相关记忆。
@@ -312,9 +378,9 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**当前版本：v0.6.0**（2026-08-11）。v0.5.0 完成 M2（测试卫生 / 独立侧质量套件 / 真实嵌入绝对分报告 / 安全审计，按 ADR-0001 重裁剪）；v0.6.0 按 ADR-0004 退役自研连接器（连接能力外包给连接中心 Totem）。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
+**当前版本：v0.6.0**（2026-08-11）。v0.5.0 完成 M2（测试卫生 / 独立侧质量套件 / 真实嵌入绝对分报告 / 安全审计，按 ADR-0001 重裁剪）；v0.6.0 按 ADR-0004 退役自研连接器（连接能力外包给连接中心 Totem）。**v0.7.0（M3「图谱深化与文档」）内容已全部完成，待发布**——见下方增量。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
-**测试规模**：838 测试函数 pass（含独立侧质量套件时序/遗忘/图谱精度三节 + 安全回归 + 基准链路）。
+**测试规模**：1207 个测试（含独立侧质量套件七节——时序 / 遗忘 / 图谱精度 / 提及 / 多跳 / 社区遗忘 / 整合 + 安全回归 + 基准链路）。
 
 ### v0.3.0 核心模块（已发布）
 
@@ -381,11 +447,21 @@ docker compose up -d mcp
 - ✅ 迁移 `009_drop_connectors`；连接能力外包给连接中心 Totem（Emerald 保留 `ConnectionHub` 抽象 + `/v1/sources/*` 绑定路由）
 - ✅ 里程碑顺延：M3 → v0.7.0、M4 → v0.8.0、M5 生产就绪 Beta → v0.9.0
 
+### v0.7.0 增量（v0.6.0 → v0.7.0，M3「图谱深化与文档」）— 内容完成，待发布
+
+- ✅ **B3 NER 提及层**（ADR-0005）：`(:Memory)-[:MENTIONS]->(:Mention)` 规则提取、封闭五类分类法、规范形式去重（表层别名累积）、实体隔离、遗忘/更新时序集成（历史节点保留 MENTIONS 边）
+- ✅ **B4 多跳图谱推理**：`search(about=...)` 实体中心检索 + `depth`（≤ 4）共享提及桥/关系链遍历、路径透明（`path`/`depth`）、信任分 × 0.85^depth 折扣排名、历史不穿越、默认关闭
+- ✅ **B5 社区遗忘**：标签传播社区检测（确定性契约）+ 活性评分决策矩阵 + `forget_communities` 策略（桥接/画像引用豁免；Celery Beat 日级）
+- ✅ **B6 重复整合**（ADR-0006）：向量候选 + 规则护栏（误并率 = 0 硬门）+ `consolidate_duplicates` 策略（日级；代表保留，被并者 `replaced_by` 可审计）
+- ✅ **A5 API 文档 overhaul**：`docs/api/rest-guide.md` 重构为三层结构（快速入门 → 核心四 → 进阶/管理），34/34 端点入文，三处文档偏差修正，OpenAPI tags drift 修复
+- ✅ **Web 核心循环补全**（issue #53，ADR-0003）：摄入三 tab 真实落库（含管线轮询）、三态搜索 + Spaces 过滤、画像注入对话 system prompt、SSE 流式 + 无 key 显式降级、chat OpenAI 兼容后端
+- ✅ 框架集成取消（LangChain.js 等，2026-08-23 决议）：生态投资无真实用户信号不投入；R6 缓解改由 web 核心循环与 A5 文档承担
+
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **M3 (v0.7.0)**：NER 提及层 ✅ + 多跳图谱推理 ✅（2026-08 完成）；剩余 API 文档 overhaul（A5）——框架集成已全部取消/延后（LangChain.js 2026-08-23 取消；Vercel AI / Mastra 待真实用户信号）
 - **M4 (v0.8.0)**：高级遗忘、负载测试验证、Staging 压测（解决性能 SLA P0）
 - **M5 (v0.9.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
+- 框架集成（LangChain.js / Vercel AI / Mastra）：仅以真实采用信号重启
 
 ## OpenAI API Key
 
@@ -406,8 +482,9 @@ If not set, the system falls back to `MockEmbeddingProvider` (deterministic but 
 cp .env.local.example .env.local
 # Edit .env.local with your OPENAI_API_KEY, DEEPSEEK_API_KEY, OAuth credentials, etc.
 
-# 2. Start infrastructure
+# 2. Start infrastructure（api / worker / beat / postgres / redis / minio / mcp / frontend / nginx）
 docker compose up -d
+# Web UI: http://localhost（API key + Entity ID 登录）
 
 # 3. Run migrations
 alembic upgrade head
@@ -423,7 +500,7 @@ docker compose -f docker-compose.test.yml up -d
 cp .env.test .env.test.local  # 按需修改
 set -a && source .env.test && set +a
 alembic upgrade head
-pytest  # 657 pass / 1 skip / 0 fail (post-M2 hardening)
+pytest  # 1207 个测试（集成/质量套件依赖测试基础设施）
 ```
 
 > **Note:** `.env` provides default development values. `.env.local` overrides it for your machine and is ignored by git. Keep real API keys in `.env.local` only.
@@ -444,6 +521,8 @@ pytest  # 657 pass / 1 skip / 0 fail (post-M2 hardening)
 | 错误码 / OpenAPI spec | [docs/api/error-codes.md](docs/api/error-codes.md) · [docs/api/openapi.yaml](docs/api/openapi.yaml) |
 | K8s 灾备 / 可观测性 | [docs/deployment/k8s-runbook.md](docs/deployment/k8s-runbook.md) · [docs/deployment/observability.md](docs/deployment/observability.md) |
 | 生产就绪度评估 | [docs/production-readiness-assessment.md](docs/production-readiness-assessment.md) |
+| Web UI 核心循环标尺 | [docs/web-core-loop-standard.md](docs/web-core-loop-standard.md) |
+| 架构决策记录（ADR） | [docs/adr/](docs/adr/) |
 | 与 Supermemory 能力对比 | [docs/comparison-supermemory.md](docs/comparison-supermemory.md) |
 | 项目路线图 | [docs/roadmap.md](docs/roadmap.md) |
 | Pandaria (Rust) 集成 | [docs/integration-guide.md](docs/integration-guide.md) |
