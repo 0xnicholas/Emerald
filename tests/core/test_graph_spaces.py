@@ -223,3 +223,26 @@ async def test_update_memory_fields(graph):
     assert memories[0]["content"] == "final"
     assert memories[0]["summary"] == "a summary"
     assert memories[0]["confidence"] == 0.95
+
+
+@pytest.mark.asyncio
+async def test_space_datetimes_neo4j_native(graph):
+    """Regression（#52 走查 S2）：Neo4j 后端返回 neo4j.time.DateTime，SpaceResponse（Pydantic v2）
+    拒绝非原生 datetime → /v1/spaces 必 500。_native_dt 必须转原生。"""
+    from datetime import datetime as _dt
+
+    from emerald.api.schemas import SpaceResponse
+    from neo4j.time import DateTime as Neo4jDateTime
+
+    neo_dt = Neo4jDateTime(2026, 8, 27, 12, 0, 0)
+    converted = graph._native_dt(neo_dt)
+    assert isinstance(converted, _dt)  # 原生 datetime，非 neo4j.time.DateTime
+
+    space = await graph.create_space(
+        container_tag="neo4j-dt", name="Neo4j DT", emoji="🧪", entity_id="user_neo"
+    )
+    # create_space 全链路产物必须可过 API schema（模拟路由层 SpaceResponse(**space)）
+    SpaceResponse(**{**space, "created_at": converted, "updated_at": converted})
+    # 非 datetime 值原样透传
+    assert graph._native_dt(None) is None
+    assert graph._native_dt("2026-08-27") == "2026-08-27"

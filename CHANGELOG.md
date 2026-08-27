@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`/v1/spaces` 全系 500（#52 走查 S2）**：Neo4j 后端返回 `neo4j.time.DateTime`，`SpaceResponse`（Pydantic v2）拒绝非原生 datetime → 创建/列表/更新全必 500。`GraphStore._native_dt` 辅助（沿 search.py `to_native` 惯例）统一四个构 dict 位点；回归测试补 neo4j DateTime 真对象过 schema（既有 spaces 测试全内存态，此类无法捕获）
 - **连接面板误判健康栈为异常（#52 黑盒走查首报）**：`/v1/health` 契约 status=`ok`（全探测通过）/`degraded`（任一失败），但 web 连接面板硬判 `=== "healthy"`（API 从不返回的值）——一切健康时也报「API 返回异常状态: ok」。改为接受契约值 `ok`（兼容保留 healthy）；顺带修健康端点硬编码版本串 `0.3.0` → `emerald.__version__` 单一事实源（同步 0.5.0 → 0.6.0 对齐 pyproject）
 - compose neo4j 健康检查改 HTTP 探测（wget :7474）：cypher-shell CLI 间歇性超 10s 超时（JVM 冷启动）误判 unhealthy，会拦住依赖链容器重启（本次 `up -d frontend` 实踩）
 - `GET /v1/pipelines/{id}` 命中即 500：response_model 顶层字段 × 实际 {data,meta} 信封错配，新增 PipelineStatusEnvelope + 回归测试 ×3（issue #52 冒烟发现；D2 轮询依赖端点）

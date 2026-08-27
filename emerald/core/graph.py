@@ -1709,6 +1709,12 @@ class GraphStore:
     # Space CRUD
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _native_dt(value: Any) -> Any:
+        """Neo4j driver 返回 neo4j.time.DateTime，Pydantic v2 拒绝——转原生 datetime。"""
+        to_native = getattr(value, "to_native", None)
+        return to_native() if callable(to_native) else value
+
     async def create_space(
         self,
         container_tag: str,
@@ -1761,8 +1767,8 @@ class GraphStore:
                         "name": record["name"],
                         "emoji": record["emoji"],
                         "entity_id": record["entity_id"],
-                        "created_at": record["created_at"],
-                        "updated_at": record["updated_at"],
+                        "created_at": self._native_dt(record["created_at"]),
+                        "updated_at": self._native_dt(record["updated_at"]),
                     }
                 # Fallback: build from inputs (should not normally reach here)
                 return {
@@ -1831,8 +1837,8 @@ class GraphStore:
                         "name": record["name"],
                         "emoji": record["emoji"],
                         "entity_id": record["entity_id"],
-                        "created_at": record["created_at"],
-                        "updated_at": record["updated_at"],
+                        "created_at": self._native_dt(record["created_at"]),
+                        "updated_at": self._native_dt(record["updated_at"]),
                         "memory_count": record["memory_count"],
                     })
                 return spaces
@@ -1942,8 +1948,8 @@ class GraphStore:
                         "name": record["name"],
                         "emoji": record["emoji"],
                         "entity_id": record["entity_id"],
-                        "created_at": record["created_at"],
-                        "updated_at": record["updated_at"],
+                        "created_at": self._native_dt(record["created_at"]),
+                        "updated_at": self._native_dt(record["updated_at"]),
                     }
                 raise ValueError(
                     f"Space not found: container_tag={container_tag}, entity_id={entity_id}"
