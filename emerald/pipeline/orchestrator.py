@@ -31,6 +31,7 @@ from emerald.pipeline.tasks import (
     extract_task,
     index_task,
     postprocess_task,
+    rag_index_task,
 )
 from emerald.utils import _is_uuid
 
@@ -154,6 +155,7 @@ class PipelineOrchestrator:
             extract_task.s(pipeline_id, content, content_type),
             chunk_task.s(),
             embed_task.s(),
+            rag_index_task.s(entity_id),
             index_task.s(entity_id),
             postprocess_task.s(entity_id),
         ).apply_async()

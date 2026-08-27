@@ -141,3 +141,106 @@ async def test_decay_episodic_task_runs():
     assert result["strategy"] == "episodic_decay"
     assert result["count"] == 2
     instance.decay_episodic.assert_awaited_once()
+
+
+# ---- rag_index_task：RAG 块供给（#52 走查缺陷 A）----
+
+
+class _StubEmbedder:
+    """Deterministic stub: one fixed vector per input text."""
+
+    def __init__(self, dim: int = 8) -> None:
+        self._dim = dim
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.5] * self._dim for _ in texts]
+
+
+class _FakeRedis:
+    def __init__(self, kv: dict[str, str]) -> None:
+        self._kv = kv
+
+    async def get(self, key: str) -> str | None:
+        return self._kv.get(key)
+
+
+@pytest.mark.asyncio
+async def test_rag_index_stores_document_chunks():
+    """有 document_id 的管线：原始文本经非 LLM 分块嵌入后落 RAG 向量库。"""
+    from emerald.pipeline.tasks import _run_rag_index
+
+    doc_id = "aaaaaaaa-0000-0000-0000-000000000001"
+    with (
+        patch(
+            "emerald.pipeline.tasks._pipeline_document_id",
+            new=AsyncMock(return_value=doc_id),
+        ),
+        patch(
+            "emerald.pipeline.tasks._ensure_loop_redis",
+            new=AsyncMock(return_value=_FakeRedis(
+                {"pipeline:p1:text": "锆石星轨验证文本，包含足量的文档正文内容用于分块。"}
+            )),
+        ),
+        patch(
+            "emerald.core.embedder.get_embedding_provider",
+            return_value=_StubEmbedder(),
+        ),
+        patch(
+            "emerald.core.vector.VectorStore.store_document_chunks",
+            new=AsyncMock(return_value=1),
+        ) as mock_store,
+    ):
+        prev = await _run_rag_index(
+            {"pipeline_id": "p1"}, entity_id="dev_user",
+        )
+
+    mock_store.assert_awaited_once()
+    args, kwargs = mock_store.call_args
+    assert args[0] == doc_id
+    assert kwargs.get("entity_id") == "dev_user"
+    assert any("锆石星轨" in t for t in args[1])
+    assert prev["rag_chunk_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_rag_index_skips_without_document():
+    """无 document_id 的管线（sources 事件）：不写 RAG 块。"""
+    from emerald.pipeline.tasks import _run_rag_index
+
+    with (
+        patch(
+            "emerald.pipeline.tasks._pipeline_document_id",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "emerald.core.vector.VectorStore.store_document_chunks",
+            new=AsyncMock(),
+        ) as mock_store,
+    ):
+        prev = await _run_rag_index({"pipeline_id": "p1"}, entity_id="dev_user")
+
+    mock_store.assert_not_awaited()
+    assert "rag_chunk_count" not in prev
+
+
+# ---- 文档状态机（#52 走查缺陷 B）----
+
+
+@pytest.mark.asyncio
+async def test_mark_document_done_writes_pg():
+    """_mark_document_done 置 documents.status='done' 并带 chunk_count。"""
+    from emerald.pipeline.tasks import _mark_document_done
+
+    mock_session = AsyncMock()
+    with patch("emerald.db.session.session_factory") as mock_factory:
+        mock_factory.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.session.return_value.__aexit__ = AsyncMock(return_value=False)
+        await _mark_document_done("doc-123", chunk_count=2)
+
+    mock_session.execute.assert_called_once()
+    sql = str(mock_session.execute.call_args.args[0])
+    assert "documents" in sql
+    assert "done" in sql
+    params = mock_session.execute.call_args.args[1]
+    assert params.get("document_id") == "doc-123"
+    assert params.get("chunk_count") == 2

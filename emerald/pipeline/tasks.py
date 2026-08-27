@@ -77,7 +77,6 @@ async def _update_status(pipeline_id: str, status: str) -> None:
     from sqlalchemy import text
 
     from emerald.db.session import session_factory
-
     async with session_factory.session() as session:
         await session.execute(
             text("UPDATE pipeline_jobs SET status = :status, updated_at = NOW() WHERE id = :id"),
@@ -109,6 +108,49 @@ async def _update_fact_extraction_status(
                 f"UPDATE pipeline_jobs SET {set_clauses} WHERE id = :id"
             ),
             params,
+        )
+
+
+async def _pipeline_document_id(pipeline_id: str) -> str | None:
+    """Return the document_id attached to a pipeline job (or None).
+
+    Uploads create a Document row and link it on pipeline_jobs; sources
+    events and plain async adds carry no document. RAG indexing and the
+    document lifecycle both key off this.
+    """
+    from sqlalchemy import text
+
+    from emerald.db.session import session_factory
+
+    async with session_factory.session() as session:
+        result = await session.execute(
+            text("SELECT document_id FROM pipeline_jobs WHERE id = :id"),
+            {"id": pipeline_id},
+        )
+        row = result.fetchone()
+        return str(row.document_id) if row and row.document_id else None
+
+
+async def _mark_document_done(document_id: str, chunk_count: int = 0) -> None:
+    """Flip a document to status='done' once its pipeline completes.
+
+    Without this, documents stay 'queued' forever and ``/v1/files``
+    (status_filter='done') lists nothing (#52 走查缺陷 B).
+    """
+    from sqlalchemy import text
+
+    from emerald.db.session import session_factory
+
+    async with session_factory.session() as session:
+        await session.execute(
+            text(
+                """
+                UPDATE documents
+                SET status = 'done', chunk_count = :chunk_count, updated_at = NOW()
+                WHERE id = :document_id
+                """
+            ),
+            {"document_id": document_id, "chunk_count": chunk_count},
         )
 
 
@@ -208,6 +250,68 @@ async def _run_embed(prev_result: dict) -> dict:
 
     await redis.setex(f"pipeline:{pipeline_id}:embeddings", 86400, json.dumps(embeddings))
     prev_result["__traceparent"] = get_traceparent()
+    return prev_result
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+def rag_index_task(self, prev_result: dict, entity_id: str) -> dict:
+    """Stage 3.5: idempotently index the document's RAG chunks.
+
+    Memory-side indexing (facts → graph) and document-side indexing
+    (raw chunks → vector store with ``document_id``) are two views of
+    the same ingestion. Without this stage, RAG search
+    (``require_document_id=True``) is structurally empty and hybrid
+    degrades to memory-only (#52 走查缺陷 A).
+    """
+    try:
+        return run_async(_run_rag_index)(prev_result, entity_id)
+    except Exception as exc:
+        run_async(_update_error)(prev_result["pipeline_id"], "rag_indexing", str(exc))
+        raise self.retry(exc=exc) from exc
+
+
+async def _run_rag_index(prev_result: dict, entity_id: str) -> dict:
+    pipeline_id = prev_result["pipeline_id"]
+    document_id = await _pipeline_document_id(pipeline_id)
+    if not document_id:
+        # Non-document pipelines (sources events, plain async adds)
+        # have no RAG surface — memory indexing alone applies.
+        return prev_result
+
+    redis = await _ensure_loop_redis()
+    text = await redis.get(f"pipeline:{pipeline_id}:text")
+    if not text:
+        logger.warning("pipeline.rag_index.no_text", pipeline_id=pipeline_id)
+        return prev_result
+
+    # Non-LLM document chunking: the plain text chunker (paragraph /
+    # sentence boundaries). LLM fact extraction is the memory path's
+    # concern; RAG chunks are the raw document view.
+    from emerald.pipeline.chunking import get_default_registry as get_chunkers
+
+    chunker = get_chunkers().get("text")
+    chunks = await chunker.chunk(text)
+    if not chunks:
+        return prev_result
+
+    texts = [c.text for c in chunks]
+    from emerald.core.embedder import get_embedding_provider
+
+    provider = get_embedding_provider()
+    embeddings = await provider.embed(texts)
+
+    from emerald.core.vector import VectorStore
+
+    count = await VectorStore(use_db=True).store_document_chunks(
+        document_id, texts, embeddings, entity_id=entity_id,
+    )
+    prev_result["rag_chunk_count"] = count
+    logger.info(
+        "pipeline.rag_index.complete",
+        pipeline_id=pipeline_id,
+        document_id=document_id,
+        rag_chunk_count=count,
+    )
     return prev_result
 
 
@@ -353,6 +457,22 @@ async def _run_postprocess(prev_result: dict, entity_id: str) -> None:
 
         await _update_status(pipeline_id, "done")
         pipeline_jobs_total.labels(status="done").inc()
+
+        # Document lifecycle (#52 走查缺陷 B): flip the source document
+        # to done so /v1 files lists completed uploads.
+        document_id = await _pipeline_document_id(pipeline_id)
+        if document_id:
+            try:
+                await _mark_document_done(
+                    document_id, chunk_count=prev_result.get("rag_chunk_count", 0),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "pipeline.postprocess.document_status_failed",
+                    pipeline_id=pipeline_id,
+                    document_id=document_id,
+                    error=str(exc),
+                )
 
 
 # ---- Scheduled tasks (Celery Beat) ----
