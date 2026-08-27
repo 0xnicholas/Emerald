@@ -1168,3 +1168,80 @@ async def test_depth0_search_emits_no_multihop_metrics(populated, graph):
     ) == hops_before
     assert not [e for e in logs if e.get("event") == "search.multihop"]
 
+
+
+# ---- container_tag filter holds across expansion (#52 走查缺陷 C) ----
+
+
+@pytest.mark.asyncio
+async def test_container_filter_excludes_relationship_expansion(
+    orchestrator, graph, vector, embedder
+):
+    """filters.container_tag 必须约束关系扩展邻居。
+
+    回归 #52 走查缺陷 C：种子通过过滤，但 _expand_relationships
+    泄漏跨空间邻居（S2「选=仅该空间」被突破）。
+    """
+    entity = "space_filter_test"
+    mid_seed = await graph.create_memory(
+        "紫水晶协议设计文档", entity_id=entity, container_tag="走查空间",
+    )
+    mid_leak = await graph.create_memory(
+        "无关的跨空间记忆", entity_id=entity, container_tag=None,
+    )
+    await graph.create_relationship(mid_seed, mid_leak, "EXTENDS")
+    emb = (await embedder.embed(["紫水晶协议设计文档"]))[0]
+    await vector.store(mid_seed, "紫水晶协议设计文档", emb, entity_id=entity)
+
+    # 基线（无过滤）：扩展正常带出邻居
+    unfiltered = await orchestrator.search(
+        "紫水晶协议设计文档", entity_id=entity, search_mode=SearchMode.MEMORY,
+    )
+    assert mid_leak in {r.id for r in unfiltered.results}
+
+    # 过滤：空间内只见空间内记忆（种子 + 扩展邻居同受约束）
+    filtered = await orchestrator.search(
+        "紫水晶协议设计文档", entity_id=entity, search_mode=SearchMode.MEMORY,
+        filters={"container_tag": "走查空间"},
+    )
+    assert {r.id for r in filtered.results} == {mid_seed}
+
+
+@pytest.mark.asyncio
+async def test_container_filter_excludes_multihop_expansion(
+    orchestrator, graph, vector, embedder
+):
+    """filters.container_tag 必须约束多跳扩展邻居（同缺陷 C 的 multihop 路径）。"""
+    from emerald.core.mentions import Mention
+
+    entity = "space_filter_mh_test"
+    mid_seed = await graph.create_memory(
+        "种子事实提及锆石", entity_id=entity, container_tag="走查空间",
+    )
+    mid_leak = await graph.create_memory(
+        "桥接但跨空间的记忆", entity_id=entity, container_tag="其他空间",
+    )
+    # 共享提及桥：两条记忆都提及「锆石」→ depth=1 互为兄弟
+    await graph.attach_mentions(
+        mid_seed, entity, [Mention("锆石", "锆石", "concept", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_leak, entity, [Mention("锆石", "锆石", "concept", 0.9)],
+    )
+    emb = (await embedder.embed(["种子事实提及锆石"]))[0]
+    await vector.store(mid_seed, "种子事实提及锆石", emb, entity_id=entity)
+
+    # 基线（无过滤，depth=1）：提及桥带出兄弟
+    unfiltered = await orchestrator.search(
+        "种子事实提及锆石", entity_id=entity, search_mode=SearchMode.MEMORY,
+        depth=1,
+    )
+    assert mid_leak in {r.id for r in unfiltered.results}
+
+    # 过滤：多跳兄弟同样受 container_tag 约束
+    filtered = await orchestrator.search(
+        "种子事实提及锆石", entity_id=entity, search_mode=SearchMode.MEMORY,
+        depth=1, filters={"container_tag": "走查空间"},
+    )
+    assert mid_leak not in {r.id for r in filtered.results}
+    assert {r.container_tag for r in filtered.results} == {"走查空间"}

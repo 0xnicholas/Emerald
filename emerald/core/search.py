@@ -180,14 +180,14 @@ class SearchOrchestrator:
 
                 # Expand via graph relationships (EXTENDS, DERIVES_FROM)
                 memory_results = await self._expand_relationships(
-                    memory_results, entity_id, resolved_top_k
+                    memory_results, entity_id, resolved_top_k, filters=filters
                 )
 
             # Shared-subject bridging (B4, #31): explicit depth opt-in
             # walks the mention graph from the memory seed set.
             if depth > 0 and memory_results:
                 memory_results = await self._expand_multihop(
-                    memory_results, entity_id, depth
+                    memory_results, entity_id, depth, filters=filters
                 )
 
             results.extend(memory_results)
@@ -366,6 +366,7 @@ class SearchOrchestrator:
         results: list[SearchResult],
         entity_id: str,
         depth: int,
+        filters: dict | None = None,
     ) -> list[SearchResult]:
         """Walk the graph from the seed set (B4, #31/#32/#33).
 
@@ -404,6 +405,8 @@ class SearchOrchestrator:
                 continue
             memory = await self.graph.get_memory(bridged_id)
             if not memory:
+                continue
+            if filters and not self._passes_filters(memory, filters):
                 continue
             is_latest = memory.get("is_latest", True)
             if not is_latest and not hop.historical:
@@ -593,6 +596,7 @@ class SearchOrchestrator:
         entity_id: str,
         top_k: int,
         expansion_factor: float = 0.85,
+        filters: dict | None = None,
     ) -> list[SearchResult]:
         """Expand search results by traversing graph relationships.
 
@@ -602,6 +606,8 @@ class SearchOrchestrator:
         expanded result carries ``depth=1`` and an honest one-edge path
         (B4, #33) so it is never mistaken for a seed. The expansion is
         entity-scoped: neighbors in another entity's pool are skipped.
+        ``filters`` applies to expanded neighbors exactly as to seeds —
+        a container_tag view must not leak cross-space neighbors (S2).
 
         This turns a flat vector search into a graph-aware retrieval:
         - EXTENDS: includes complementary facts that enrich context
@@ -643,6 +649,8 @@ class SearchOrchestrator:
                     continue
                 memory = await self.graph.get_memory(rid)
                 if not memory:
+                    continue
+                if filters and not self._passes_filters(memory, filters):
                     continue
 
                 trust = compute_trust_score(memory)
