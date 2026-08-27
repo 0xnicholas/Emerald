@@ -126,6 +126,85 @@ class VectorStore:
 
         logger.debug("vector.store", chunk_id=chunk_id, dims=len(embedding))
 
+    async def store_document_chunks(
+        self,
+        document_id: str,
+        texts: list[str],
+        embeddings: list[list[float]],
+        *,
+        entity_id: str,
+        model_name: str = "text-embedding-3-small",
+    ) -> int:
+        """Idempotently persist a document's RAG chunks.
+
+        Replaces any previously stored chunks for ``document_id`` (pipeline
+        retries and re-uploads must not duplicate or leave stale rows), then
+        inserts one embedding per chunk with deterministic chunk ids
+        ``{document_id}:rag:{i}``. Chunks carry ``document_id`` so RAG search
+        (``require_document_id=True``) finds them while memory search
+        (``memory_only=True``) never sees them. Returns the chunk count.
+        """
+        if len(texts) != len(embeddings):
+            raise ValueError(
+                f"texts/embeddings length mismatch: {len(texts)} != {len(embeddings)}"
+            )
+        chunk_ids = [f"{document_id}:rag:{i}" for i in range(len(texts))]
+        if self._use_db and self._session_factory:
+            from sqlalchemy import text as sql_text
+            async with self._session_factory.session() as session:
+                await session.execute(
+                    sql_text(
+                        "DELETE FROM embeddings WHERE document_id = :document_id"
+                    ),
+                    {"document_id": document_id},
+                )
+                for chunk_id, chunk_text, embedding in zip(
+                    chunk_ids, texts, embeddings, strict=True
+                ):
+                    await session.execute(
+                        sql_text(
+                            """
+                            INSERT INTO embeddings (
+                                chunk_id, text, embedding, entity_id,
+                                document_id, model_name, dimensions
+                            )
+                            VALUES (
+                                :chunk_id, :text, :embedding, :entity_id,
+                                :document_id, :model_name, :dimensions
+                            )
+                            """
+                        ),
+                        {
+                            "chunk_id": chunk_id,
+                            "text": chunk_text,
+                            "embedding": _pg_vector_literal(embedding),
+                            "entity_id": entity_id,
+                            "document_id": document_id,
+                            "model_name": model_name,
+                            "dimensions": len(embedding),
+                        },
+                    )
+        else:
+            for cid in list(self._memory_document_ids):
+                if self._memory_document_ids[cid] == document_id:
+                    self._memory_store.pop(cid, None)
+                    self._memory_texts.pop(cid, None)
+                    self._memory_entities.pop(cid, None)
+                    self._memory_document_ids.pop(cid, None)
+            for chunk_id, chunk_text, embedding in zip(
+                chunk_ids, texts, embeddings, strict=True
+            ):
+                self._memory_store[chunk_id] = embedding
+                self._memory_texts[chunk_id] = chunk_text
+                self._memory_entities[chunk_id] = entity_id
+                self._memory_document_ids[chunk_id] = document_id
+        logger.info(
+            "vector.document_chunks_stored",
+            document_id=document_id,
+            chunk_count=len(texts),
+        )
+        return len(texts)
+
     async def exists(self, chunk_id: str) -> bool:
         """Check whether an embedding row exists for the given chunk_id.
 
