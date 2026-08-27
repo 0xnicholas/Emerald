@@ -6,6 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends, Request
 
+from emerald import __version__
 from emerald.api.dependencies import api_key_auth
 from emerald.config import get_settings
 
@@ -71,7 +72,7 @@ async def health_check() -> dict:
 
     return {
         "status": overall,
-        "version": "0.3.0",
+        "version": __version__,
         "checks": checks,
         "meta": {
             "took_ms": int((time.perf_counter() - start) * 1000),

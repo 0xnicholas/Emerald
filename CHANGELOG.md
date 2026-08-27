@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **连接面板误判健康栈为异常（#52 黑盒走查首报）**：`/v1/health` 契约 status=`ok`（全探测通过）/`degraded`（任一失败），但 web 连接面板硬判 `=== "healthy"`（API 从不返回的值）——一切健康时也报「API 返回异常状态: ok」。改为接受契约值 `ok`（兼容保留 healthy）；顺带修健康端点硬编码版本串 `0.3.0` → `emerald.__version__` 单一事实源（同步 0.5.0 → 0.6.0 对齐 pyproject）
+- compose neo4j 健康检查改 HTTP 探测（wget :7474）：cypher-shell CLI 间歇性超 10s 超时（JVM 冷启动）误判 unhealthy，会拦住依赖链容器重启（本次 `up -d frontend` 实踩）
 - `GET /v1/pipelines/{id}` 命中即 500：response_model 顶层字段 × 实际 {data,meta} 信封错配，新增 PipelineStatusEnvelope + 回归测试 ×3（issue #52 冒烟发现；D2 轮询依赖端点）
 - compose worker/beat 起不来：`-A emerald.pipeline.tasks` 错指（celery app 在 `emerald.pipeline.celery`）既有死路径；同批：引擎镜像四重构建去重（仅 api 构建，worker/beat/mcp 复用）、redis 归一 8.0-alpine
 - Benchmark CI 专红（2026-08-14 起）：单测 forget_communities 被 workflow 共享 Redis 的 `profile:<entity>` 跨测试缓存污染（本地无 Redis 故绿）；engine fixture 与 communities scenario 显式注入 `ProfileManager(redis_client=False)` 恢复密闭性

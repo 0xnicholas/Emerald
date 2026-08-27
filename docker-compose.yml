@@ -107,9 +107,11 @@ services:
       - neo4j_data:/data
       - neo4j_logs:/logs
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "emerald_dev", "RETURN 1"]
+      # cypher-shell CLI 探测间歇性超 10s（JVM 冷启动），会误判 unhealthy 拦住依赖链重启；
+      # 改用 HTTP 探测（毫秒级，7474 起即服务可用，引擎经 bolt 7687 连接）
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:7474"]
       interval: 10s
-      timeout: 10s
+      timeout: 5s
       retries: 10
     networks:
       - emerald-net

@@ -42,7 +42,9 @@ export function ConnectionPanel() {
         entityId,
       }, 5_000);
       const health = await client.health();
-      if (health.status === "healthy") {
+      // 契约：GET /v1/health 全探测通过 status="ok"，任一失败 status="degraded"（system.py）。
+      // 此前误判 "healthy"（API 从不返回的值），导致健康栈也报「API 返回异常状态」。
+      if (health.status === "ok" || health.status === "healthy") {
         setConnected(true);
       } else {
         setError(`API 返回异常状态: ${health.status}`);
