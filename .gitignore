@@ -33,3 +33,4 @@ docker-compose.local.yml
 
 # Celery Beat scheduler state (runtime artifact)
 celerybeat-schedule
+tests_changed/

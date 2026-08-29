@@ -1,2 +1,0 @@
-"""API module tests."""
-
