@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — M3（v0.7.0 目标）
+## [0.7.0] — 2026-08-29 — M3「图谱深化与文档」
+
+> 发布门：#52 黑盒走查 19/19 过（S1/S2 阻断缺陷修复复验 + 对照实验，见 `docs/verification/web-core-loop-release-check-2026-08-15.md`）；容器内全量回归 1119 passed / 4 环境性失败（benchmark CLI 容器 env 泄漏 ×1 + docker socket ×3，CI 不受影响）。
 
 ### Fixed
 

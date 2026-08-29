@@ -378,7 +378,7 @@ docker compose up -d mcp
 
 ## 项目状态
 
-**当前版本：v0.6.0**（2026-08-11）。v0.5.0 完成 M2（测试卫生 / 独立侧质量套件 / 真实嵌入绝对分报告 / 安全审计，按 ADR-0001 重裁剪）；v0.6.0 按 ADR-0004 退役自研连接器（连接能力外包给连接中心 Totem）。**v0.7.0（M3「图谱深化与文档」）内容已全部完成，待发布**——见下方增量。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
+**当前版本：v0.7.0**（2026-08-29）。v0.5.0 完成 M2（测试卫生 / 独立侧质量套件 / 真实嵌入绝对分报告 / 安全审计，按 ADR-0001 重裁剪）；v0.6.0 按 ADR-0004 退役自研连接器；**v0.7.0 完成 M3「图谱深化与文档」**——B3 提及层 / B4 多跳推理 / B5 社区遗忘 / B6 重复整合 / A5 文档 overhaul / web 核心循环补全，发布门 #52 黑盒走查 19/19 过。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)；生产就绪度见 [`docs/production-readiness-assessment.md`](docs/production-readiness-assessment.md)；长期路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 **测试规模**：1207 个测试（含独立侧质量套件七节——时序 / 遗忘 / 图谱精度 / 提及 / 多跳 / 社区遗忘 / 整合 + 安全回归 + 基准链路）。
 
@@ -447,7 +447,7 @@ docker compose up -d mcp
 - ✅ 迁移 `009_drop_connectors`；连接能力外包给连接中心 Totem（Emerald 保留 `ConnectionHub` 抽象 + `/v1/sources/*` 绑定路由）
 - ✅ 里程碑顺延：M3 → v0.7.0、M4 → v0.8.0、M5 生产就绪 Beta → v0.9.0
 
-### v0.7.0 增量（v0.6.0 → v0.7.0，M3「图谱深化与文档」）— 内容完成，待发布
+### v0.7.0 增量（v0.6.0 → v0.7.0，M3「图谱深化与文档」）
 
 - ✅ **B3 NER 提及层**（ADR-0005）：`(:Memory)-[:MENTIONS]->(:Mention)` 规则提取、封闭五类分类法、规范形式去重（表层别名累积）、实体隔离、遗忘/更新时序集成（历史节点保留 MENTIONS 边）
 - ✅ **B4 多跳图谱推理**：`search(about=...)` 实体中心检索 + `depth`（≤ 4）共享提及桥/关系链遍历、路径透明（`path`/`depth`）、信任分 × 0.85^depth 折扣排名、历史不穿越、默认关闭
