@@ -1,0 +1,1247 @@
+"""Tests for SearchOrchestrator — hybrid search across memory + RAG."""
+
+import pytest
+
+from emerald.core.embedder import MockEmbeddingProvider
+from emerald.core.graph import GraphStore
+from emerald.core.search import (
+    PathStep,
+    SearchMode,
+    SearchOrchestrator,
+    SearchResult,
+)
+from emerald.core.vector import VectorStore
+
+
+@pytest.fixture
+def embedder():
+    return MockEmbeddingProvider(dimension=128)
+
+
+@pytest.fixture
+def graph():
+    return GraphStore(use_db=False)
+
+
+@pytest.fixture
+def vector():
+    return VectorStore(use_db=False)
+
+
+@pytest.fixture
+async def orchestrator(graph, vector, embedder):
+    return SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+
+
+@pytest.fixture
+async def populated(orchestrator, graph, vector, embedder):
+    """Populate with test memories across two entities."""
+    # Alice: tech person
+    memories = [
+        ("alice", "Alice 喜欢 TypeScript 和函数式编程", "preference"),
+        ("alice", "Alice 是一名资深前端工程师", "fact"),
+        ("alice", "Alice 住在北京朝阳区", "fact"),
+        ("bob", "Bob 喜欢 Rust 和系统编程", "preference"),
+        ("bob", "Bob 是一名后端工程师", "fact"),
+    ]
+    for entity_id, content, mtype in memories:
+        mid = await graph.create_memory(content, entity_id=entity_id, memory_type=mtype)
+        emb = (await embedder.embed([content]))[0]
+        await vector.store(mid, content, emb, entity_id=entity_id)
+    return orchestrator
+
+
+# ---- Search modes ----
+
+@pytest.mark.asyncio
+async def test_search_memory_mode(populated):
+    """search_mode=memory returns only graph memories."""
+    # Exact match because MockEmbeddingProvider is hash-based
+    results = await populated.search(
+        "Alice 喜欢 TypeScript 和函数式编程",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+    )
+    assert len(results.results) > 0
+    for r in results.results:
+        assert r.source == "memory"
+
+
+class _KeywordEmbeddingProvider:
+    """Test-only embedder: returns the same vector for any text containing a keyword."""
+
+    def __init__(self, keyword: str, dimension: int = 128) -> None:
+        self.keyword = keyword
+        self._dimension = dimension
+        self._match_vec = [1.0] + [0.0] * (dimension - 1)
+        self._miss_vec = [0.0] * dimension
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [
+            self._match_vec if self.keyword in t else self._miss_vec for t in texts
+        ]
+
+    def dimension(self) -> int:
+        return self._dimension
+
+
+@pytest.mark.asyncio
+async def test_search_rag_mode(populated, vector):
+    """search_mode=rag returns only document (RAG) vector results."""
+    # RAG chunks are identified by document_id; memory embeddings are not.
+    rag_text = "Alice 是一名资深前端工程师"
+    embedder = _KeywordEmbeddingProvider("前端")
+    rag_emb = (await embedder.embed([rag_text]))[0]
+    await vector.store(
+        "rag-doc-1", rag_text, rag_emb, entity_id="alice", document_id="doc-1"
+    )
+
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=embedder
+    )
+    results = await orchestrator.search(
+        "前端工程师",
+        entity_id="alice",
+        search_mode=SearchMode.RAG,
+    )
+    assert len(results.results) > 0
+    for r in results.results:
+        assert r.source == "rag"
+
+
+@pytest.mark.asyncio
+async def test_search_hybrid_mode(populated, graph, vector):
+    """search_mode=hybrid returns both memory and rag results.
+
+    We intentionally keep memory and RAG contents distinct so that
+    cross-source deduplication does not hide one of the sources.
+    """
+    keyword = "Vim"
+    embedder = _KeywordEmbeddingProvider(keyword)
+
+    # Memory fact stored in both graph and vector
+    memory_text = "Alice 使用 Vim 编辑器"
+    memory_id = await graph.create_memory(
+        memory_text, entity_id="alice", memory_type="fact"
+    )
+    mem_emb = (await embedder.embed([memory_text]))[0]
+    await vector.store(memory_id, memory_text, mem_emb, entity_id="alice")
+
+    # RAG-only document chunk (document_id marks it as RAG)
+    rag_text = "Vim 编辑器快捷键大全"
+    rag_emb = (await embedder.embed([rag_text]))[0]
+    await vector.store(
+        "rag-chunk-1", rag_text, rag_emb, entity_id="alice", document_id="doc-vim"
+    )
+
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=embedder
+    )
+    results = await orchestrator.search(
+        keyword,
+        entity_id="alice",
+        search_mode=SearchMode.HYBRID,
+        dynamic_truncation=False,
+    )
+    sources = {r.source for r in results.results}
+    assert "memory" in sources
+    assert "rag" in sources
+
+
+# ---- Entity isolation ----
+
+@pytest.mark.asyncio
+async def test_search_entity_isolation(populated):
+    """Search for one entity does not return another entity's memories."""
+    results = await populated.search(
+        "Rust", entity_id="alice", search_mode=SearchMode.HYBRID,
+    )
+    for r in results.results:
+        assert "Bob" not in r.content
+
+
+# ---- Score ordering ----
+
+@pytest.mark.asyncio
+async def test_results_sorted_by_score(populated):
+    """Results are returned in descending score order."""
+    results = await populated.search(
+        "TypeScript", entity_id="alice", search_mode=SearchMode.HYBRID, top_k=5,
+    )
+    scores = [r.score for r in results.results]
+    assert scores == sorted(scores, reverse=True)
+
+
+# ---- Deduplication ----
+
+@pytest.mark.asyncio
+async def test_hybrid_deduplicates(populated, graph, vector, embedder):
+    """Same content found in both memory and RAG is deduplicated."""
+    content = "用户精通 Python 和机器学习"
+    mid = await graph.create_memory(content, entity_id="alice")
+    emb = (await embedder.embed([content]))[0]
+    await vector.store(mid, content, emb, entity_id="alice")
+
+    results = await populated.search(
+        "Python 机器学习", entity_id="alice", search_mode=SearchMode.HYBRID, top_k=10,
+    )
+    # Check for duplicates by ID
+    ids = [r.id for r in results.results]
+    assert len(ids) == len(set(ids))
+
+
+# ---- Top-k limit ----
+
+@pytest.mark.asyncio
+async def test_top_k_respected(populated):
+    """top_k parameter limits result count."""
+    results = await populated.search(
+        "工程师", entity_id="alice", search_mode=SearchMode.HYBRID, top_k=1,
+    )
+    assert len(results.results) <= 1
+
+
+@pytest.mark.asyncio
+async def test_default_top_k_increased(populated):
+    """Default top_k is now 30 to improve recall (MEMANTO insight)."""
+    results = await populated.search(
+        "工程师", entity_id="alice", search_mode=SearchMode.HYBRID,
+    )
+    # Default should be 30; with only a few test memories we get all of them.
+    assert len(results.results) <= 30
+
+
+# ---- Min-confidence filter ----
+
+@pytest.mark.asyncio
+async def test_min_confidence_filters_low_confidence_memories(populated, graph, vector, embedder):
+    """min_confidence excludes memories below the threshold."""
+    content = "低置信度记忆"
+    mid = await graph.create_memory(
+        content, entity_id="alice", memory_type="fact", confidence=0.3
+    )
+    emb = (await embedder.embed([content]))[0]
+    await vector.store(mid, content, emb, entity_id="alice")
+
+    results_filtered = await populated.search(
+        "低置信度记忆",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+        min_confidence=0.5,
+    )
+    filtered_ids = {r.id for r in results_filtered.results}
+    assert mid not in filtered_ids
+
+    results_no_filter = await populated.search(
+        "低置信度记忆",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+    )
+    no_filter_ids = {r.id for r in results_no_filter.results}
+    assert mid in no_filter_ids
+
+
+# ---- Dynamic truncation ----
+
+@pytest.mark.asyncio
+async def test_dynamic_truncation_stops_at_score_gap():
+    """Dynamic truncation drops tail results when a large score gap appears.
+
+    We provide more than the minimum-floor results so the gap rule can fire.
+    """
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="A", score=0.95, source="memory"),
+        SearchResult(id="2", content="B", score=0.80, source="memory"),
+        SearchResult(id="3", content="C", score=0.78, source="memory"),
+        SearchResult(id="4", content="D", score=0.40, source="memory"),
+        SearchResult(id="5", content="E", score=0.38, source="memory"),
+    ]
+    merged = orchestrator._merge_results(results, top_k=10, dynamic_truncation=True)
+    ids = [r.id for r in merged]
+    assert "1" in ids
+    assert "2" in ids
+    assert "3" in ids
+    assert "4" not in ids  # gap 0.38 > default 0.15
+    assert "5" not in ids
+
+
+@pytest.mark.asyncio
+async def test_dynamic_truncation_disabled_returns_all():
+    """When dynamic truncation is disabled, top_k is the only limit."""
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="A", score=0.95, source="memory"),
+        SearchResult(id="2", content="B", score=0.40, source="memory"),
+    ]
+    merged = orchestrator._merge_results(results, top_k=10, dynamic_truncation=False)
+    ids = [r.id for r in merged]
+    assert "1" in ids
+    assert "2" in ids
+
+
+# ---- Empty results ----
+
+@pytest.mark.asyncio
+async def test_memory_search_empty_for_unrelated(populated):
+    """Semantic search returns empty for entities with no memories."""
+    results = await populated.search(
+        "量子计算 黑洞 相对论", entity_id="charlie", search_mode=SearchMode.MEMORY,
+    )
+    assert len(results.results) == 0
+
+
+# ---- Query rewriting stub ----
+
+@pytest.mark.asyncio
+async def test_rewrite_query_false_returns_original(populated):
+    """When rewrite_query=False, query_rewritten is None."""
+    results = await populated.search(
+        "Python", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=False,
+    )
+    assert results.query_rewritten is None
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_expands_short_query(populated):
+    """When rewrite_query=True, short queries are expanded (pattern or LLM)."""
+    results = await populated.search(
+        "Python", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
+    )
+    assert results.query_rewritten is not None
+    assert "Python" in results.query_rewritten
+    # Either pattern-based expansion or LLM semantic expansion
+    assert len(results.query_rewritten) > len("Python")
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_expands_howto(populated):
+    """Pattern-based expansion for '如何' queries."""
+    results = await populated.search(
+        "如何部署", entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
+    )
+    assert "方法" in results.query_rewritten
+    assert "步骤" in results.query_rewritten
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_noop_for_long_query(populated):
+    """Long queries without patterns are returned as-is."""
+    long_query = "这是一个非常长的查询语句用来测试查询重写器不会对超过十个字符的查询进行无意义的扩展"
+    results = await populated.search(
+        long_query, entity_id="alice", search_mode=SearchMode.MEMORY, rewrite_query=True,
+    )
+    assert results.query_rewritten == long_query
+
+
+# ---- Rerank ----
+
+@pytest.mark.asyncio
+async def test_rerank_boosts_keyword_matches():
+    """_rerank_results boosts results with direct keyword overlap."""
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
+        SearchResult(id="2", content="Alice 喜欢 TypeScript 和函数式编程", score=0.8, source="memory"),
+    ]
+    reranked = await orchestrator._rerank_results(results, "TypeScript")
+    # The TypeScript result should move ahead despite lower initial score
+    assert reranked[0].id == "2"
+
+
+@pytest.mark.asyncio
+async def test_rerank_no_overlap_unchanged():
+    """_rerank_results preserves order when no keyword overlap."""
+    orchestrator = SearchOrchestrator()
+    results = [
+        SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
+        SearchResult(id="2", content="Bob 喜欢 Rust", score=0.8, source="memory"),
+    ]
+    reranked = await orchestrator._rerank_results(results, "量子计算")
+    assert reranked[0].id == "1"
+    assert reranked[1].id == "2"
+
+
+@pytest.mark.asyncio
+async def test_rerank_empty_results():
+    """_rerank_results on empty list returns empty."""
+    orchestrator = SearchOrchestrator()
+    result = await orchestrator._rerank_results([], "anything")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_embedding_rerank_with_mock_embedder():
+    """Embedding-based rerank reorders results by cosine similarity."""
+    embedder = MockEmbeddingProvider(dimension=128)
+    orchestrator = SearchOrchestrator(embedder=embedder)
+
+    # Create results where content closer to query should rank higher
+    results = [
+        SearchResult(id="1", content="量子计算和黑洞研究", score=0.5, source="memory"),
+        SearchResult(id="2", content="TypeScript 前端开发", score=0.9, source="memory"),
+    ]
+    # Query about physics — result 1 should rise, result 2 should fall
+    reranked = await orchestrator._embedding_rerank(results, "物理学 量子")
+
+    # Embedding rerank should produce results
+    assert len(reranked) == 2
+    # All scores should still be valid numbers
+    for r in reranked:
+        assert 0.0 <= r.score <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_embedding_rerank_falls_back_without_embedder():
+    """Without embedder, _embedding_rerank falls back to keyword boost."""
+    orchestrator = SearchOrchestrator()  # No embedder
+    results = [
+        SearchResult(id="1", content="Alice 住在北京朝阳区", score=0.9, source="memory"),
+        SearchResult(id="2", content="Bob 喜欢 Rust", score=0.8, source="memory"),
+    ]
+    # Should fall back to keyword boost (no crash)
+    reranked = await orchestrator._embedding_rerank(results, "Rust")
+    assert len(reranked) == 2
+    # Keyword boost moves Rust result ahead
+    assert reranked[0].id == "2"
+
+
+@pytest.mark.asyncio
+async def test_cross_encoder_cache_is_class_level():
+    """Cross-encoder model cache is shared across instances (classmethod)."""
+    # Reset cache for test isolation
+    SearchOrchestrator._cross_encoder_cache = None
+
+    o1 = SearchOrchestrator()
+    o2 = SearchOrchestrator()
+
+    # Both should return the same result (None if not installed, or model if installed)
+    ce1 = o1._get_cross_encoder()
+    ce2 = o2._get_cross_encoder()
+    assert ce1 is ce2  # Same cached reference
+
+    # Reset
+    SearchOrchestrator._cross_encoder_cache = None
+
+
+@pytest.mark.asyncio
+async def test_rerank_tier_fallback_chain_with_mock():
+    """When cross-encoder unavailable, falls through to embedding then keyword.
+    
+    With MockEmbeddingProvider, Tier 2 (embedding) should succeed.
+    """
+    # Force cross-encoder to be unavailable
+    SearchOrchestrator._cross_encoder_cache = "__unavailable__"
+
+    embedder = MockEmbeddingProvider(dimension=128)
+    orchestrator = SearchOrchestrator(embedder=embedder)
+
+    results = [
+        SearchResult(id="1", content="物理和数学", score=0.5, source="memory"),
+        SearchResult(id="2", content="编程和开发", score=0.9, source="memory"),
+    ]
+
+    reranked = await orchestrator._rerank_results(results, "物理科学")
+    assert len(reranked) == 2
+
+    # Reset
+    SearchOrchestrator._cross_encoder_cache = None
+
+
+# ---- Relationship expansion ----
+
+
+@pytest.mark.asyncio
+async def test_expand_extends_relationship():
+    """Search result expanded via EXTENDS to include extended memory."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "expand_test"
+
+    # Create two related memories: B EXTENDS A
+    mid_a = await graph.create_memory(
+        "Alice 是一名工程师", entity_id=entity, memory_type="fact"
+    )
+    mid_b = await graph.create_memory(
+        "Alice 是前端工程师，主攻 React", entity_id=entity, memory_type="fact"
+    )
+    # Also create relationship: B EXTENDS A
+    await graph.create_relationship(mid_b, mid_a, "EXTENDS", {"aspect": "detail"})
+
+    # Build a mock result containing the extending memory (B)
+    results = [
+        SearchResult(id=mid_b, content="Alice 是前端工程师，主攻 React", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    # Should now contain both B and A
+    ids = {r.id for r in expanded}
+    assert mid_b in ids, "original result should be preserved"
+    assert mid_a in ids, "EXTENDS target should be included"
+    assert len(expanded) == 2
+
+
+@pytest.mark.asyncio
+async def test_expand_derives_from_relationship():
+    """Search result expanded via DERIVES_FROM to include source memories."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "derives_test"
+
+    mid_src1 = await graph.create_memory(
+        "Alice 在 Stripe 工作", entity_id=entity, memory_type="fact"
+    )
+    mid_src2 = await graph.create_memory(
+        "Stripe 是一家支付公司", entity_id=entity, memory_type="fact"
+    )
+    mid_derived = await graph.create_memory(
+        "Alice 很可能在支付行业工作", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_derived, mid_src1, "DERIVES_FROM", {"reasoning": "employment"})
+    await graph.create_relationship(mid_derived, mid_src2, "DERIVES_FROM", {"reasoning": "industry"})
+
+    results = [
+        SearchResult(id=mid_derived, content="Alice 很可能在支付行业工作", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    ids = {r.id for r in expanded}
+    assert mid_derived in ids
+    assert mid_src1 in ids, "DERIVES_FROM source 1 should be included"
+    assert mid_src2 in ids, "DERIVES_FROM source 2 should be included"
+    assert len(expanded) == 3
+
+
+@pytest.mark.asyncio
+async def test_expand_inbound_extends():
+    """When searching for the target of EXTENDS, the source should be included."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "inbound_test"
+
+    # B EXTENDS A
+    mid_a = await graph.create_memory(
+        "用户住在北京", entity_id=entity, memory_type="fact"
+    )
+    mid_b = await graph.create_memory(
+        "用户住在北京海淀区", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_b, mid_a, "EXTENDS")
+
+    # Search finds A (the target); expansion should include B (the source)
+    results = [
+        SearchResult(id=mid_a, content="用户住在北京", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    ids = {r.id for r in expanded}
+    assert mid_a in ids
+    assert mid_b in ids, "EXTENDS source should be included (inbound direction)"
+    assert len(expanded) == 2
+
+
+@pytest.mark.asyncio
+async def test_expand_deduplicates_and_scores():
+    """Expanded results are deduplicated and have lower scores than originals."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "dedup_test"
+
+    mid_base = await graph.create_memory(
+        "基础事实", entity_id=entity, memory_type="fact"
+    )
+    mid_ext = await graph.create_memory(
+        "扩展详情", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_ext, mid_base, "EXTENDS")
+
+    results = [
+        SearchResult(id=mid_base, content="基础事实", score=0.9, source="memory"),
+        SearchResult(id=mid_ext, content="扩展详情", score=0.8, source="memory"),
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    ids = [r.id for r in expanded]
+    # No duplicates
+    assert len(ids) == len(set(ids))
+    # Original results keep their scores; expanded ones have lower scores
+    for r in expanded:
+        if r.source == "memory_expanded":
+            assert r.score <= 0.9 * 0.85 + 0.01  # should be ≤ original × 0.85
+
+
+@pytest.mark.asyncio
+async def test_legacy_relationship_expansion_carries_provenance(graph, vector, embedder):
+    """The depth-1 EXTENDS/DERIVES expansion is annotated, never a seed (B4, #33)."""
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "legacy_prov_test"
+    mid_base = await graph.create_memory("基础事实", entity_id=entity)
+    mid_ext = await graph.create_memory("扩展详情", entity_id=entity)
+    await graph.create_relationship(mid_ext, mid_base, "EXTENDS")
+    # A cross-entity edge must not leak into the expansion (spec #29 story 6).
+    mid_other = await graph.create_memory("别人家的事实", entity_id="other")
+    await graph.create_relationship(mid_other, mid_base, "EXTENDS")
+
+    results = [
+        SearchResult(id=mid_base, content="基础事实", score=0.9, source="memory"),
+    ]
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+    by_id = {r.id: r for r in expanded}
+
+    assert by_id[mid_base].depth == 0 and by_id[mid_base].path == []
+    assert by_id[mid_ext].depth == 1
+    assert by_id[mid_ext].path == [
+        PathStep(kind="memory", id=mid_base),
+        PathStep(kind="EXTENDS", id=mid_ext),
+    ]
+    assert mid_other not in by_id
+
+
+@pytest.mark.asyncio
+async def test_expand_no_relationships_no_change():
+    """When no relationships exist, results are unchanged."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "no_rel_test"
+
+    mid = await graph.create_memory(
+        "独立事实", entity_id=entity, memory_type="fact"
+    )
+
+    results = [
+        SearchResult(id=mid, content="独立事实", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    assert len(expanded) == 1
+    assert expanded[0].id == mid
+
+
+@pytest.mark.asyncio
+async def test_expand_excludes_updates():
+    """UPDATES relationships should NOT trigger expansion."""
+    graph = GraphStore(use_db=False)
+    embedder = MockEmbeddingProvider(dimension=128)
+    vector = VectorStore(use_db=False)
+    orchestrator = SearchOrchestrator(graph=graph, vector=vector, embedder=embedder)
+    entity = "no_updates_test"
+
+    mid_old = await graph.create_memory(
+        "旧事实：用户在 Google 工作", entity_id=entity, memory_type="fact"
+    )
+    mid_new = await graph.create_memory(
+        "新事实：用户在 Stripe 工作", entity_id=entity, memory_type="fact"
+    )
+    await graph.create_relationship(mid_new, mid_old, "UPDATES")
+    # Mark old as superseded
+    await graph.update_is_latest(mid_old, False, replaced_by=mid_new)
+
+    results = [
+        SearchResult(id=mid_new, content="新事实：用户在 Stripe 工作", score=0.9, source="memory")
+    ]
+
+    expanded = await orchestrator._expand_relationships(results, entity, top_k=5)
+
+    # Only the new fact should be present (old one is is_latest=False)
+    ids = {r.id for r in expanded}
+    assert mid_new in ids
+    assert mid_old not in ids, "UPDATES relationships should not trigger expansion"
+
+
+# ---- Entity-centric retrieval (B4, ticket #30) ----
+
+
+@pytest.mark.asyncio
+async def test_search_about_returns_mentioning_memories(populated, graph):
+    """search(about=...) returns every memory mentioning the canonical form."""
+    from emerald.core.mentions import Mention
+
+    m1 = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m2 = await graph.create_memory("在谷歌工作", entity_id="alice")
+    m3 = await graph.create_memory("在 Stripe 工作", entity_id="alice")
+    await graph.attach_mentions(
+        m1, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m2, "alice", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m3, "alice", [Mention("Stripe", "Stripe", "organization", 0.9)],
+    )
+
+    results = await populated.search(
+        "关于 Google 的一切",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+        about="Google",
+    )
+    ids = {r.id for r in results.results}
+    assert ids == {m1, m2}
+    assert m3 not in ids
+
+
+@pytest.mark.asyncio
+async def test_search_about_empty_results(populated, graph):
+    """An unmatched about returns an empty result set, not an error."""
+    results = await populated.search(
+        "关于 NoSuchThing 的一切",
+        entity_id="alice",
+        search_mode=SearchMode.MEMORY,
+        about="NoSuchThing",
+    )
+    assert results.results == []
+
+
+@pytest.mark.asyncio
+async def test_search_about_entity_isolation(populated, graph):
+    """about retrieval never returns another entity's memories."""
+    from emerald.core.mentions import Mention
+
+    m_a = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m_b = await graph.create_memory("在 Google 工作", entity_id="bob")
+    await graph.attach_mentions(
+        m_a, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_b, "bob", [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY, about="Google",
+    )
+    ids = {r.id for r in results.results}
+    assert ids == {m_a}
+    assert m_b not in ids
+
+
+@pytest.mark.asyncio
+async def test_search_about_returns_memory_source_only(populated, graph):
+    """about is a memory-graph operation: no RAG / fast-lane results."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="alice")
+    await graph.attach_mentions(
+        mid, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await populated.vector.store(
+        "rag-doc-1", "在 Google 工作的文档", [0.1] * 128,
+        entity_id="alice", document_id="doc-1",
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.HYBRID, about="Google",
+    )
+    assert all(r.source == "memory" for r in results.results)
+    assert {r.id for r in results.results} == {mid}
+
+
+# ---- Shared-subject bridging (B4, ticket #31) ----
+
+
+async def _seed_bridge_world(populated, graph):
+    """Four memories: three mention Google (one also Python), one Python-only."""
+    from emerald.core.mentions import Mention
+
+    m_google = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m_guge = await graph.create_memory("在谷歌工作", entity_id="alice")
+    m_both = await graph.create_memory("用 Python 写后端，同时在 Google 工作", entity_id="alice")
+    m_python = await graph.create_memory("用 Python 写数据管线", entity_id="alice")
+    await graph.attach_mentions(
+        m_google, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_guge, "alice", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_both, "alice",
+        [
+            Mention("Python", "Python", "technology", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+    await graph.attach_mentions(
+        m_python, "alice", [Mention("Python", "Python", "technology", 0.9)],
+    )
+    return m_google, m_guge, m_both, m_python
+
+
+@pytest.mark.asyncio
+async def test_search_depth1_bridges_shared_subject(populated, graph):
+    """depth=1 adds memories sharing a mention with a seed (via the bridge)."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=1,
+    )
+    ids = {r.id for r in results.results}
+    assert ids == {m_google, m_guge, m_both, m_python}
+
+
+@pytest.mark.asyncio
+async def test_search_depth0_is_status_quo(populated, graph):
+    """depth=0 (and the default) never bridges: exact mentioning set only."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=0,
+    )
+    assert {r.id for r in results.results} == {m_google, m_guge, m_both}
+    assert m_python not in {r.id for r in results.results}
+
+
+@pytest.mark.asyncio
+async def test_search_default_depth_is_zero(populated, graph):
+    """The default depth preserves today's search semantics."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google",
+    )
+    assert m_python not in {r.id for r in results.results}
+
+
+@pytest.mark.asyncio
+async def test_search_bridging_is_entity_scoped(populated, graph):
+    """Bridged results never cross the entity's context pool."""
+    from emerald.core.mentions import Mention
+
+    m_google = await graph.create_memory("在 Google 工作", entity_id="alice")
+    m_both = await graph.create_memory("用 Python 写后端，同时在 Google 工作", entity_id="alice")
+    m_bob_python = await graph.create_memory("用 Python 写代码", entity_id="bob")
+    await graph.attach_mentions(
+        m_google, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_both, "alice",
+        [
+            Mention("Python", "Python", "technology", 0.9),
+            Mention("Google", "Google", "organization", 0.9),
+        ],
+    )
+    await graph.attach_mentions(
+        m_bob_python, "bob", [Mention("Python", "Python", "technology", 0.9)],
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=2,
+    )
+    ids = {r.id for r in results.results}
+    assert m_bob_python not in ids
+
+
+@pytest.mark.asyncio
+async def test_search_depth_bridges_from_vector_seed(populated, graph, vector, embedder):
+    """depth>0 bridges also when the seed comes from vector search (not about).
+
+    The bridged sibling is deliberately NOT stored in the vector store, so
+    the bridge is its only way into the result set (the hash-based mock
+    gives arbitrary near-zero scores otherwise).
+    """
+    from emerald.core.mentions import Mention
+
+    keyword_embedder = _KeywordEmbeddingProvider("Google")
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=keyword_embedder,
+    )
+
+    m_google = await graph.create_memory("Alice 在 Google 工作", entity_id="alice")
+    m_guge = await graph.create_memory("Alice 在谷歌工作", entity_id="alice")
+    emb = (await keyword_embedder.embed(["Alice 在 Google 工作"]))[0]
+    await vector.store(m_google, "Alice 在 Google 工作", emb, entity_id="alice")
+    await graph.attach_mentions(
+        m_google, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+    await graph.attach_mentions(
+        m_guge, "alice", [Mention("谷歌", "Google", "organization", 0.9)],
+    )
+
+    # Baseline (depth=0): only the vector-hit memory — the sibling is not
+    # in the vector store at all.
+    baseline = await orchestrator.search(
+        "Alice 在 Google 工作", entity_id="alice", search_mode=SearchMode.MEMORY,
+    )
+    baseline_ids = {r.id for r in baseline.results}
+    assert m_google in baseline_ids
+    assert m_guge not in baseline_ids
+
+    # depth=1: the different-surface sibling arrives via the mention bridge.
+    results = await orchestrator.search(
+        "Alice 在 Google 工作", entity_id="alice", search_mode=SearchMode.MEMORY,
+        depth=1,
+    )
+    assert {r.id for r in results.results} == {m_google, m_guge}
+
+
+# ---- Relationship chains (B4, ticket #32) ----
+
+
+async def _seed_chain_world(populated, graph):
+    """A fact chain: A <- D1 <- D2 (DERIVES), A2 -UPDATES-> A (history)."""
+    from emerald.core.mentions import Mention
+
+    mid_a = await graph.create_memory("用户住在北京", entity_id="alice")
+    mid_a2 = await graph.create_memory("用户搬到了上海", entity_id="alice")
+    mid_d1 = await graph.create_memory("用户在中国", entity_id="alice")
+    mid_d2 = await graph.create_memory("用户在亚洲", entity_id="alice")
+    # Both the current fact and its historical predecessor mention Foo.
+    await graph.attach_mentions(
+        mid_a, "alice", [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_a2, "alice", [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+    await graph.create_relationship(mid_d1, mid_a2, "DERIVES_FROM")
+    await graph.create_relationship(mid_d2, mid_d1, "DERIVES_FROM")
+    await graph.create_update_relation(mid_a2, mid_a)
+    return mid_a, mid_a2, mid_d1, mid_d2
+
+
+@pytest.mark.asyncio
+async def test_search_depth1_surfaces_derived_from_source(populated, graph):
+    """Querying a source fact surfaces the derived fact (reverse DF, 1 hop)."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=1,
+    )
+    ids = {r.id for r in results.results}
+    # Seeds: A2 (latest, mentions Foo). Historical A surfaces via UPDATES;
+    # D1 derives from A2. D2 is two hops away.
+    assert ids == {mid_a2, mid_a, mid_d1}
+    assert mid_d2 not in ids
+    by_id = {r.id: r for r in results.results}
+    assert by_id[mid_a].is_latest is False  # marked historical
+    assert by_id[mid_d1].is_latest is True
+
+
+@pytest.mark.asyncio
+async def test_search_derives_chain_depth2_exact(populated, graph):
+    """D2 derives from D1 derives from A2: depth=2 reaches exactly D2."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    depth1 = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=1,
+    )
+    depth2 = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=2,
+    )
+    ids1 = {r.id for r in depth1.results}
+    ids2 = {r.id for r in depth2.results}
+    assert mid_d2 not in ids1
+    assert mid_d2 in ids2
+    assert ids2 == {mid_a2, mid_a, mid_d1, mid_d2}
+
+
+@pytest.mark.asyncio
+async def test_search_depth0_never_walks_relationships(populated, graph):
+    """depth=0 (default): no DERIVES/UPDATES traversal — about seeds only."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=0,
+    )
+    # A2 mentions Foo and is latest; A is historical so it is not an
+    # about seed — without traversal, nothing else surfaces.
+    assert {r.id for r in results.results} == {mid_a2}
+
+
+@pytest.mark.asyncio
+async def test_search_vector_seed_historical_survives_truncation(
+    populated, graph, vector,
+):
+    """Historical nodes survive dynamic truncation on the vector path.
+
+    A historical node scores 0 (superseded → trust 0); the score-gap
+    truncation must not silently drop it — once an UPDATES chain is
+    walked, the history is surfaced and marked (spec #29 story 7).
+    """
+    from emerald.core.mentions import Mention
+
+    keyword_embedder = _KeywordEmbeddingProvider("Alice 住在北京")
+    orchestrator = SearchOrchestrator(
+        graph=populated.graph, vector=vector, embedder=keyword_embedder,
+    )
+
+    mid_old = await graph.create_memory("Alice 住在北京", entity_id="alice")
+    mid_new = await graph.create_memory("Alice 搬到了上海", entity_id="alice")
+    emb = (await keyword_embedder.embed(["Alice 住在北京"]))[0]
+    await vector.store(mid_old, "Alice 住在北京", emb, entity_id="alice")
+    await vector.store(mid_new, "Alice 搬到了上海", emb, entity_id="alice")
+    await graph.create_update_relation(mid_new, mid_old)
+    await graph.attach_mentions(
+        mid_new, "alice", [Mention("Foo", "Foo", "concept", 0.9)],
+    )
+
+    results = await orchestrator.search(
+        "Alice 住在北京", entity_id="alice", search_mode=SearchMode.MEMORY,
+        depth=1,
+    )
+    by_id = {r.id: r for r in results.results}
+    assert mid_old in by_id
+    assert by_id[mid_old].is_latest is False  # surfaced + marked historical
+
+
+# ---- Path transparency + ranking (B4, ticket #33) ----
+
+
+@pytest.mark.asyncio
+async def test_seeds_carry_zero_depth_and_empty_path(populated, graph):
+    """Vector/about seeds are depth 0 with an empty path (status quo)."""
+    from emerald.core.mentions import Mention
+
+    mid = await graph.create_memory("在 Google 工作", entity_id="alice")
+    await graph.attach_mentions(
+        mid, "alice", [Mention("Google", "Google", "organization", 0.9)],
+    )
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=0,
+    )
+    assert len(results.results) == 1
+    assert results.results[0].depth == 0
+    assert results.results[0].path == []
+
+
+@pytest.mark.asyncio
+async def test_bridged_result_carries_path_and_depth(populated, graph):
+    """A mention-bridged result carries its full path and hop depth."""
+    m_google, m_guge, m_both, m_python = await _seed_bridge_world(populated, graph)
+
+    results = await populated.search(
+        "Google", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Google", depth=1,
+    )
+    by_id = {r.id: r for r in results.results}
+    # Seeds: depth 0, no path.
+    for seed_id in (m_google, m_guge, m_both):
+        assert by_id[seed_id].depth == 0
+        assert by_id[seed_id].path == []
+    # Bridged via the shared Python mention: one hop, full provenance.
+    python = by_id[m_python]
+    assert python.depth == 1
+    assert [s.kind for s in python.path] == ["memory", "mention", "memory"]
+    assert python.path[0].id == m_both
+    assert python.path[-1].id == m_python
+
+
+@pytest.mark.asyncio
+async def test_derived_chain_result_carries_relationship_path(populated, graph):
+    """A depth-2 derived fact carries its DERIVES_FROM chain provenance."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=2,
+    )
+    by_id = {r.id: r for r in results.results}
+    assert by_id[mid_d1].depth == 1
+    assert by_id[mid_d1].path == [
+        PathStep(kind="memory", id=mid_a2),
+        PathStep(kind="DERIVES_FROM", id=mid_d1),
+    ]
+    assert by_id[mid_d2].depth == 2
+    assert by_id[mid_d2].path == [
+        PathStep(kind="memory", id=mid_a2),
+        PathStep(kind="DERIVES_FROM", id=mid_d1),
+        PathStep(kind="DERIVES_FROM", id=mid_d2),
+    ]
+    # The historical node: surfaced along UPDATES with provenance.
+    assert by_id[mid_a].depth == 1
+    assert by_id[mid_a].path == [
+        PathStep(kind="memory", id=mid_a2),
+        PathStep(kind="UPDATES", id=mid_a),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ranking_seeds_first_then_by_depth(populated, graph):
+    """Seeds rank strictly before multihop results; depth 1 before depth 2."""
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+
+    results = await populated.search(
+        "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+        about="Foo", depth=2,
+    )
+    by_id = {r.id: r for r in results.results}
+    # about="Foo" seeds exactly A2 (A is historical, not an about seed).
+    assert by_id[mid_a2].depth == 0
+    depths = [r.depth for r in results.results]
+    # The seed ranks first; every multihop result is annotated with its
+    # hop depth (spec #33: 种子向量命中在前，多跳结果标注来源跳数).
+    assert depths[0] == 0
+    assert all(d >= 1 for d in depths[1:])
+    assert depths.count(1) == 2  # D1 and A (historical)
+    assert depths.count(2) == 1  # D2
+    # The historical node scores 0 (superseded → trust 0) and ranks last
+    # even though its hop depth is lower than D2's.
+    assert results.results[-1].id == mid_a
+    assert results.results[-1].is_latest is False
+
+
+# ---- Multihop observability (B4, ticket #35) ----
+
+
+@pytest.mark.asyncio
+async def test_multihop_search_emits_metrics_and_logs(populated, graph):
+    """Every depth>0 query records hops + paths metrics and a depth log."""
+    import structlog
+    from prometheus_client import REGISTRY
+
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+    hops_before = REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+    paths_before = (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        results = await populated.search(
+            "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+            about="Foo", depth=2,
+        )
+
+    # The walk returned three paths: A (UPDATES), D1, D2.
+    assert len(results.results) == 4  # 1 seed + 3 multihop
+    assert (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    ) == paths_before + 3
+    assert (
+        REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+    ) == hops_before + 1
+
+    multihop_logs = [
+        entry for entry in logs
+        if entry.get("event") == "search.multihop"
+    ]
+    assert len(multihop_logs) == 1
+    assert multihop_logs[0]["depth"] == 2
+    assert multihop_logs[0]["paths_returned"] == 3
+    assert multihop_logs[0]["entity_id"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_depth0_search_emits_no_multihop_metrics(populated, graph):
+    """depth=0 (status quo) never touches the multihop observability."""
+    import structlog
+    from prometheus_client import REGISTRY
+
+    mid_a, mid_a2, mid_d1, mid_d2 = await _seed_chain_world(populated, graph)
+    paths_before = (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    )
+    hops_before = REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+
+    with structlog.testing.capture_logs() as logs:
+        await populated.search(
+            "Foo", entity_id="alice", search_mode=SearchMode.MEMORY,
+            about="Foo", depth=0,
+        )
+
+    assert (
+        REGISTRY.get_sample_value("emerald_multihop_paths_returned_total") or 0.0
+    ) == paths_before
+    assert (
+        REGISTRY.get_sample_value("emerald_search_hops_count") or 0.0
+    ) == hops_before
+    assert not [e for e in logs if e.get("event") == "search.multihop"]
+
+
+
+# ---- container_tag filter holds across expansion (#52 走查缺陷 C) ----
+
+
+@pytest.mark.asyncio
+async def test_container_filter_excludes_relationship_expansion(
+    orchestrator, graph, vector, embedder
+):
+    """filters.container_tag 必须约束关系扩展邻居。
+
+    回归 #52 走查缺陷 C：种子通过过滤，但 _expand_relationships
+    泄漏跨空间邻居（S2「选=仅该空间」被突破）。
+    """
+    entity = "space_filter_test"
+    mid_seed = await graph.create_memory(
+        "紫水晶协议设计文档", entity_id=entity, container_tag="走查空间",
+    )
+    mid_leak = await graph.create_memory(
+        "无关的跨空间记忆", entity_id=entity, container_tag=None,
+    )
+    await graph.create_relationship(mid_seed, mid_leak, "EXTENDS")
+    emb = (await embedder.embed(["紫水晶协议设计文档"]))[0]
+    await vector.store(mid_seed, "紫水晶协议设计文档", emb, entity_id=entity)
+
+    # 基线（无过滤）：扩展正常带出邻居
+    unfiltered = await orchestrator.search(
+        "紫水晶协议设计文档", entity_id=entity, search_mode=SearchMode.MEMORY,
+    )
+    assert mid_leak in {r.id for r in unfiltered.results}
+
+    # 过滤：空间内只见空间内记忆（种子 + 扩展邻居同受约束）
+    filtered = await orchestrator.search(
+        "紫水晶协议设计文档", entity_id=entity, search_mode=SearchMode.MEMORY,
+        filters={"container_tag": "走查空间"},
+    )
+    assert {r.id for r in filtered.results} == {mid_seed}
+
+
+@pytest.mark.asyncio
+async def test_container_filter_excludes_multihop_expansion(
+    orchestrator, graph, vector, embedder
+):
+    """filters.container_tag 必须约束多跳扩展邻居（同缺陷 C 的 multihop 路径）。"""
+    from emerald.core.mentions import Mention
+
+    entity = "space_filter_mh_test"
+    mid_seed = await graph.create_memory(
+        "种子事实提及锆石", entity_id=entity, container_tag="走查空间",
+    )
+    mid_leak = await graph.create_memory(
+        "桥接但跨空间的记忆", entity_id=entity, container_tag="其他空间",
+    )
+    # 共享提及桥：两条记忆都提及「锆石」→ depth=1 互为兄弟
+    await graph.attach_mentions(
+        mid_seed, entity, [Mention("锆石", "锆石", "concept", 0.9)],
+    )
+    await graph.attach_mentions(
+        mid_leak, entity, [Mention("锆石", "锆石", "concept", 0.9)],
+    )
+    emb = (await embedder.embed(["种子事实提及锆石"]))[0]
+    await vector.store(mid_seed, "种子事实提及锆石", emb, entity_id=entity)
+
+    # 基线（无过滤，depth=1）：提及桥带出兄弟
+    unfiltered = await orchestrator.search(
+        "种子事实提及锆石", entity_id=entity, search_mode=SearchMode.MEMORY,
+        depth=1,
+    )
+    assert mid_leak in {r.id for r in unfiltered.results}
+
+    # 过滤：多跳兄弟同样受 container_tag 约束
+    filtered = await orchestrator.search(
+        "种子事实提及锆石", entity_id=entity, search_mode=SearchMode.MEMORY,
+        depth=1, filters={"container_tag": "走查空间"},
+    )
+    assert mid_leak not in {r.id for r in filtered.results}
+    assert {r.container_tag for r in filtered.results} == {"走查空间"}

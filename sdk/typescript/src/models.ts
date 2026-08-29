@@ -104,6 +104,8 @@ export interface SearchOptions {
   rerank?: boolean;
   rewrite_query?: boolean;
   filters?: Record<string, unknown>;
+  /** Space filter (ADR-0002): restrict results to this container_tag; omit = full pool. */
+  container_tag?: string;
   min_confidence?: number;
   dynamic_truncation?: boolean;
   /** Entity-centric retrieval (B4): mention canonical form or id. */

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **搜索空间过滤一等参数（issue #57，ADR-0002 承诺落地）**：`POST /v1/search` 请求体与 `GET /v1/search` 查询串新增可选 `container_tag`——限定返回该空间内记忆，不传 = 全池（既有语义不变）。与 `filters.container_tag` 互斥（同时提供返回 422，无静默优先级），与其他 filter 键自动合并；GET 变体自此支持空间过滤（原先 POST-only）。Python SDK `search(container_tag=...)` 与 TS SDK `SearchOptions.container_tag` 同步；rest-guide §7/搜索参数表 + TS README 字段表更新；回归测试 ×5（参数过滤/默认全池/互斥 422/与其他 filter 合并/GET 变体）
+
 ### Changed
 
 - **负载测试取消（D2/D3，2026-08-29 用户决议）**：不投入负载测试基础设施（D2）与 2 周 Staging 压测（D3）。级联：M4 里程碑解散（B5/B6 已随 v0.7.0 交付，无剩余工作项）；里程碑版本锚点前移一位（M5 生产就绪 Beta → v0.8.0、RC → v0.9、GA → v1.0）；北极星「性能 SLA 达成」目标取消——性能声明自此无压测背书（v1.0 硬性条件 #6 公开 SLA 文档届时需重新评估）；R4（Neo4j 瓶颈）缓解改为真实部署性能信号触发。Locust 基础设施（`tests/load/`，M1 产物）保留按需使用。决策记录见 roadmap 顶部注；生产就绪评估同步（性能 SLA P0 → 已取消状态）

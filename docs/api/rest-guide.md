@@ -222,6 +222,7 @@ console.log(result.memory_ids); // ["mem_abc123", ...]
 | `rerank` | `boolean` | — | `false` | 关键词重叠度重排序（最高 +15%） |
 | `rewrite_query` | `boolean` | — | `false` | 查询改写（简单中文启发式扩展） |
 | `filters` | `object \| null` | — | `null` | MongoDB 风格元数据过滤，见「进阶 · 元数据过滤」 |
+| `container_tag` | `string \| null` | — | `null` | 空间过滤一等参数（ADR-0002）：限定返回该空间内记忆，不传 = 全池。与 `filters.container_tag` 互斥（同时提供返回 422），与其他 filter 键自动合并 |
 | `min_confidence` | `number \| null` | — | `null` | 置信度下限（0.0–1.0） |
 | `dynamic_truncation` | `boolean` | — | `true` | 动态截断 |
 | `about` | `string \| null` | — | `null` | 实体中心检索：提及的规范形式或 Mention 节点 id。见「进阶 · 提及」 |
@@ -307,7 +308,7 @@ console.log(results.results[0].content);
 5. **重排序**（可选）：`rerank=true`，关键词重叠度提升
 6. **查询改写**（可选）：`rewrite_query=true`，如 "如何" → "方法 步骤"
 
-**GET 变体** — `GET /v1/search`：同一搜索的 GET 版本，便于调试和浏览器直接访问。参数走 query string（`q`、`entity_id`（必填）、`search_mode`、`top_k`、`rewrite_query`、`min_confidence`、`dynamic_truncation`、`about`、`depth`）：
+**GET 变体** — `GET /v1/search`：同一搜索的 GET 版本，便于调试和浏览器直接访问。参数走 query string（`q`、`entity_id`（必填）、`search_mode`、`top_k`、`rewrite_query`、`min_confidence`、`dynamic_truncation`、`about`、`depth`、`container_tag`）：
 
 ```bash
 curl "http://localhost:8000/v1/search?q=用户偏好&entity_id=user_123&top_k=5" \
@@ -581,6 +582,7 @@ Spaces 是用户显式创建的记忆组织视图（产品层意图，AGENTS.md 
 - **搜索默认全池**，空间仅为可选过滤；画像跨空间聚合
 - `container_tag` 可空（`null` = 不属于任何空间）；系统不自动创建或推断空间
 - 记忆在摄入时通过 `container_tag` 字段归属空间（见「添加记忆」参数表）
+- **搜索侧一等过滤参数**（ADR-0002 承诺的落地，issue #57）：`POST /v1/search` 请求体与 `GET /v1/search` 查询串均支持可选 `container_tag`——限定返回该空间内的记忆，不传 = 全池。与 `filters.container_tag` 互斥（同时提供返回 `422`），与其他 `filters` 键可共存（自动合并）。过滤器同时穿透图扩展与多跳邻居（S2 缺陷修复后行为）
 
 > SDK 未覆盖 Spaces 端点，请直接使用 REST（与 [`sdk-guide.md`](./sdk-guide.md) 的覆盖现状一致）。
 

@@ -232,6 +232,7 @@ export class EmeraldClient {
       dynamic_truncation: opts.dynamic_truncation ?? true,
     };
     if (opts.filters) body.filters = opts.filters;
+    if (opts.container_tag !== undefined) body.container_tag = opts.container_tag;
     if (opts.min_confidence !== undefined) body.min_confidence = opts.min_confidence;
     if (opts.about !== undefined) body.about = opts.about;
     if (opts.depth !== undefined) body.depth = opts.depth;

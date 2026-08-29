@@ -41,6 +41,27 @@ def _get_search_orchestrator(request: Request, engine=None) -> SearchOrchestrato
 _authorize_entity = authorize_entity
 
 
+def _effective_filters(container_tag: str | None, filters: dict | None) -> dict | None:
+    """Merge the first-class container_tag param into the filters dict.
+
+    ADR-0002: spaces are optional views over one context pool — a
+    container_tag narrows results without changing pool boundaries.
+    The param is sugar over filters['container_tag']; supplying both is
+    an explicit conflict, not silent precedence (issue #57).
+    """
+    if container_tag is None:
+        return filters
+    merged = dict(filters) if filters else {}
+    if "container_tag" in merged:
+        raise HTTPException(
+            status_code=422,
+            detail="container_tag specified both as a top-level parameter "
+            "and inside filters — provide one or the other",
+        )
+    merged["container_tag"] = container_tag
+    return merged
+
+
 @router.post("/search", dependencies=[Depends(api_key_auth), Depends(rate_limit)])
 async def search(
     body: SearchRequest,
@@ -67,7 +88,7 @@ async def search(
         top_k=effective_top_k + 1,  # fetch one extra to detect has_more
         rerank=body.rerank,
         rewrite_query=body.rewrite_query,
-        filters=body.filters,
+        filters=_effective_filters(body.container_tag, body.filters),
         min_confidence=body.min_confidence,
         dynamic_truncation=body.dynamic_truncation,
         about=body.about,
@@ -119,6 +140,12 @@ async def search_get(
     rewrite_query: bool = Query(False),
     min_confidence: float | None = Query(None, ge=0.0, le=1.0),
     dynamic_truncation: bool = Query(True),
+    container_tag: str | None = Query(
+        None,
+        description="Optional space filter (ADR-0002, issue #57): restrict "
+        "results to memories tagged with this container_tag. "
+        "Default None = full context pool.",
+    ),
     about: str | None = Query(
         None,
         description="Entity-centric retrieval (B4): a mention canonical form "
@@ -153,6 +180,7 @@ async def search_get(
         dynamic_truncation=dynamic_truncation,
         about=about,
         depth=depth,
+        filters={"container_tag": container_tag} if container_tag else None,
     )
 
     return {

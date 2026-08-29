@@ -64,6 +64,7 @@ client.upload(file: File | { name, data }, entityId: string, opts?: UploadOption
 | `rerank` | `boolean` | `false` | Enable cross-encoder re-ranking |
 | `rewrite_query` | `boolean` | `false` | Enable LLM query expansion |
 | `filters` | `object` | — | Metadata filters, MongoDB-style operators: `$and`, `$or`, `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte` |
+| `container_tag` | `string` | — | Space filter (ADR-0002): restrict results to memories with this `container_tag`; omit = full pool. Mutually exclusive with `filters.container_tag` |
 | `min_confidence` | `number` | — | Minimum memory confidence (0–1) |
 | `dynamic_truncation` | `boolean` | `true` | Cut off results at score cliffs |
 | `about` | `string` | — | Entity-centric retrieval: a mention canonical form or mention id; returns the entity's latest memories mentioning it across surface forms (skips RAG/fast-lane) |

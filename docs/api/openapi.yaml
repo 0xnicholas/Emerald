@@ -284,6 +284,18 @@ paths:
           type: boolean
           default: true
           title: Dynamic Truncation
+      - name: container_tag
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Optional space filter (ADR-0002, issue #57): restrict results to memories tagged
+            with this container_tag. Default None = full context pool.'
+          title: Container Tag
+        description: 'Optional space filter (ADR-0002, issue #57): restrict results to memories tagged
+          with this container_tag. Default None = full context pool.'
       - name: about
         in: query
         required: false
@@ -1702,6 +1714,14 @@ components:
             type: object
           - type: 'null'
           title: Filters
+        container_tag:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Container Tag
+          description: 'Optional space filter (ADR-0002, issue #57): restrict results to memories tagged
+            with this container_tag (space view). Default None = full context pool. Mutually exclusive
+            with filters[''container_tag''] — provide one or the other.'
         min_confidence:
           anyOf:
           - type: number

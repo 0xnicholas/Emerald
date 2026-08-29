@@ -319,6 +319,7 @@ class EmeraldClient:
         rerank: bool = False,
         rewrite_query: bool = False,
         filters: dict[str, Any] | None = None,
+        container_tag: str | None = None,
         min_confidence: float | None = None,
         dynamic_truncation: bool = True,
         about: str | None = None,
@@ -334,6 +335,9 @@ class EmeraldClient:
             rerank: Enable cross-encoder re-ranking.
             rewrite_query: Enable LLM query expansion.
             filters: Metadata filters (e.g., {"memory_type": "preference"}).
+            container_tag: Space filter (ADR-0002): restrict results to
+                memories tagged with this container_tag; None = full pool.
+                Mutually exclusive with filters['container_tag'].
             min_confidence: Minimum memory confidence (0-1).
             dynamic_truncation: Stop returning results when score gap exceeds threshold.
             about: Entity-centric retrieval (B4): a mention canonical form
@@ -359,6 +363,8 @@ class EmeraldClient:
         }
         if filters:
             body["filters"] = filters
+        if container_tag is not None:
+            body["container_tag"] = container_tag
         if min_confidence is not None:
             body["min_confidence"] = min_confidence
         if about is not None:

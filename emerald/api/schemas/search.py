@@ -13,6 +13,13 @@ class SearchRequest(BaseModel):
     rerank: bool = False
     rewrite_query: bool = False
     filters: dict | None = None
+    container_tag: str | None = Field(
+        default=None,
+        description="Optional space filter (ADR-0002, issue #57): restrict "
+        "results to memories tagged with this container_tag (space view). "
+        "Default None = full context pool. Mutually exclusive with "
+        "filters['container_tag'] — provide one or the other.",
+    )
     min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     dynamic_truncation: bool = Field(default=True)
     about: str | None = Field(
