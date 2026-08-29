@@ -395,7 +395,13 @@ async def _run_index(task_self, prev_result: dict, entity_id: str) -> dict:
             mention_count=total_mentions,
         )
 
-        return {"pipeline_id": pipeline_id, "memory_ids": memory_ids}
+        result = {"pipeline_id": pipeline_id, "memory_ids": memory_ids}
+        # Pass through upstream stage results (rag_index's rag_chunk_count)
+        # so postprocess can flip documents.status with the real chunk count.
+        for key in ("rag_chunk_count", "document_id"):
+            if key in prev_result:
+                result[key] = prev_result[key]
+        return result
     except Exception as exc:
         await _update_error(pipeline_id, "indexing", str(exc))
         raise

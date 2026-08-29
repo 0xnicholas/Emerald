@@ -29,9 +29,9 @@
 
 | 缺陷 | 根因 | 修复 |
 |---|---|---|
-| **S1：rag 态/hybrid 的 RAG 半边结构性为空（2026-08-27 走查第二报，未修）** | `_search_rag` 查询 `require_document_id=True` 的向量块，但全代码库三处 `vector.store` 调用（engine 同步路径 / pipeline `index_task` / reconciliation）均不传 `document_id`——上传文档只提取为记忆，RAG 块无写入方（自 45d5de3 起从未接通，非回归）。连带 web 搜索 rag tab 永远空 | 待修（v0.7.0 门阻断，S1 条款） |
-| **B：`/v1/files` 永远空列表（2026-08-27 走查发现，未修）** | upload 创建 `Document(status="queued")`，管线完成后只更新 pipelines 表状态，`documents.status` 无任何写入方 → 默认 `status_filter=done` 永远过滤为空（库内实测 2 条文档全停 queued） | 待修（与 S1 缺陷同根：document_id 未流经管线） |
-| **S2：空间过滤泄漏（2026-08-27 走查第三报，未修）** | 种子结果经 `_passes_filters` 过滤，但 `_expand_relationships(memory_results, entity_id, top_k)` 与 `_expand_multihop` 不接收 filters——图扩展邻居绕过 `container_tag` 过滤（实测选「走查空间」仍返回 tag=default/None 记忆） | 待修（v0.7.0 门阻断，S2 条款） |
+| **S1：rag 态/hybrid 的 RAG 半边结构性为空（2026-08-27 走查第二报）** | `_search_rag` 查询 `require_document_id=True` 的向量块，但全代码库三处 `vector.store` 调用（engine 同步路径 / pipeline `index_task` / reconciliation）均不传 `document_id`——上传文档只提取为记忆，RAG 块无写入方（自 45d5de3 起从未接通，非回归）。连带 web 搜索 rag tab 永远空 | ✅ 已修并复验（2026-08-29，见 §5）：`45f7565` `VectorStore.store_document_chunks` 幂等写入基座 + `f41abfe` `rag_index_task`（embed→rag_index→index 链位，确定性 chunk_id `{doc}:rag:{i}`）；复验 rag 态命中 + hybrid 两类皆回 |
+| **B：`/v1/files` 永远空列表（2026-08-27 走查发现）** | upload 创建 `Document(status="queued")`，管线完成后只更新 pipelines 表状态，`documents.status` 无任何写入方 → 默认 `status_filter=done` 永远过滤为空 | ✅ 已修并复验（2026-08-29）：`f41abfe` postprocess 经 `_pipeline_document_id` 反查并 `_mark_document_done`；复验 status=done + chunk_count=RAG 块数（`_run_index` 返回 dict 透传 `rag_chunk_count`，否则被丢弃——本次复验补修，见 CHANGELOG） |
+| **S2：空间过滤泄漏（2026-08-27 走查第三报）** | 种子结果经 `_passes_filters` 过滤，但 `_expand_relationships(memory_results, entity_id, top_k)` 与 `_expand_multihop` 不接收 filters——图扩展邻居绕过 `container_tag` 过滤 | ✅ 已修并复验（2026-08-29，含对照实验）：`2d60a9e` filters 穿透两个扩展路径；复验植入跨空间 EXTENDS/DERIVES_FROM 边（图谱直查确认），无过滤时跨空间邻居浮现（证明扩展候选存在）、选空间后 0 泄漏（depth=0/1/2 三档均验） |
 | 连接测试在健康栈上报「API 返回异常状态: ok」（2026-08-27 黑盒走查首报） | 面板判 `status === "healthy"`，而 `/v1/health` 契约值为 `ok`/`degraded`——API 从不返回 healthy | 判定改接受 `ok`（`536369a`）；顺带健康端点版本串 0.3.0 硬编码 → `emerald.__version__`；compose neo4j 探测 cypher-shell → wget :7474（JVM 冷启动间歇超时误判 unhealthy 拦依赖链重启） |
 | `GET /v1/pipelines/{id}` 命中即 500 | 路由 `response_model=PipelineStatusResponse`（顶层字段）× 实际返回 `{data,meta}` 信封 → ResponseValidationError；既有测试无该端点功能用例 | `PipelineStatusEnvelope`（沿 keys.py 惯例）+ 回归测试 ×3（`ed4ab9e`） |
 | worker/beat 起不来（Exited 2） | compose `-A emerald.pipeline.tasks` 错——celery app 在 `emerald.pipeline.celery:celery_app`；既有死路径 | 改 `-A emerald.pipeline.celery`（`b2adbc8`） |
@@ -66,8 +66,8 @@
 | I3 | 弹窗 Link：粘任一 URL → 等预览卡 → Save → 搜标题词 | 命中（元数据记忆） | ✅ UI 同构三行内容（title\ndesc\nurl）落库 extracted_count=1；搜「Emerald 项目主页」命中（pos9/20） |
 | I4 🄚 | 弹窗 File：选 txt/pdf → Upload | toast 阶段更新→「已索引 N 条记忆」；搜文件内容词命中 | ✅ txt 上传 202→轮询 done memory_count=1（~3s）→搜「锆石星轨」命中（词汇级，Mock 约束） |
 | I5 | DevTools Console：`localStorage.setItem('emerald_api_key','em_invalid');location.reload()` → 保存笔记 | 红色失败 toast 带详情，**无假成功**（验完改回） | ✅ API 返 401 `{error_code:AUTH_INVALID_KEY, message, request_id}` 结构化错误；前端 toast.error(description) 消费路径在码（视觉待抽查） |
-| S1 🄚 | 搜索页三态：搜「健身」（memory）/搜文件内容词（rag）/同词 | 三态各自命中对应类型；hybrid 两类皆回 | ❌ **缺陷 A 阻断**：memory ✅ / hybrid 只回 memory 类（rag 半边空）/ rag 态结构性空——无 document_id 嵌入写入方（§2 首条）；修后 Mock 下词汇级命中可验，语义命中另受 §3.1 约束 |
-| S2 | 空间选择器新建 space → Link 保存到该 space → 搜索选该 space vs 不选 | 选=仅该空间；不选=全池 | ❌ **缺陷 C 阻断**：种子过滤正确（选空间仅回种子在空间内），但 `_expand_relationships`/`_expand_multihop` 不应用 filters——扩展邻居泄漏（实测选「走查空间」返回 tag=default/None 混入，3 条中 2 条泄漏）；不选=全池 ✅ |
+| S1 🄚 | 搜索页三态：搜「健身」（memory）/搜文件内容词（rag）/同词 | 三态各自命中对应类型；hybrid 两类皆回 | ✅ **复验过（2026-08-29）**：上传 txt 后 rag 态命中（source=rag，chunk `{doc}:rag:0`）；补记忆侧内容后 hybrid 同词两类皆回（rag + memory）；顺带 `/v1/files` 返回 status=done（缺陷 B 修复复验）。语义命中仍受 §3.1 约束（Mock 词汇级，预期内） |
+| S2 | 空间选择器新建 space → Link 保存到该 space → 搜索选该 space vs 不选 | 选=仅该空间；不选=全池 | ✅ **复验过（2026-08-29）**：植入跨空间 EXTENDS/DERIVES_FROM 边（图谱直查确认存在，泄漏前提成立）；无过滤搜「力量训练」跨空间邻居浮现（对照证明扩展可见）；选「复验空间」depth=0/1/2 三档均 0 泄漏；不选=全池 ✅。`/v1/spaces` 创建/列表正常（1f527cc 修复复验） |
 | S3 | 新笔记保存 → toast 后立即搜 | 可搜往返 | ✅ 保存（同步 done）→立即搜同内容命中（I2/I3/紫水晶连续验证） |
 | P1 | Dashboard | 静态事实卡 + 统计数字 | ✅ GET /v1/profiles/dev_user：static 10 条 + dynamic + memory_count 17 |
 | P2 | 保存「我是后端工程师主要写 Python」→ 回 Dashboard（≤10s） | 画像静态层新现该事实 | ✅ 同步管线 done 后 ≤5s 静态层新现「我是后端工程师，主要写 Python」（importance 0.69） |
@@ -80,6 +80,6 @@
 | H2 | 页面右下角 | 无 Next.js dev overlay（N 标志）、无热重载 | ✅ standalone runner 生产构建（hashed chunks `/_next/static/...`，无 dev 标志；§1 实起证据） |
 | H3 | Settings 页 | 可见 `docker exec … seed_dev_api_key.py` 文档化命令 | ✅ settings 页 bundle 内含完整命令文本（客户端渲染，SSR HTML 无——非缺陷） |
 
-**门判定（2026-08-27）**：19 条中 17 过（含 3 条机制过/视觉待抽查），**S1/S2 被缺陷 A/C 阻断**——均为引擎侧结构性缺口（非 web 层），修复后复验即可过门。缺陷 B（/v1/files 空）为 S1 同根伴随发现。详见 §2 缺陷表。
+**门判定（2026-08-29 复验后）**：19 条中 19 过（含 3 条机制过/视觉待抽查）——S1/S2 阻断缺陷（A/B/C）均已修复并经 HTTP 层复验（含对照实验，见 §2/§5）。复验时新发现并补修一处：`_run_index` 返回 dict 丢弃上游 `rag_chunk_count` → `/v1/files` chunk_count 恒 0（透传修复，回归 13+64 项绿）。
 
-全绿 = #52 可关，v0.7.0 web 门放行。🄚 = 需 OPENAI_API_KEY（S1-rag 语义命中另受本地嵌入结构性限制约束——配 key 后走 openai 嵌入即真语义；**2026-08-27 更正：rag 态尚有 §2 缺陷 A，配 key 也不可验，须先修**）。
+全绿 = #52 可关，v0.7.0 web 门放行。🄚 = 需 OPENAI_API_KEY（S1-rag 语义命中另受本地嵌入结构性限制约束——配 key 后走 openai 嵌入即真语义；rag 态供给已接通，2026-08-29 复验）。

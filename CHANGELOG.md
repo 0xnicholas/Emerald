@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`/v1/files` chunk_count 恒 0（#52 缺陷 B 复验发现）**：链序 embed→rag_index→index→postprocess 中，`_run_index` 返回全新 dict 丢弃上游 `rag_chunk_count`，postprocess 的 `_mark_document_done` 只读到默认 0。`_run_index` 返回值透传 `rag_chunk_count`（status='done' 本就生效，仅计数失真）；复验上传 txt 后 chunk_count=1 与 RAG 块数一致
 - **搜索 filters 不约束图扩展（#52 走查缺陷 C·S2）**：`_expand_relationships` / `_expand_multihop` 不接收 filters——空间过滤种子正确但扩展邻居泄漏跨空间记忆（实测选「走查空间」返回 3 条中 2 条 tag=default/None 混入，S2「选=仅该空间」被突破）。filters 现穿透两个扩展路径，扩展邻居与种子同过 `_passes_filters`；回归测试 ×2（关系扩展 EXTENDS / 多跳共享提及桥）
 - **rag 态结构性无供给（#52 走查缺陷 A·S1）**：`_search_rag` 只查带 document_id 的向量块，但全库三处 `vector.store` 调用均不传 document_id——上传只提取为记忆，hybrid 的 RAG 半边自 45d5de3 从未接通（非回归）。新增 `rag_index_task`（链位 embed→rag_index→index）：原始文本经非 LLM `TextChunker` 分块 + 嵌入 + `VectorStore.store_document_chunks`（按 document_id 幂等替换，确定性 chunk_id `{doc}:rag:{i}`，RAG 态可见 / memory 态不可见）写入；无 document_id 的管线（sources 事件）自动跳过；hybrid 自此两类皆可回（Mock 嵌入下 RAG 为词汇级命中，语义命中另受嵌入环境约束）
 - **documents 状态机断裂 → `/v1/files` 永远空（#52 走查缺陷 B）**：upload 创建 `Document(status=queued)`，管线完成后只更新 pipeline_jobs，documents.status 无任何写入方（库内实测全停 queued）。postprocess 收尾时经 `_pipeline_document_id` 反查 document_id 并 `_mark_document_done`（status='done' + chunk_count=RAG 块数）；失败仅告警不阻断管线收尾
