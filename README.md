@@ -459,8 +459,7 @@ docker compose up -d mcp
 
 ### 规划中（详见 [roadmap](docs/roadmap.md)）
 
-- **M4 (v0.8.0)**：高级遗忘、负载测试验证、Staging 压测（解决性能 SLA P0）
-- **M5 (v0.9.0)**：Production-Ready Beta（**不是** v1.0 GA——v1.0 需要真实生产使用后单独评估）
+- **v0.8.0（Production-Ready Beta）**：72h soak test / 模糊测试 / 部署文档 / 运维手册（原 M4 已解散：B5/B6 随 v0.7.0 交付；**负载测试 D2/D3 于 2026-08-29 决议取消**，性能声明无压测背书）
 - 框架集成（LangChain.js / Vercel AI / Mastra）：仅以真实采用信号重启
 
 ## OpenAI API Key

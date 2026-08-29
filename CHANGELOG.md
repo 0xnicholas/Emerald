@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **负载测试取消（D2/D3，2026-08-29 用户决议）**：不投入负载测试基础设施（D2）与 2 周 Staging 压测（D3）。级联：M4 里程碑解散（B5/B6 已随 v0.7.0 交付，无剩余工作项）；里程碑版本锚点前移一位（M5 生产就绪 Beta → v0.8.0、RC → v0.9、GA → v1.0）；北极星「性能 SLA 达成」目标取消——性能声明自此无压测背书（v1.0 硬性条件 #6 公开 SLA 文档届时需重新评估）；R4（Neo4j 瓶颈）缓解改为真实部署性能信号触发。Locust 基础设施（`tests/load/`，M1 产物）保留按需使用。决策记录见 roadmap 顶部注；生产就绪评估同步（性能 SLA P0 → 已取消状态）
+
 ## [0.7.0] — 2026-08-29 — M3「图谱深化与文档」
 
 > 发布门：#52 黑盒走查 19/19 过（S1/S2 阻断缺陷修复复验 + 对照实验，见 `docs/verification/web-core-loop-release-check-2026-08-15.md`）；容器内全量回归 1119 passed / 4 环境性失败（benchmark CLI 容器 env 泄漏 ×1 + docker socket ×3，CI 不受影响）。
